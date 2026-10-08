@@ -1487,7 +1487,12 @@ pub fn adjustment_program(adj: &Adjustment, transfer: Transfer, depth: photocraf
             }
         }
         Adjustment::Vibrance { vibrance, saturation } => {
-            p[0] = [vibrance / 100.0, saturation / 100.0, 0.0, 0.0];
+            // compose::adjust::vibrance_px; 32-bit samples aren't clipped at 1.
+            let hi = if depth == photocraft_color::SampleType::F32 { f32::MAX } else { 1.0 };
+            p[0] = [vibrance / 100.0, saturation / 100.0, transfer_exponent(transfer), hi];
+            let b = adjust::VIBRANCE_BOOST;
+            p[1] = [b[0], b[1], b[2], b[3]];
+            p[2] = [b[4], b[5], b[6], 0.0];
             (9, p, None)
         }
         Adjustment::ChannelMixer { matrix, monochrome } => {

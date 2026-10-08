@@ -1565,3 +1565,88 @@ fn photo_filter_matches_photoshop() {
         assert!(got.iter().zip(ps).all(|(g, p)| (g - p).abs() <= 2.5), "F32 {v:?}: got {got:?} want {ps:?}");
     }
 }
+
+/// Vibrance of an 8-bit sRGB colour (0–255 in and out).
+fn vibrance_255(c: [f32; 3], vibrance: f32, saturation: f32) -> [f32; 3] {
+    let mut buf = Buffer::filled(Rect::new(0, 0, 1, 1), [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, 1.0]);
+    adjust::apply(&Adjustment::Vibrance { vibrance, saturation }, &mut buf);
+    let p = buf.px[0];
+    [p[0] * 255.0, p[1] * 255.0, p[2] * 255.0]
+}
+
+fn assert_near_255(got: [f32; 3], want: [f32; 3], tol: f32, what: &str) {
+    assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() <= tol), "{what}: got {got:?}, Photoshop {want:?}");
+}
+
+// Photoshop 25.4 references (16-bit runs of 8-bit colours in an sRGB document).
+
+#[test]
+fn vibrance_saturation_matches_photoshop() {
+    // −100 greys to 0.288 R + 0.712 G in linear light: blue has no weight, yellow stays bright.
+    for (c, g) in [([251.0, 201.0, 0.0], 217.0), ([255.0, 0.0, 0.0], 146.0), ([0.0, 255.0, 0.0], 219.4), ([0.0, 0.0, 255.0], 0.0), ([255.0, 255.0, 0.0], 255.0)]
+    {
+        assert_near_255(vibrance_255(c, 0.0, -100.0), [g; 3], 0.5, "saturation -100");
+    }
+    for (c, s, want) in [
+        ([255.0, 128.0, 0.0], -50.0, [220.7, 155.2, 129.4]),
+        ([224.0, 176.0, 144.0], -50.0, [208.6, 183.9, 169.9]),
+        ([64.0, 128.0, 192.0], 50.0, [0.0, 134.3, 218.7]),
+        ([224.0, 176.0, 144.0], 100.0, [251.3, 158.5, 51.7]),
+        ([32.0, 96.0, 64.0], 100.0, [0.0, 106.8, 32.8]),
+    ] {
+        assert_near_255(vibrance_255(c, 0.0, s), want, 0.5, "saturation");
+    }
+}
+
+#[test]
+fn negative_vibrance_matches_photoshop() {
+    for (c, v, want) in [
+        ([255.0, 0.0, 0.0], -100.0, [255.0, 137.0, 137.0]),
+        ([128.0, 0.0, 0.0], -100.0, [128.0, 65.7, 65.7]),
+        ([224.0, 176.0, 144.0], -100.0, [213.2, 197.4, 188.8]),
+        ([64.0, 128.0, 192.0], -100.0, [124.4, 149.0, 185.0]),
+        ([255.0, 128.0, 0.0], -50.0, [255.0, 152.0, 99.1]),
+        ([251.0, 201.0, 0.0], -50.0, [251.0, 208.1, 97.4]),
+        ([32.0, 96.0, 64.0], -50.0, [50.1, 91.7, 68.6]),
+    ] {
+        assert_near_255(vibrance_255(c, v, 0.0), want, 0.6, "vibrance");
+    }
+    // Vibrance applies first, then Saturation.
+    assert_near_255(vibrance_255([64.0, 128.0, 192.0], 50.0, -50.0), [86.5, 117.8, 158.4], 3.0, "vibrance then saturation");
+}
+
+#[test]
+fn positive_vibrance_follows_photoshop_closely() {
+    // A fit, not exact: within a few levels, saturated colours untouched, skin damped.
+    for (c, v, want, tol) in [
+        ([255.0, 128.0, 0.0], 50.0, [255.0, 128.0, 0.0], 0.5),
+        ([144.0, 160.0, 176.0], 100.0, [121.2, 152.6, 180.5], 1.5),
+        ([64.0, 128.0, 192.0], 50.0, [50.6, 125.1, 192.8], 4.0),
+        ([224.0, 176.0, 144.0], 50.0, [224.9, 173.4, 138.0], 3.0),
+        ([224.0, 176.0, 144.0], 100.0, [226.6, 166.8, 122.4], 5.0),
+    ] {
+        assert_near_255(vibrance_255(c, v, 0.0), want, tol, "vibrance");
+    }
+}
+
+#[test]
+fn clipped_brightness_and_desaturation_whiten_a_lighter_color_logo() {
+    // постер.psd: a yellow logo in Lighter Color over the same yellow, with Brightness/Contrast +150
+    // and Vibrance › Saturation −100 clipped to it. Photoshop shows it white (254); 0.5.0 left it
+    // yellow (its Saturation −100 greyed (255, 255, 0) to 128, darker than the yellow beneath).
+    let yellow = [251.0 / 255.0, 201.0 / 255.0, 0.0, 1.0];
+    let mut d = doc_white(2, 1);
+    d.layers[0].surface_mut().unwrap().fill_rect(Rect::new(0, 0, 2, 1), &yellow);
+    let mut logo = solid_layer("logo", Rect::new(0, 0, 1, 1), yellow);
+    logo.blend = BlendMode::LighterColor;
+    d.layers.push(logo);
+    for adj in [Adjustment::BrightnessContrast { brightness: 150.0, contrast: 0.0, legacy: false }, Adjustment::Vibrance { vibrance: 0.0, saturation: -100.0 }]
+    {
+        let mut l = Layer::new("adj", LayerContent::Adjustment(adj));
+        l.clipped = true;
+        d.layers.push(l);
+    }
+    let p = px(&d, 0, 0);
+    assert!(p[..3].iter().all(|v| *v * 255.0 >= 252.0), "logo whitened: {p:?}");
+    assert!(close4(px(&d, 1, 0), yellow), "the yellow beside it is untouched");
+}
