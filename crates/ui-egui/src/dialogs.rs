@@ -226,7 +226,16 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                             crate::file_ui::ok_label(&d.fields).unwrap_or(tl!("OK"))
                         };
                         let ok = DialogButton::new(ButtonRole::Default, ok_label, 84.0);
-                        let cancel = DialogButton::new(ButtonRole::Cancel, if d.kind == DialogKind::NewDocument { tl!("Close") } else { tl!("Cancel") }, 84.0);
+                        // Photoshop: holding Alt turns Cancel into Reset (the dialog stays open).
+                        let reset = ui.input(|i| i.modifiers.alt) && crate::adjust_dialog::resets(&fields);
+                        let cancel_label = if reset {
+                            tl!("Reset")
+                        } else if d.kind == DialogKind::NewDocument {
+                            tl!("Close")
+                        } else {
+                            tl!("Cancel")
+                        };
+                        let cancel = DialogButton::new(ButtonRole::Cancel, cancel_label, 84.0);
                         let clicked = if d.kind == DialogKind::Command && crate::prefs_ui::is_preferences(&fields) {
                             let changed = crate::prefs_ui::preferences_changed(app, &fields);
                             dialog_buttons(ui, &[ok, cancel, DialogButton::new(ButtonRole::Apply, tl!("Apply"), 84.0).enabled(changed)])
@@ -234,6 +243,7 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                             dialog_buttons(ui, &[ok, cancel])
                         };
                         match clicked {
+                            Some(ButtonRole::Cancel) if reset => crate::adjust_dialog::reset(ui.ctx(), &mut fields),
                             Some(ButtonRole::Cancel) => outcome = Some(false),
                             Some(ButtonRole::Apply) => apply_requested = true,
                             Some(_) => outcome = Some(true),

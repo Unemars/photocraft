@@ -126,6 +126,29 @@ pub fn owns(fields: &Map<String, Value>) -> bool {
     fields.contains_key("__adjust")
 }
 
+/// Root of the dialog editor's view state in egui memory.
+fn dialog_mem(kind: &str) -> egui::Id {
+    egui::Id::new(("adjust-dialog", kind))
+}
+
+/// Whether holding Alt turns the dialog's Cancel into Reset. Measured in Photoshop 25.4 for Color
+/// Balance; other kinds keep Cancel until checked against Photoshop.
+pub fn resets(fields: &Map<String, Value>) -> bool {
+    fields.get("__adjust").and_then(Value::as_str) == Some("colorBalance")
+}
+
+/// Alt+Cancel (Reset): back to the defaults Photoshop's Reset restores, dialog stays open.
+pub fn reset(ctx: &egui::Context, fields: &mut Map<String, Value>) {
+    if !resets(fields) {
+        return;
+    }
+    let mut values = crate::filter_dialog::params_of(fields);
+    adjust_editors::reset_color_balance(ctx, dialog_mem("colorBalance"), &mut values);
+    if let Value::Object(v) = values {
+        fields.extend(v);
+    }
+}
+
 /// Opens the dialog for `command` with the kind's neutral settings.
 pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
     let kind = command.strip_prefix(PREFIX).filter(|k| adjust_editors::has_editor(k))?;
@@ -159,7 +182,7 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, fields: &mut Map<String,
         Some(id) if adjust_editors::needs_histogram(&kind) => Some(tone::histograms(app, HistSource::Layer(id), adjust_editors::space_of(&values))),
         _ => None,
     };
-    let cx = EditorCx { mem: egui::Id::new(("adjust-dialog", kind.as_str())), hist, gray, swatches: adjust_editors::swatches(app) };
+    let cx = EditorCx { mem: dialog_mem(&kind), hist, gray, swatches: adjust_editors::swatches(app), dialog: true };
     let e = adjust_editors::editor(ui, &kind, &mut values, &cx);
     if e.changed
         && let Value::Object(v) = values
@@ -273,6 +296,99 @@ mod tests {
             assert!(r.is_ok(), "{kind}: {r:?}");
             assert_eq!(harness.state().session.active().unwrap().history.past_len(), steps + 1, "{kind}: one history step");
         }
+    }
+
+    fn color_balance_dialog() -> (Harness<'static, PhotocraftApp>, u64) {
+        // Real frame times: a double-click's two clicks must land within the double-click time.
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1200.0, 900.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), app_with_image());
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        let id = open(h.state_mut(), "image.adjustments.colorBalance").unwrap();
+        let d = h.state_mut().ui.dialog_mut(id).unwrap();
+        for (k, v) in
+            [("shadows", json!([10, 0, 0])), ("midtones", json!([40, -30, 20])), ("highlights", json!([0, 0, -15])), ("preserveLuminosity", json!(false))]
+        {
+            d.fields.insert(k.into(), v);
+        }
+        h.run_steps(3);
+        (h, id)
+    }
+
+    fn field(h: &Harness<'static, PhotocraftApp>, id: u64, key: &str) -> Value {
+        h.state().ui.dialogs.iter().find(|d| d.id == id).map(|d| d.fields.get(key).cloned().unwrap_or(Value::Null)).unwrap_or(Value::Null)
+    }
+
+    fn input(h: &mut Harness<'static, PhotocraftApp>, mods: egui::Modifiers, events: &[egui::Event]) {
+        h.event(egui::Event::ModifiersChanged(mods));
+        h.run_steps(1);
+        for e in events {
+            h.event(e.clone());
+            h.run_steps(1);
+        }
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        h.run_steps(3);
+    }
+
+    /// Photoshop 25.4's Color Balance dialog (measured with the real application): a double-click
+    /// on a slider zeroes it whatever the modifiers; the wheel over a slider steps it by 1, with
+    /// Shift by 10 (Ctrl/Alt: 1); holding Alt turns Cancel into Reset, which zeroes every tone,
+    /// shows Midtones, keeps Preserve Luminosity and leaves the dialog open.
+    #[test]
+    fn color_balance_dialog_gestures_match_photoshop() {
+        use egui_kittest::kittest::Queryable;
+        let (mut h, id) = color_balance_dialog();
+        let label = h.query_all_by_label("Cyan  ·  Red").last().map(|n| n.rect()).expect("Cyan · Red row");
+        let at = egui::pos2(label.left() + 60.0, label.bottom() + 14.0);
+        let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::ALT };
+        input(&mut h, egui::Modifiers::ALT, &[egui::Event::PointerMoved(at), press(true), press(false), press(true), press(false)]);
+        assert_eq!(field(&h, id, "midtones"), json!([0.0, -30.0, 20.0]), "Alt+double-click zeroes the slider");
+        assert_eq!(field(&h, id, "shadows"), json!([10, 0, 0]), "other tones untouched");
+        let wheel =
+            |n: f32, m| egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: egui::vec2(0.0, n), phase: egui::TouchPhase::Move, modifiers: m };
+        input(&mut h, egui::Modifiers::NONE, &[egui::Event::PointerMoved(at), wheel(3.0, egui::Modifiers::NONE)]);
+        assert_eq!(field(&h, id, "midtones")[0], json!(3.0), "3 notches up");
+        input(&mut h, egui::Modifiers::SHIFT, &[egui::Event::PointerMoved(at), wheel(2.0, egui::Modifiers::SHIFT)]);
+        assert_eq!(field(&h, id, "midtones")[0], json!(23.0), "Shift: 10 per notch");
+        input(&mut h, egui::Modifiers::CTRL, &[egui::Event::PointerMoved(at), wheel(-1.0, egui::Modifiers::CTRL)]);
+        assert_eq!(field(&h, id, "midtones")[0], json!(22.0), "Ctrl: 1 per notch, down");
+        // Alt turns Cancel into Reset.
+        assert!(h.query_by_label("Cancel").is_some() && h.query_by_label("Reset").is_none());
+        h.state_mut().ui.dialog_mut(id).unwrap().fields.insert("highlights".into(), json!([5, 5, 5]));
+        let tone = egui::Id::new(("adjust-dialog", "colorBalance")).with("cb-tone");
+        h.ctx.data_mut(|d| d.insert_temp(tone, 2usize));
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+        h.run_steps(2);
+        let reset = h.get_by_label("Reset").rect();
+        assert!(h.query_by_label("Cancel").is_none());
+        let click =
+            |pressed| egui::Event::PointerButton { pos: reset.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::ALT };
+        input(&mut h, egui::Modifiers::ALT, &[egui::Event::PointerMoved(reset.center()), click(true), click(false)]);
+        assert!(h.state().ui.dialogs.iter().any(|d| d.id == id), "Reset keeps the dialog open");
+        for k in ["shadows", "midtones", "highlights"] {
+            assert_eq!(field(&h, id, k), json!([0.0, 0.0, 0.0]), "{k}");
+        }
+        assert_eq!(field(&h, id, "preserveLuminosity"), json!(false), "Reset keeps Preserve Luminosity");
+        assert_eq!(h.ctx.data(|d| d.get_temp::<usize>(tone)), Some(1), "Reset shows Midtones");
+        // Without Alt it is Cancel again, and it closes.
+        let cancel = h.get_by_label("Cancel").rect();
+        let click =
+            |pressed| egui::Event::PointerButton { pos: cancel.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        input(&mut h, egui::Modifiers::NONE, &[egui::Event::PointerMoved(cancel.center()), click(true), click(false)]);
+        assert!(h.state().ui.dialogs.is_empty(), "Cancel closes");
+    }
+
+    /// Alt+Cancel is Reset only where it was checked against Photoshop.
+    #[test]
+    fn other_adjustment_dialogs_keep_cancel_under_alt() {
+        use egui_kittest::kittest::Queryable;
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 900.0)).build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), app_with_image());
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        open(h.state_mut(), "image.adjustments.levels").unwrap();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+        h.run_steps(3);
+        assert!(h.query_by_label("Cancel").is_some() && h.query_by_label("Reset").is_none());
     }
 
     fn sample_params(kind: &str) -> Value {

@@ -2255,7 +2255,10 @@ fn adjustment_controls(app: &mut PhotocraftApp, ui: &mut egui::Ui, id: LayerId, 
     }
     ui.add_space(6.0);
     if widgets::secondary_button(ui, tl!("Reset to defaults"), ui.available_width()).clicked() {
-        let _ = app.run("layer.setAdjustment", json!({"layer": id.0}));
+        let doc = app.session.active().map_or(0, |s| s.doc.id.0);
+        // Photoshop's two-step Reset where measured (Color Balance), else the defaults.
+        let params = crate::adjust_editors::properties_reset(ui.ctx(), doc, id, adj).unwrap_or_else(|| json!({"layer": id.0}));
+        let _ = app.run("layer.setAdjustment", params);
         app.live_adjust = None;
     }
 }
