@@ -188,6 +188,19 @@ fn json_round_trip_tolerates_unknown_and_missing_keys() {
 }
 
 #[test]
+fn low_resolution_previews_default_on_and_switch_off() {
+    // A preferences file from before the setting keeps the fast previews.
+    let mut s = Session::new();
+    s.load_prefs_json(r#"{"performance": {"historyStates": 20}}"#).unwrap();
+    assert!(s.prefs().performance.low_resolution_previews);
+    s.execute("prefs.set", json!({"path": "performance.lowResolutionPreviews", "value": false})).unwrap();
+    assert!(!s.prefs().performance.low_resolution_previews);
+    let mut t = Session::new();
+    t.load_prefs_json(&s.prefs_to_json()).unwrap();
+    assert!(!t.prefs().performance.low_resolution_previews);
+}
+
+#[test]
 fn units_convert_both_ways() {
     for u in [Unit::Pixels, Unit::Inches, Unit::Centimeters, Unit::Millimeters, Unit::Points, Unit::Picas, Unit::Percent] {
         let v = u.from_px(450.0, 300.0, 900.0, 72.0);

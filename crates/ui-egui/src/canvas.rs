@@ -704,7 +704,7 @@ pub fn ensure_texture(app: &mut PhotocraftApp, ctx: &egui::Context, idx: usize, 
     // a large document (taken by the GPU path) would cost a full-size CPU composite per change.
     if crate::adjust_preview::shown_key(app) == Some(preview_key)
         && let Some(st) = app.session.documents().get(idx)
-        && crate::proxy::factor(&st.doc) > 1
+        && crate::proxy::preview_factor(&st.doc, crate::proxy::reduced_previews(app)) > 1
     {
         (doc, preview_key) = (st.doc.clone(), 0);
     }
@@ -940,7 +940,7 @@ fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize) -> Option<(u32, u6
         let st = app.session.documents().get(idx)?;
         (st.doc.id, st.revision, st.doc.clone(), st.active_layer)
     };
-    let k = crate::proxy::factor(&doc);
+    let k = crate::proxy::preview_factor(&doc, crate::proxy::reduced_previews(app));
     let hash = format!("{cmd}{params}").bytes().fold(k as u64 ^ revision.wrapping_mul(0x9e37), |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
     let key = doc_id.0 ^ (1u64 << 61);
     let fresh = matches!(&app.filter_preview, Some(p) if p.doc == doc_id && p.hash == hash);
@@ -992,7 +992,8 @@ fn ensure_proxy_preview(app: &mut PhotocraftApp, idx: usize) -> Option<(u32, u64
         let st = app.session.documents().get(idx)?;
         (st.doc.id, st.revision, st.doc.clone())
     };
-    let k = crate::proxy::factor(&doc);
+    // Low-resolution previews off: k is 1 and the canvas shows `display_doc` (full size).
+    let k = crate::proxy::preview_factor(&doc, crate::proxy::reduced_previews(app));
     if k <= 1 {
         return None;
     }
@@ -1755,7 +1756,8 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
     let drop_shadow = border == photocraft_engine::prefs::CanvasBorder::DropShadow;
     // Drop shadow, checkerboard, document image.
     let img_rect = xf.doc_rect(doc.bounds());
-    // Live adjustment previews on big documents use a downsampled proxy (see proxy.rs).
+    // Live adjustment previews on big documents use a downsampled proxy (see proxy.rs), unless
+    // Preferences › Performance › Low Resolution Previews is off.
     let mut on_gpu = false;
     // A flipped view draws through the CPU path (the GPU canvas shader has no mirroring).
     if app.gpu.is_some()

@@ -408,6 +408,10 @@ pub struct Performance {
     pub rendering_mode: Option<RenderingMode>,
     /// Graphics backend (applies at next launch; see [`GpuBackend`]).
     pub gpu_backend: GpuBackend,
+    /// Live previews of large documents (adjustment and filter dialogs, an adjustment layer's
+    /// sliders while they drag) render on a reduced copy: fast, but blocky when zoomed in. Off:
+    /// they render at full resolution.
+    pub low_resolution_previews: bool,
     /// Memory budget of the layer-effect cache, in MB.
     pub effect_cache_mb: u32,
     pub legacy_compositing: bool,
@@ -436,6 +440,7 @@ impl Default for Performance {
             use_gpu: true,
             rendering_mode: None,
             gpu_backend: GpuBackend::Auto,
+            low_resolution_previews: true,
             effect_cache_mb: 768,
             legacy_compositing: false,
         }
