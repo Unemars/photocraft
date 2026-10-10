@@ -181,7 +181,7 @@ pub(super) fn read(doc: &mut Document, t: Target, p: &Value, rect: Rect) -> Resu
 
 /// Write `out` over `mask` into the target, replacing the pixels (the result already holds what
 /// should show there). With the transparency lock, alpha is kept and transparent pixels stay as
-/// they are. Returns the written rectangle.
+/// they are. Returns the written rectangle. Shared with the Remove Tool.
 pub(super) fn replace(doc: &mut Document, t: Target, p: &Value, out: &Region, mask: &[bool]) -> Result<Rect> {
     let (surf, lock) = crate::channel_cmds::target_surface(doc, t.id, p)?;
     let fmt = surf.format();
@@ -190,7 +190,7 @@ pub(super) fn replace(doc: &mut Document, t: Target, p: &Value, out: &Region, ma
     let mut px = surf.read_region(rect);
     let n = out.ch;
     if px.len() != out.data.len() || mask.len() * n != px.len() {
-        return Err(EngineError::Other("internal error: content-aware buffers disagree in size".into()));
+        return Err(EngineError::Other("internal error: fill buffers disagree in size".into()));
     }
     for ((dst, src), m) in px.chunks_exact_mut(n).zip(out.data.chunks_exact(n)).zip(mask) {
         if !*m {

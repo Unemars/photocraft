@@ -1,5 +1,5 @@
 //! Retouching tools as commands: Clone Stamp, Pattern Stamp, Healing Brush, Spot Healing Brush,
-//! Patch, Content-Aware Move, Dodge, Burn, Sponge, Blur, Sharpen, Smudge and History Brush.
+//! Patch, Content-Aware Move, Remove, Dodge, Burn, Sponge, Blur, Sharpen, Smudge and History Brush.
 //!
 //! Every command takes a Photoshop-style brush (`points`, `size`, `hardness`, `opacity`, `flow`,
 //! `spacing`, `layer`), respects the active selection as a mask and the layer's transparency lock, and
@@ -26,6 +26,7 @@ use crate::{EngineError, Result, Session};
 mod content_aware_move;
 mod patch;
 mod pattern_stamp;
+mod remove;
 pub use patch::preview as patch_preview;
 
 fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
@@ -89,7 +90,8 @@ fn parse_brush(s: &Session, p: &Value, cmd: &str) -> Result<(Stroke, Option<Laye
         hardness: pct("hardness", base.hardness * 100.0, 0.0, 100.0),
         opacity: pct("opacity", 100.0, 1.0, 100.0),
         flow: pct("flow", 100.0, 1.0, 100.0),
-        spacing: pct("spacing", 25.0, 1.0, 1000.0),
+        // Brush Settings › Brush Tip Shape › Spacing, as the Brush uses it (#2140).
+        spacing: pct("spacing", base.spacing * 100.0, 1.0, 1000.0),
         erase: false,
         ..base
     };
@@ -1030,7 +1032,7 @@ impl<'a> AllLayers<'a> {
 /// The brush every retouching command shares, plus the tool's own params.
 macro_rules! brush_params {
     ($extra:literal) => {
-        concat!("{", r#""points":[[x,y,pressure?],…],"size":1..5000 px=tool size,"hardness":0..100=tool hardness,"opacity":1..100=100,"flow":1..100=100,"spacing":1..1000 (% of size)=25,"layer":id?=active,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target"#, $extra, "}")
+        concat!("{", r#""points":[[x,y,pressure?],…],"size":1..5000 px=tool size,"hardness":0..100=tool hardness,"opacity":1..100=100,"flow":1..100=100,"spacing":1..1000 (% of size)=Brush Settings spacing,"layer":id?=active,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target"#, $extra, "}")
     };
 }
 
@@ -1101,6 +1103,18 @@ pub fn specs() -> Vec<CommandSpec> {
             params: r#"{"offset":[dx,dy] (how far the selection was dragged),"mode":"move|extend"="move","structure":1..7=4 (3..7 copy the content exactly but for a band about a patch wide along its edge; 2 widens the band, 1 re-synthesises the content too),"color":0..10=0 (0 keeps the content's level; higher values bring it towards its new place, by up to about 0.04 × color),"sampleAllLayers":bool=false,"layer":id?=active,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target} → {"damage","offset","mode"} (a background job; the selection moves with the content)"#,
             enabled: content_aware_move::enabled,
             run: content_aware_move::content_aware_move,
+            journal: true,
+        },
+        CommandSpec {
+            id: "paint.remove",
+            label: "Remove",
+            menu: &[],
+            shortcut: None,
+            params: brush_params!(
+                r#","closeLoops":bool=true (a stroke around an object removes what it encloses),"sampleAllLayers":bool=false → {"damage"} (a background job)"#
+            ),
+            enabled: has_pixel_layer,
+            run: remove::remove,
             journal: true,
         },
         CommandSpec {
