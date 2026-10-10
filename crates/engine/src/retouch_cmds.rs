@@ -137,7 +137,7 @@ fn damage_json(r: Rect) -> Value {
 
 /// Which pixels Clone Stamp / Healing Brush sample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SampleLayers {
+pub(crate) enum SampleLayers {
     Current,
     CurrentAndBelow,
     All,
@@ -154,7 +154,7 @@ fn sample_layers(p: &Value, cmd: &str) -> Result<SampleLayers> {
 
 /// Composite pixels of `rect` in `fmt` (native channels): the whole document, or the target layer
 /// and everything below it.
-fn composite_region(pre: &Document, id: Option<LayerId>, which: SampleLayers, rect: Rect, fmt: PixelFormat) -> Region {
+pub(crate) fn composite_region(pre: &Document, id: Option<LayerId>, which: SampleLayers, rect: Rect, fmt: PixelFormat) -> Region {
     let mut doc = pre.clone();
     if which == SampleLayers::CurrentAndBelow
         && let Some(id) = id

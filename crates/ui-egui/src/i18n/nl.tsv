@@ -3477,3 +3477,19 @@ cameraRaw	Whites	Witten
 	Cycle Orientation	Oriëntatie wisselen
 	Set the overlay options for the Crop tool	Overlay-opties voor het gereedschap Uitsnijden instellen
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	De Alt-klik ging naar het bureaublad, dat vensters verplaatst met Alt-slepen. Stel daar de toets voor het verplaatsen van vensters in op Super, of vergrendel Alt via Venster › Wijzigingstoetsen.
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Gereedschap Monsterpenseel
+	Sampling Area Overlay	Overlay van monstergebied
+	Show Sampling Area	Monstergebied tonen
+	Indicates	Geeft aan
+	Sampling Area	Monstergebied
+	Excluded Area	Uitgesloten gebied
+	Sampling Area Options	Opties voor monstergebied
+	Rectangular	Rechthoekig
+	Fill Settings	Vulinstellingen
+	Rotation Adaptation	Rotatieaanpassing
+	Very High	Zeer hoog
+	Full	Volledig
+	Mirror	Spiegelen
+	Output Settings	Uitvoerinstellingen
+	Output To	Uitvoer naar

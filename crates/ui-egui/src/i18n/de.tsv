@@ -2331,3 +2331,24 @@ fontWeight	Italic	Kursiv
 	Cycle Orientation	Ausrichtung wechseln
 	Set the overlay options for the Crop tool	Überlagerungsoptionen für das Freistellungswerkzeug festlegen
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	Der Alt-Klick ging an die Arbeitsumgebung, die Fenster mit Alt-Ziehen verschiebt. Stelle dort die Taste zum Verschieben von Fenstern auf Super oder raste Alt unter Fenster › Modifikatortasten ein.
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Aufnahmepinsel-Werkzeug
+	Sampling Area Overlay	Überlagerung des Aufnahmebereichs
+	Show Sampling Area	Aufnahmebereich einblenden
+	Indicates	Kennzeichnet
+	Sampling Area	Aufnahmebereich
+	Excluded Area	Ausgeschlossener Bereich
+	Sampling Area Options	Optionen für Aufnahmebereich
+	Rectangular	Rechteckig
+	Fill Settings	Füllungseinstellungen
+	Rotation Adaptation	Drehungsanpassung
+	Very High	Sehr hoch
+	High	Hoch
+	Low	Niedrig
+	Full	Voll
+	Mirror	Spiegeln
+	Output Settings	Ausgabeeinstellungen
+	Output To	Ausgabe in
+	New Layer	Neue Ebene
+	Duplicate Layer	Ebene duplizieren
+	Contract	Verkleinern

@@ -2362,3 +2362,24 @@ fontWeight	Italic	Corsivo
 	Cycle Orientation	Cambia orientamento
 	Set the overlay options for the Crop tool	Imposta le opzioni di sovrapposizione dello strumento Taglierina
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	L’Alt-click è andato al desktop, che sposta le finestre con Alt-trascina. Imposta il suo tasto per spostare le finestre su Super, oppure blocca Alt in Finestra › Tasti modificatori.
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Strumento Pennello di campionamento
+	Sampling Area Overlay	Sovrapposizione area di campionamento
+	Show Sampling Area	Mostra area di campionamento
+	Indicates	Indica
+	Sampling Area	Area di campionamento
+	Excluded Area	Area esclusa
+	Sampling Area Options	Opzioni area di campionamento
+	Rectangular	Rettangolare
+	Fill Settings	Impostazioni di riempimento
+	Rotation Adaptation	Adattamento rotazione
+	Very High	Molto alta
+	High	Alta
+	Low	Bassa
+	Full	Completa
+	Mirror	Rifletti
+	Output Settings	Impostazioni di output
+	Output To	Output in
+	New Layer	Nuovo livello
+	Duplicate Layer	Duplica livello
+	Contract	Contrai

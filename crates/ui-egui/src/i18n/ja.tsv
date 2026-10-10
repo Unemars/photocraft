@@ -3317,3 +3317,19 @@ fontWeight	Italic	斜体
 	Cycle Orientation	方向を切り替え
 	Set the overlay options for the Crop tool	切り抜きツールのオーバーレイオプションを設定
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	Alt+クリックはデスクトップに取られました（Alt+ドラッグでウィンドウを移動する設定です）。デスクトップのウィンドウ移動キーを Super に変更するか、ウィンドウ › 修飾キーで Alt を固定してください。
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	サンプリングブラシツール
+	Sampling Area Overlay	サンプリング領域のオーバーレイ
+	Show Sampling Area	サンプリング領域を表示
+	Indicates	表示対象
+	Sampling Area	サンプリング領域
+	Excluded Area	除外された領域
+	Sampling Area Options	サンプリング領域オプション
+	Rectangular	長方形
+	Fill Settings	塗りつぶし設定
+	Rotation Adaptation	回転への適応
+	Very High	非常に高い
+	Full	フル
+	Mirror	ミラー
+	Output Settings	出力設定
+	Output To	出力先

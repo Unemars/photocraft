@@ -2301,3 +2301,24 @@ fontWeight	Italic	斜体
 	Cycle Orientation	循环切换取向
 	Set the overlay options for the Crop tool	设置裁剪工具的叠加选项
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	Alt 单击被桌面环境截获了，它用 Alt 拖动来移动窗口。请把桌面的窗口移动键改为 Super，或在 窗口 › 修饰键 中锁定 Alt。
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	取样画笔工具
+	Sampling Area Overlay	取样区域叠加
+	Show Sampling Area	显示取样区域
+	Indicates	指示
+	Sampling Area	取样区域
+	Excluded Area	排除区域
+	Sampling Area Options	取样区域选项
+	Rectangular	矩形
+	Fill Settings	填充设置
+	Rotation Adaptation	旋转适应
+	Very High	非常高
+	High	高
+	Low	低
+	Full	完全
+	Mirror	镜像
+	Output Settings	输出设置
+	Output To	输出到
+	New Layer	新建图层
+	Duplicate Layer	复制图层
+	Contract	收缩

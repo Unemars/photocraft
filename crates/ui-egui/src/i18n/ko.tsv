@@ -2871,3 +2871,19 @@ fontWeight	Italic	기울임
 	Cycle Orientation	방향 순환
 	Set the overlay options for the Crop tool	자르기 도구의 오버레이 옵션 설정
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	Alt 클릭이 데스크톱으로 전달되었습니다. 데스크톱이 Alt 드래그로 창을 이동합니다. 창 이동 키를 Super로 바꾸거나 창 › 보조 키에서 Alt를 고정하세요.
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	샘플링 브러시 도구
+	Sampling Area Overlay	샘플링 영역 오버레이
+	Show Sampling Area	샘플링 영역 표시
+	Indicates	표시 대상
+	Sampling Area	샘플링 영역
+	Excluded Area	제외 영역
+	Sampling Area Options	샘플링 영역 옵션
+	Rectangular	사각형
+	Fill Settings	채우기 설정
+	Rotation Adaptation	회전 적응
+	Very High	매우 높음
+	Full	전체
+	Mirror	미러
+	Output Settings	출력 설정
+	Output To	출력 위치

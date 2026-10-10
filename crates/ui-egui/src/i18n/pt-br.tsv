@@ -2721,3 +2721,22 @@ fontWeight	Italic	Itálico
 	Cycle Orientation	Alternar orientação
 	Set the overlay options for the Crop tool	Definir as opções de sobreposição da ferramenta Corte demarcado
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	O Alt-clique foi para o desktop, que move janelas com Alt-arrastar. Mude a tecla de mover janelas dele para Super ou trave o Alt em Janela › Teclas modificadoras.
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Ferramenta Pincel de amostragem
+	Sampling Area Overlay	Sobreposição da área de amostragem
+	Show Sampling Area	Mostrar área de amostragem
+	Indicates	Indica
+	Sampling Area	Área de amostragem
+	Excluded Area	Área excluída
+	Sampling Area Options	Opções da área de amostragem
+	Rectangular	Retangular
+	Fill Settings	Configurações de preenchimento
+	Rotation Adaptation	Adaptação de rotação
+	Very High	Muito alta
+	Full	Completa
+	Mirror	Espelhar
+	Output Settings	Configurações de saída
+	Output To	Saída para
+	New Layer	Nova camada
+	Duplicate Layer	Duplicar camada
+	Contract	Contrair

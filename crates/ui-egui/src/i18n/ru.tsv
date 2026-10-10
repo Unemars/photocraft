@@ -2567,3 +2567,26 @@ fontWeight	Italic	Курсив
 	Cycle Orientation	Сменить ориентацию
 	Set the overlay options for the Crop tool	Задать параметры перекрытия для инструмента «Рамка»
 	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	Alt+щелчок перехватило окружение рабочего стола: оно перемещает окна через Alt+перетаскивание. Назначьте для перемещения окон клавишу Super или зафиксируйте Alt в меню Окно › Клавиши-модификаторы.
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Кисть области выборки
+	Sampling Area Overlay	Наложение области выборки
+	Show Sampling Area	Показать область выборки
+	Indicates	Обозначает
+	Sampling Area	Область выборки
+	Excluded Area	Исключённая область
+	Sampling Area Options	Параметры области выборки
+	Rectangular	Прямоугольная
+	Fill Settings	Параметры заливки
+	Rotation Adaptation	Адаптация поворота
+	Very High	Очень высокая
+	Full	Полная
+	Mirror	Отражение
+	Output Settings	Параметры вывода
+	Output To	Вывод в
+	New Layer	Новый слой
+	Duplicate Layer	Дубликат слоя
+	Contract	Сжать
+	New selection	Новое выделение
+	Add to selection  ({key})	Добавить к выделению  ({key})
+	Subtract from selection  ({key})	Вычесть из выделения  ({key})
+	Intersect with selection  ({key})	Пересечь с выделением  ({key})

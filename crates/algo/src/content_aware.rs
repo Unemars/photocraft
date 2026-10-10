@@ -466,6 +466,111 @@ pub fn level_transform(ch: usize, from: &[f32], to: &[f32], a: Adapt) -> Vec<(f3
         .collect()
 }
 
+/// One stroke of the Content-Aware Fill workspace's Sampling Brush: a hard round brush of
+/// diameter `size` along `points` (document px), adding to the sampling area or taking from it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SamplingStroke {
+    pub add: bool,
+    pub size: f64,
+    pub points: Vec<[f64; 2]>,
+}
+
+impl SamplingStroke {
+    /// Bounds of the pixels the stroke covers.
+    pub fn bounds(&self) -> Rect {
+        let r = (self.size / 2.0).max(0.5);
+        self.points.iter().fold(Rect::EMPTY, |acc, p| {
+            let b = Rect::new((p[0] - r).floor() as i32, (p[1] - r).floor() as i32, (p[0] + r).ceil() as i32 + 1, (p[1] + r).ceil() as i32 + 1);
+            if acc.is_empty() { b } else { acc.union(&b) }
+        })
+    }
+}
+
+/// Squared distance from `p` to the segment `a`–`b`.
+fn seg_dist2(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let l2 = dx * dx + dy * dy;
+    let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    let (qx, qy) = (a[0] + t * dx - p[0], a[1] + t * dy - p[1]);
+    qx * qx + qy * qy
+}
+
+/// Paint `strokes` in order into `mask` (row-major over `area`): a pixel whose centre lies within
+/// half the brush size of a stroke's path is set (adding) or cleared (subtracting).
+pub fn paint_strokes(mask: &mut [bool], area: Rect, strokes: &[SamplingStroke]) {
+    let w = area.width() as usize;
+    for s in strokes {
+        let b = s.bounds().intersect(&area);
+        if b.is_empty() || s.points.is_empty() {
+            continue;
+        }
+        let r2 = (s.size / 2.0).max(0.5).powi(2);
+        let segs: Vec<([f64; 2], [f64; 2])> =
+            if s.points.len() == 1 { vec![(s.points[0], s.points[0])] } else { s.points.windows(2).map(|p| (p[0], p[1])).collect() };
+        for y in b.y0..b.y1 {
+            for x in b.x0..b.x1 {
+                let c = [f64::from(x) + 0.5, f64::from(y) + 0.5];
+                if segs.iter().any(|(a, bb)| seg_dist2(c, *a, *bb) <= r2) {
+                    mask[(y - area.y0) as usize * w + (x - area.x0) as usize] = s.add;
+                }
+            }
+        }
+    }
+}
+
+/// The pixels of `area` (row-major) whose centres lie inside the polygon `pts` (even-odd rule):
+/// what a lasso outlines.
+pub fn polygon_mask(area: Rect, pts: &[[f64; 2]]) -> Vec<bool> {
+    let (w, h) = (area.width() as usize, area.height() as usize);
+    let mut out = vec![false; w * h];
+    if pts.len() < 3 {
+        return out;
+    }
+    let mut xs: Vec<f64> = Vec::new();
+    for row in 0..h {
+        let cy = f64::from(area.y0) + row as f64 + 0.5;
+        xs.clear();
+        for i in 0..pts.len() {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            if (a[1] <= cy) != (b[1] <= cy) {
+                xs.push(a[0] + (cy - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+            }
+        }
+        xs.sort_by(f64::total_cmp);
+        for pair in xs.as_chunks::<2>().0 {
+            // Pixel centres x + 0.5 within [pair0, pair1).
+            let x0 = ((pair[0] - 0.5).ceil() as i64 - i64::from(area.x0)).clamp(0, w as i64) as usize;
+            let x1 = ((pair[1] - 0.5).ceil() as i64 - i64::from(area.x0)).clamp(0, w as i64) as usize;
+            out[row * w + x0..row * w + x1.max(x0)].iter_mut().for_each(|v| *v = true);
+        }
+    }
+    out
+}
+
+/// Grow (`by` > 0) or shrink (`by` < 0) a mask by `|by|` pixels (Euclidean): the lasso's Expand
+/// and Contract.
+pub fn grow_mask(mask: &[bool], w: usize, h: usize, by: i32) -> Vec<bool> {
+    if by == 0 || w == 0 || h == 0 {
+        return mask.to_vec();
+    }
+    let r = f32::from(u16::try_from(by.unsigned_abs()).unwrap_or(u16::MAX));
+    if by > 0 {
+        let d = crate::selection::edt(mask, w, h);
+        d.iter().map(|v| *v <= r).collect()
+    } else {
+        let outside: Vec<bool> = mask.iter().map(|v| !v).collect();
+        let d = crate::selection::edt(&outside, w, h);
+        d.iter().map(|v| *v > r).collect()
+    }
+}
+
+/// The Sampling Brush's starting size for a selection with bounds `hole`: a tenth of the sampling
+/// window's side, as Photoshop opens the workspace (20 px for a 50 px selection, 40 for 100).
+pub fn default_brush_size(hole: Rect) -> f64 {
+    let (w, h) = (f64::from(hole.width().max(50)), f64::from(hole.height().max(50)));
+    (0.4 * (w * h).sqrt()).round()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
