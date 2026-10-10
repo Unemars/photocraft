@@ -637,16 +637,35 @@ fn rasterize_one(s: &mut Session, id: LayerId, only: Option<&str>, key: &str) ->
     Ok(true)
 }
 
-fn rasterize(s: &mut Session, p: &Value, only: Option<&'static str>) -> Result<Value> {
-    let id = layer_param(s, p)?;
+/// Layer › Rasterize › Layer / Type / Shape / Fill Content / Smart Object. With a `layer` param,
+/// just that layer. Otherwise, as in Photoshop ("select the layer or layers you'd like to
+/// rasterize"), every selected layer the command applies to, in one history step.
+pub(crate) fn rasterize(s: &mut Session, p: &Value, only: Option<&'static str>) -> Result<Value> {
+    let ids = match p.get("layer") {
+        Some(_) => vec![layer_param(s, p)?],
+        None => match crate::layer_multi_cmds::selected(s) {
+            sel if sel.is_empty() => vec![layer_param(s, p)?],
+            sel => sel,
+        },
+    };
+    let many = ids.len() > 1;
     let key = step_key(s, "rasterize");
-    if !rasterize_one(s, id, only, &key)? {
-        return Err(EngineError::Other(match only {
-            Some(k) => format!("the layer is not a {k} layer"),
-            None => "the layer has nothing to rasterize".into(),
-        }));
+    let mut done = Vec::new();
+    for id in ids {
+        if rasterize_one(s, id, only, &key)? {
+            done.push(id.0);
+        }
     }
-    Ok(json!({"layer": id.0}))
+    let Some(&first) = done.first() else {
+        return Err(EngineError::Other(match (only, many) {
+            (Some(k), false) => format!("the layer is not a {k} layer"),
+            (Some(k), true) => format!("none of the selected layers is a {k} layer"),
+            (None, false) => "the layer has nothing to rasterize".into(),
+            (None, true) => "none of the selected layers has anything to rasterize".into(),
+        }));
+    };
+    let active = s.active().and_then(|d| d.active_layer).map(|id| id.0).filter(|id| done.contains(id));
+    Ok(json!({"layer": active.unwrap_or(first), "layers": done}))
 }
 
 fn rasterize_all(s: &mut Session) -> Result<Value> {
@@ -744,8 +763,11 @@ pub fn specs() -> Vec<CommandSpec> {
             },
             |s, p| {
                 let id = layer_param(s, p)?;
-                let (fx, blend, fill, advanced) = s.style_clipboard.clone().ok_or(EngineError::Other("no layer style has been copied".into()))?;
+                let (mut fx, blend, fill, advanced) = s.style_clipboard.clone().ok_or(EngineError::Other("no layer style has been copied".into()))?;
                 s.edit("Paste Layer Style", |doc, _| {
+                    // A style copied from a document in another mode takes this one's colours.
+                    let mode = doc.mode;
+                    fx.items = std::mem::take(&mut fx.items).into_iter().map(|e| e.in_mode(mode)).collect();
                     let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
                     l.effects = fx;
                     l.blend = blend;
