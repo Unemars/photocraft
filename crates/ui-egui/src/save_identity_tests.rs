@@ -182,3 +182,25 @@ fn automation_flat_save_is_a_copy() {
     assert_eq!((st.doc.name.as_str(), st.path.as_deref()), ("layers.psd", Some("layers.psd")));
     assert_eq!(st.saved_revision, st.revision);
 }
+
+/// Preferences › File Handling › Image Previews reaches the exporter of Save As, Save and
+/// automation saves: Always and Ask When Saving embed the PSD thumbnail, Never doesn't.
+#[test]
+fn image_previews_preference_reaches_the_exporter() {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let mut app = app();
+    let log = seen.clone();
+    app.services.export = Some(Box::new(move |_, _, settings: &ExportSettings| {
+        log.borrow_mut().push(settings.image_previews);
+        Ok((b"out".to_vec(), Vec::new()))
+    }));
+    let ctx = egui::Context::default();
+    for (value, expect) in [("always", true), ("never", false), ("ask", true)] {
+        app.run("prefs.set", json!({"path": "fileHandling.imagePreviews", "value": value})).unwrap();
+        seen.borrow_mut().clear();
+        menus::invoke(&mut app, &ctx, "file.saveAs", json!({"path": format!("{value}.psd")})).unwrap();
+        menus::invoke(&mut app, &ctx, "file.save", json!({})).unwrap();
+        app.save_automation(Some(format!("{value} agent.psd"))).unwrap();
+        assert_eq!(*seen.borrow(), [expect; 3], "{value}");
+    }
+}

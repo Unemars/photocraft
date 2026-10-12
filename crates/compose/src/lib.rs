@@ -628,6 +628,27 @@ pub fn layer_bounds(layer: &Layer, canvas: Rect) -> Rect {
     }
 }
 
+/// Where a layer's effects take their shape from: [`layer_bounds`], except that a group's
+/// children count with their own effects (a child's outside stroke shapes the group's drop
+/// shadow and must not be cut off at the child's pixels, #3274).
+pub fn effect_source_bounds(layer: &Layer, canvas: Rect) -> Rect {
+    match &layer.content {
+        LayerContent::Group(g) if g.artboard.is_none() && !advanced::shapeless(layer) => g.children.iter().filter(|c| c.visible).fold(Rect::EMPTY, |acc, c| {
+            let m = if effects::has_effects(c) { effects::margin(c) } else { 0 };
+            let b = effect_source_bounds(c, canvas);
+            let b = if b.is_empty() { b } else { b.inflate(m) };
+            if b.is_empty() {
+                acc
+            } else if acc.is_empty() {
+                b
+            } else {
+                acc.union(&b)
+            }
+        }),
+        _ => layer_bounds(layer, canvas),
+    }
+}
+
 /// The path a shape layer's effects are shaped by: its fill path. Photoshop builds a filled
 /// shape's layer effects from its vector outline, not from its pixels: a stroke runs along the
 /// whole path even where a gradient fill fades out (psd-tools stroke-effects). `None` for other
@@ -851,9 +872,10 @@ fn render_fill(f: &Fill, rect: Rect, canvas: Rect, patterns: &pattern::PreparedP
 fn empty_in(layer: &Layer, rect: Rect) -> bool {
     if effects::has_effects(layer) {
         // Effects reach at most `margin` beyond the layer's pixels (when it is transparent
-        // outside them): render tiles away from a small text layer skip it entirely.
+        // outside them; a group's from its children with their effects): render tiles away from a
+        // small text layer skip it entirely.
         let canvas = Rect::new(i32::MIN / 4, i32::MIN / 4, i32::MAX / 4, i32::MAX / 4);
-        let bounds = shapeless_stroke_bounds(layer).unwrap_or_else(|| layer_bounds(layer, canvas));
+        let bounds = shapeless_stroke_bounds(layer).unwrap_or_else(|| effect_source_bounds(layer, canvas));
         return transparent_outside(layer) && bounds.inflate(effects::margin(layer)).intersect(&rect).is_empty();
     }
     match &layer.content {
@@ -1453,7 +1475,7 @@ fn fx_cache() -> &'static std::sync::Mutex<FxCache> {
 /// (or anything else rendering children over a wider area) gets the whole region.
 fn effect_region(layer: &Layer, rect: Rect, cx: &Ctx) -> (Rect, bool) {
     let m = effects::margin(layer);
-    let region = layer_bounds(layer, cx.canvas).inflate(m).intersect(&cx.canvas.inflate(m));
+    let region = effect_source_bounds(layer, cx.canvas).inflate(m).intersect(&cx.canvas.inflate(m));
     let clip = *cx.fx_clip.lock().unwrap_or_else(|e| e.into_inner());
     match clip {
         Some(c) if c.contains_rect(&rect) && advanced::shapeless(layer) && effects::maps_are_local(layer) => {

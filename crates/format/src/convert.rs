@@ -243,6 +243,7 @@ pub(crate) fn doc_m(d: &Document, sink: &mut dyn Sink) -> DocM {
         work_path: d.work_path.clone(),
         clipping_path: d.clipping_path.clone(),
         quick_mask: d.quick_mask.as_ref().map(|c| channel_m(c, sink)),
+        quick_mask_unselected: d.quick_mask_unselected,
         patterns: d
             .patterns
             .iter()
@@ -305,6 +306,11 @@ pub(crate) struct Loader<'a> {
     pub id_map: std::collections::HashMap<u64, LayerId>,
     pub contents_id_map: std::collections::HashMap<u64, SmartContentsId>,
     pub legacy_linked_contents: std::collections::HashMap<String, SmartContentsId>,
+    /// Decoded tiles by content hash and sample type. Saves store a tile once however often it
+    /// is referenced (a solid fill shares one tile), so a load decodes and charges the byte
+    /// budget once per distinct tile and hands every reference the same copy-on-write `Arc`
+    /// (#3315). Grouped by sample type: in-memory byte order depends on it.
+    pub tiles: std::collections::HashMap<SampleType, std::collections::HashMap<Hash, Arc<Tile>>>,
 }
 
 impl Loader<'_> {
@@ -337,9 +343,21 @@ impl Loader<'_> {
             if s.tile(c).is_some() {
                 return Err(FormatError::corrupt(format!("duplicate tile ({}, {})", t.tx, t.ty)));
             }
+            if let Some(tile) = self.tiles.get(&f.sample).and_then(|m| m.get(&t.hash)) {
+                // One hash names one byte string, so a cached tile of another length means
+                // the same hash was referenced from formats of different pixel sizes.
+                if tile.bytes().len() != len {
+                    return Err(FormatError::corrupt(format!("tile {} is referenced with different sizes", t.hash)));
+                }
+                s.put_tiles([(c, tile.clone())]);
+                continue;
+            }
             let mut bytes = self.fetch.tile(&t.hash, len)?;
             swap_to_le(&mut bytes, f.sample);
             s.tile_mut(c).bytes_mut().copy_from_slice(&bytes);
+            if let Some(tile) = s.tile(c) {
+                self.tiles.entry(f.sample).or_default().insert(t.hash.clone(), tile.clone());
+            }
         }
         Ok(s)
     }
@@ -607,6 +625,7 @@ impl Loader<'_> {
             work_path: m.work_path.clone(),
             clipping_path: m.clipping_path.clone(),
             quick_mask,
+            quick_mask_unselected: m.quick_mask_unselected,
             patterns,
             color_table: m.color_table.clone(),
             duotone: m.duotone.clone(),

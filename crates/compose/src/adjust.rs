@@ -48,12 +48,14 @@ impl Transfer {
     fn decode(self, v: f32) -> f32 {
         match self {
             Transfer::Srgb => photocraft_color::convert::srgb_to_linear(v.max(0.0)),
+            Transfer::Gamma(1.0) => v.max(0.0),
             Transfer::Gamma(g) => v.max(0.0).powf(g),
         }
     }
     fn encode(self, v: f32) -> f32 {
         match self {
             Transfer::Srgb => photocraft_color::convert::linear_to_srgb(v.max(0.0)),
+            Transfer::Gamma(1.0) => v.max(0.0),
             Transfer::Gamma(g) => v.max(0.0).powf(1.0 / g),
         }
     }
@@ -116,17 +118,39 @@ pub fn apply_depth(adj: &Adjustment, buf: &mut Buffer, transfer: Transfer, depth
             let m = 2f32.powf(*exposure);
             let g = gamma.max(0.01);
             let transfer = transfer.for_exposure();
+            let hdr = depth == Some(SampleType::F32);
             map_rgb(buf, |c| {
                 c.map(|v| {
-                    let lin = (transfer.decode(v) * m + offset).max(0.0).powf(1.0 / g);
+                    if hdr {
+                        // Float documents store linear samples. Photoshop's 32-bit merged
+                        // Exposure oracle also retains negative results with signed gamma.
+                        let lin = v * m + offset;
+                        return if g == 1.0 { lin } else { lin.signum() * lin.abs().powf(1.0 / g) };
+                    }
+                    let lin = (transfer.decode(v) * m + offset).max(0.0);
+                    let lin = if g == 1.0 { lin } else { lin.powf(1.0 / g) };
                     transfer.encode(lin).clamp(0.0, 1.0)
                 })
             })
         }
+        Adjustment::Levels { master, per_channel, space: ToneSpace::Rgb, .. } if depth == Some(SampleType::F32) => {
+            // A 0..1 lookup table cannot represent signed, unbounded float samples.
+            let master_identity = *master == LevelsChannel::default();
+            let channel_identity = per_channel.each_ref().map(|ch| *ch == LevelsChannel::default());
+            if !master_identity || channel_identity.iter().any(|&v| !v) {
+                map_rgb(buf, |c| {
+                    std::array::from_fn(|i| {
+                        let v = if channel_identity[i] { c[i] } else { levels_float(&per_channel[i], c[i]) };
+                        if master_identity { v } else { levels_float(master, v) }
+                    })
+                });
+            }
+        }
         Adjustment::Levels { space, .. } | Adjustment::Curves { space, .. } => {
             let luts = tone_luts_depth(adj, depth);
+            let identity = float_tone_identity(adj, depth);
             match space {
-                ToneSpace::Rgb => map_rgb(buf, |c| std::array::from_fn(|i| lut(&luts[i], c[i]))),
+                ToneSpace::Rgb => map_rgb(buf, |c| std::array::from_fn(|i| if identity[i] { c[i] } else { lut(&luts[i], c[i]) })),
                 ToneSpace::Cmyk | ToneSpace::Lab => map_rgb(buf, |c| tone_in_space(*space, &luts, c)),
             }
         }
@@ -189,19 +213,9 @@ pub fn apply_depth(adj: &Adjustment, buf: &mut Buffer, transfer: Transfer, depth
                 p[..3].copy_from_slice(&o);
             }
         }
-        Adjustment::ColorBalance { shadows, midtones, highlights, preserve_luminosity } => map_rgb(buf, |c| {
-            let l = rgb_to_gray(c);
-            let ws = (1.0 - l * 2.0).clamp(0.0, 1.0);
-            let wh = (l * 2.0 - 1.0).clamp(0.0, 1.0);
-            let wm = 1.0 - ws - wh;
-            let out: [f32; 3] = std::array::from_fn(|i| (c[i] + (shadows[i] * ws + midtones[i] * wm + highlights[i] * wh) / 100.0 * 0.5).clamp(0.0, 1.0));
-            if *preserve_luminosity {
-                let l1 = rgb_to_gray(out).max(1e-6);
-                out.map(|v| (v * l / l1).clamp(0.0, 1.0))
-            } else {
-                out
-            }
-        }),
+        Adjustment::ColorBalance { shadows, midtones, highlights, preserve_luminosity } => {
+            map_rgb(buf, |c| std::array::from_fn(|ch| color_balance_channel([*shadows, *midtones, *highlights], *preserve_luminosity, ch, c[ch])))
+        }
         Adjustment::SelectiveColor { relative, adjustments } => map_rgb(buf, |c| selective_color(c, *relative, adjustments)),
         Adjustment::ColorLookup { lut: Some(table), size, tetrahedral, dither, .. } if lut3d_len(*size).is_some_and(|len| table.len() >= len) => {
             let (n, w, x0, y0) = (*size as usize, buf.rect.width().max(1) as usize, buf.rect.x0, buf.rect.y0);
@@ -219,6 +233,17 @@ pub fn apply_depth(adj: &Adjustment, buf: &mut Buffer, transfer: Transfer, depth
         }
         // Not evaluated: identity (still round-trips through PSD).
         Adjustment::ColorLookup { .. } | Adjustment::Unsupported { .. } => {}
+    }
+}
+
+/// Float RGB curve channels with no edit must preserve samples outside the LUT domain.
+/// Edited curves retain the existing spline/LUT behaviour until HDR extrapolation has an oracle.
+pub fn float_tone_identity(adj: &Adjustment, depth: Option<SampleType>) -> [bool; 3] {
+    match adj {
+        Adjustment::Curves { master, per_channel, space: ToneSpace::Rgb, .. } if depth == Some(SampleType::F32) => {
+            std::array::from_fn(|i| photocraft_doc::adjust::is_identity_curve(master) && photocraft_doc::adjust::is_identity_curve(&per_channel[i]))
+        }
+        _ => [false; 3],
     }
 }
 
@@ -241,9 +266,9 @@ pub fn tone_luts_q(adj: &Adjustment, quantum: Option<f32>) -> [Vec<f32>; 4] {
             let row = |c: &LevelsChannel| (0..LUT_SIZE).map(|k| levels_q(m, levels_q(c, x(k), quantum), quantum)).collect();
             [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), row(if *space == ToneSpace::Cmyk { black } else { &ident })]
         }
-        Adjustment::Curves { master, per_channel, space, black } => {
-            let m = if *space == ToneSpace::Lab { curve_lut(&[]) } else { curve_lut(master) };
-            let row = |c: &[CurvePoint]| curve_lut(c).iter().map(|&v| lut(&m, v)).collect();
+        Adjustment::Curves { master, per_channel, space, black, pencil } => {
+            let m = if *space == ToneSpace::Lab { curve_lut(&[]) } else { curve_lut_mode(master, *pencil) };
+            let row = |c: &[CurvePoint]| curve_lut_mode(c, *pencil).iter().map(|&v| lut(&m, v)).collect();
             [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), row(if *space == ToneSpace::Cmyk { black } else { &[] })]
         }
         _ => std::array::from_fn(|_| (0..LUT_SIZE).map(x).collect()),
@@ -251,7 +276,8 @@ pub fn tone_luts_q(adj: &Adjustment, quantum: Option<f32>) -> [Vec<f32>; 4] {
 }
 
 /// [`tone_luts_q`] in a document of `depth` (`None`: unrounded). 32-bit Levels use
-/// [`levels_float`], sampled on 0..1 and kept in 0..1 like every adjustment result here.
+/// [`levels_float`], sampled on 0..1 and kept in 0..1 for LUT consumers. Float RGB rendering
+/// evaluates the formula directly instead, so samples and results outside that domain survive.
 pub fn tone_luts_depth(adj: &Adjustment, depth: Option<SampleType>) -> [Vec<f32>; 4] {
     match (adj, depth) {
         (Adjustment::Levels { master, per_channel, space: ToneSpace::Rgb, .. }, Some(SampleType::F32)) => {
@@ -396,6 +422,63 @@ pub fn lut3d_sample(lut: &[f32], n: usize, c: [f32; 3], tetrahedral: bool) -> [f
         let c11 = lerp(at(0, 1, 1), at(1, 1, 1), fr);
         lerp(lerp(c00, c10, fg), lerp(c01, c11, fg), fb)
     }
+}
+
+/// How far one Color Balance slider at ±100 moves the black or white point (Photoshop 27.11:
+/// shadows −100 maps 99.6 of 255 to black, highlights +100 maps 155.5 to white).
+const BALANCE_LEVELS: f32 = 0.39;
+
+/// Color Balance on channel `ch` (0 red, 1 green, 2 blue) of `v` (0..1); `tones` are the
+/// shadows, midtones and highlights slider triples (cyan–red, magenta–green, yellow–blue,
+/// −100..100).
+///
+/// Reverse-engineered from Photoshop 27.11 (a gray ramp and pure colours through each slider at
+/// ±25, ±50 and ±100, with Preserve Luminosity on and off): every slider is a levels-and-gamma
+/// curve per channel, exact within 1 level for a single slider. With `a` = slider / 100:
+/// - Preserve Luminosity off: a slider only moves its own channel. Midtones is gamma 2^−a.
+///   Shadows is gamma 2^(−a/2) after a black point at 0.39·|a| when lowered; highlights is
+///   gamma 2^(−a/2) after a white point at 1 − 0.39·a when raised.
+/// - Preserve Luminosity on: midtones is gamma 2^(−a/2) on the slider's channel and 2^(a/2) on
+///   the other two. Shadows and highlights go by the differences between a tone's three sliders:
+///   each channel gets a plain black point at 0.39·(max − its own) for shadows and a plain white
+///   point at 1 − 0.39·(its own − min) for highlights (so one raised shadows slider darkens the
+///   other two channels, and two raised together darken only the third).
+///
+/// Tones apply highlights, shadows, then midtones (measured with two and three tones on one
+/// channel: within 1 level).
+pub fn color_balance_channel(tones: [[f32; 3]; 3], preserve_luminosity: bool, ch: usize, v: f32) -> f32 {
+    let [shadows, midtones, highlights] = tones;
+    let black = |v: f32, b: f32| ((v - b) / (1.0 - b)).max(0.0);
+    let white = |v: f32, w: f32| (v / w).min(1.0);
+    let mut v = v.clamp(0.0, 1.0);
+    for (tone, sliders) in [(2, highlights), (0, shadows), (1, midtones)] {
+        let a: [f32; 3] = sliders.map(|s| (s / 100.0).clamp(-1.0, 1.0));
+        if preserve_luminosity && tone != 1 {
+            let own = a.get(ch).copied().unwrap_or(0.0);
+            let (lo, hi) = a.iter().fold((f32::MAX, f32::MIN), |m, x| (m.0.min(*x), m.1.max(*x)));
+            v = if tone == 0 { black(v, BALANCE_LEVELS * (hi - own)) } else { white(v, 1.0 - BALANCE_LEVELS * (own - lo)) };
+            continue;
+        }
+        for (src, slider) in sliders.iter().enumerate() {
+            let a = (slider / 100.0).clamp(-1.0, 1.0);
+            let own = src == ch;
+            if a == 0.0 || (!preserve_luminosity && !own) {
+                continue;
+            }
+            v = match (tone, preserve_luminosity) {
+                (1, false) => v.powf(2f32.powf(-a)),
+                (1, true) => v.powf(2f32.powf(if own { -a } else { a } / 2.0)),
+                (0, false) if a < 0.0 => black(v, BALANCE_LEVELS * -a).powf(2f32.powf(-a / 2.0)),
+                (0, false) => v.powf(2f32.powf(-a / 2.0)),
+
+                (2, false) if a > 0.0 => white(v, 1.0 - BALANCE_LEVELS * a).powf(2f32.powf(-a / 2.0)),
+                (2, false) => v.powf(2f32.powf(-a / 2.0)),
+
+                _ => v,
+            };
+        }
+    }
+    v
 }
 
 /// How much a colour belongs to each Selective Color range: reds, yellows, greens, cyans,
@@ -648,8 +731,41 @@ pub fn levels_q(ch: &LevelsChannel, v: f32, quantum: Option<f32>) -> f32 {
 /// the clipped curve).
 pub fn levels_float(ch: &LevelsChannel, v: f32) -> f32 {
     let t = (v - ch.in_black) / (ch.in_white - ch.in_black).max(1e-6);
-    let t = t.signum() * t.abs().powf(1.0 / ch.gamma.max(0.01));
+    let t = if ch.gamma == 1.0 { t } else { t.signum() * t.abs().powf(1.0 / ch.gamma.max(0.01)) };
     ch.out_black + t * (ch.out_white - ch.out_black)
+}
+
+/// The LUT of one Curves curve: [`curve_map_lut`] for a pencil-drawn map, else [`curve_lut`].
+pub fn curve_lut_mode(points: &[CurvePoint], pencil: bool) -> Vec<f32> {
+    if pencil { curve_map_lut(points) } else { curve_lut(points) }
+}
+
+/// A pencil-drawn Curves map (see [`photocraft_doc::adjust::curve_map`]): straight segments
+/// between its entries, constant outside the first/last, clamped to 0..=1, sampled into a LUT.
+pub fn curve_map_lut(points: &[CurvePoint]) -> Vec<f32> {
+    let mut pts: Vec<(f32, f32)> = points.iter().filter(|p| p.input.is_finite() && p.output.is_finite()).map(|p| (p.input, p.output)).collect();
+    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pts.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-6);
+    let ident = |k: usize| k as f32 / (LUT_SIZE - 1) as f32;
+    let (Some(&first), Some(&last)) = (pts.first(), pts.last()) else { return (0..LUT_SIZE).map(ident).collect() };
+    let mut seg = 0;
+    (0..LUT_SIZE)
+        .map(|k| {
+            let xv = ident(k);
+            if xv <= first.0 {
+                return first.1.clamp(0.0, 1.0);
+            }
+            if xv >= last.0 {
+                return last.1.clamp(0.0, 1.0);
+            }
+            while pts.get(seg + 1).is_some_and(|p| p.0 < xv) {
+                seg += 1;
+            }
+            let (Some(&(x0, y0)), Some(&(x1, y1))) = (pts.get(seg), pts.get(seg + 1)) else { return last.1.clamp(0.0, 1.0) };
+            let t = if x1 > x0 { (xv - x0) / (x1 - x0) } else { 0.0 };
+            (y0 + (y1 - y0) * t).clamp(0.0, 1.0)
+        })
+        .collect()
 }
 
 /// Photoshop curve: a natural cubic spline through the points (it may
@@ -704,6 +820,41 @@ pub fn curve_lut(points: &[CurvePoint]) -> Vec<f32> {
             (y as f32).clamp(0.0, 1.0)
         })
         .collect()
+}
+
+/// A layer-style contour curve: [`curve_lut`], except that the curve bends sharply at corner
+/// points (`corners[i]` true; Photoshop's Contour Editor "Corner"): each run between corners is
+/// its own natural spline, so all-corner points make a polyline. Missing flags are smooth.
+pub fn contour_curve_lut(points: &[CurvePoint], corners: &[bool]) -> Vec<f32> {
+    let mut pts: Vec<(CurvePoint, bool)> = points.iter().enumerate().map(|(i, p)| (p.clone(), corners.get(i).copied().unwrap_or(false))).collect();
+    if !pts.iter().any(|p| p.1) {
+        return curve_lut(points);
+    }
+    pts.sort_by(|a, b| a.0.input.partial_cmp(&b.0.input).unwrap_or(std::cmp::Ordering::Equal));
+    pts.dedup_by(|a, b| (a.0.input - b.0.input).abs() < 1e-6);
+    let mut out: Vec<f32> = Vec::new();
+    let mut start = 0usize;
+    let last = pts.len().saturating_sub(1);
+    for i in 1..=last {
+        let corner = pts.get(i).is_some_and(|p| p.1);
+        if !(corner || i == last) {
+            continue;
+        }
+        let Some(seg) = pts.get(start..=i) else { break };
+        let from = seg.first().map_or(0.0, |p| p.0.input);
+        let lut = curve_lut(&seg.iter().map(|p| p.0.clone()).collect::<Vec<_>>());
+        if out.is_empty() {
+            out = lut;
+        } else {
+            for (k, (o, v)) in out.iter_mut().zip(lut).enumerate() {
+                if k as f32 / (LUT_SIZE - 1) as f32 >= from {
+                    *o = v;
+                }
+            }
+        }
+        start = i;
+    }
+    if out.is_empty() { curve_lut(points) } else { out }
 }
 
 fn gradient(stops: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
@@ -863,6 +1014,46 @@ mod tone_tests {
         }
     }
 
+    /// Photoshop 27.11, measured: Color Balance with one cyan–red slider moved, over a gray ramp
+    /// (x = 0, 16, …, 240, 255); red and green out (blue follows green on gray).
+    #[test]
+    fn color_balance_matches_photoshop() {
+        const X: [u8; 17] = [0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 255];
+        type Row = (&'static str, f32, bool, [u8; 17], [u8; 17]);
+        let measured: [Row; 6] = [
+            ("midtones", 50.0, false, [0, 36, 59, 78, 96, 112, 128, 142, 156, 170, 183, 196, 209, 221, 233, 244, 255], X),
+            ("shadows", -100.0, false, [0, 0, 0, 0, 0, 0, 0, 7, 23, 43, 67, 93, 122, 154, 186, 221, 255], X),
+            ("highlights", 100.0, false, [0, 51, 84, 111, 136, 160, 182, 202, 223, 242, 255, 255, 255, 255, 255, 255, 255], X),
+            ("shadows", 50.0, true, X, [0, 0, 0, 0, 17, 37, 57, 77, 97, 117, 137, 157, 177, 197, 216, 236, 255]),
+            (
+                "midtones",
+                100.0,
+                true,
+                [0, 36, 59, 78, 96, 112, 128, 142, 156, 170, 183, 196, 209, 221, 233, 244, 255],
+                [0, 5, 14, 24, 36, 50, 64, 80, 97, 114, 132, 151, 171, 191, 212, 234, 255],
+            ),
+            ("highlights", -100.0, true, X, [0, 26, 53, 79, 105, 132, 158, 184, 211, 237, 255, 255, 255, 255, 255, 255, 255]),
+        ];
+        // Two sliders in one tone, Preserve Luminosity on (measured): shadows red and blue +50 darken
+        // only green; highlights red −50 with green +50 lift green by 100 and blue by 50.
+        let two =
+            |tones: [[f32; 3]; 3], x: f32| -> [i32; 3] { std::array::from_fn(|ch| (color_balance_channel(tones, true, ch, x / 255.0) * 255.0).round() as i32) };
+        assert_eq!(two([[50.0, 0.0, 50.0], [0.0; 3], [0.0; 3]], 128.0), [128, 97, 128]);
+        let hi = two([[0.0; 3], [0.0; 3], [-50.0, 50.0, 0.0]], 128.0);
+        assert!((hi[0] - 128).abs() <= 1 && (hi[1] - 211).abs() <= 1 && (hi[2] - 159).abs() <= 1, "{hi:?}");
+        for (tone, amount, preserve, red, green) in measured {
+            let mut tones = [[0.0f32; 3]; 3];
+            tones[["shadows", "midtones", "highlights"].iter().position(|t| *t == tone).unwrap()][0] = amount;
+            for (i, x) in X.iter().enumerate() {
+                let v = f32::from(*x) / 255.0;
+                let got = |ch| (color_balance_channel(tones, preserve, ch, v) * 255.0).round() as i32;
+                let (r, g) = (got(0), got(1));
+                assert!((r - i32::from(red[i])).abs() <= 1, "{tone} {amount} pl {preserve} at {x}: red {r} vs Photoshop {}", red[i]);
+                assert!((g - i32::from(green[i])).abs() <= 1, "{tone} {amount} pl {preserve} at {x}: green {g} vs Photoshop {}", green[i]);
+            }
+        }
+    }
+
     #[test]
     fn levels_and_curves_apply_each_channel_before_the_master() {
         // These two affine tone adjustments describe the same mapping:
@@ -875,8 +1066,13 @@ mod tone_tests {
             space: ToneSpace::Rgb,
             black: Default::default(),
         };
-        let curves =
-            Adjustment::Curves { master: line(0.0, 0.5), per_channel: std::array::from_fn(|_| line(0.5, 1.0)), space: ToneSpace::Rgb, black: Vec::new() };
+        let curves = Adjustment::Curves {
+            master: line(0.0, 0.5),
+            per_channel: std::array::from_fn(|_| line(0.5, 1.0)),
+            space: ToneSpace::Rgb,
+            black: Vec::new(),
+            pencil: false,
+        };
         for depth in [None, Some(SampleType::U8), Some(SampleType::U16), Some(SampleType::F32)] {
             let ll = tone_luts_depth(&levels, depth);
             let cl = tone_luts_depth(&curves, depth);
@@ -941,6 +1137,7 @@ mod tone_tests {
             per_channel: [line(0.0, 1.0), line(0.0, 1.0), line(0.0, 1.0)],
             space: ToneSpace::Cmyk,
             black: line(0.0, 0.5),
+            pencil: false,
         };
         let mut b = Buffer { rect: Rect::new(0, 0, 1, 1), px: vec![[0.8, 0.8, 0.8, 1.0]] };
         apply(&a, &mut b);
@@ -951,6 +1148,7 @@ mod tone_tests {
             per_channel: [line(0.2, 1.0), line(0.0, 1.0), line(0.0, 1.0)],
             space: ToneSpace::Lab,
             black: Vec::new(),
+            pencil: false,
         };
         let mut b = Buffer { rect: Rect::new(0, 0, 1, 1), px: vec![[0.2, 0.2, 0.2, 1.0]] };
         apply(&a, &mut b);

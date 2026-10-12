@@ -4199,6 +4199,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "open",
  "photocraft-automation",
+ "photocraft-cms",
  "photocraft-codecs",
  "photocraft-color",
  "photocraft-compose",
@@ -4372,6 +4373,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "wat",
 ]
@@ -4381,6 +4383,7 @@ name = "photocraft-format"
 version = "0.7.0"
 dependencies = [
  "blake3",
+ "crc32fast",
  "flate2",
  "photocraft-codecs",
  "photocraft-color",
@@ -4597,6 +4600,7 @@ dependencies = [
  "serde_json",
  "sys-locale",
  "toml",
+ "winsafe",
 ]
 
 [[package]]

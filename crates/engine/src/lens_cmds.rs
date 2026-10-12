@@ -390,7 +390,7 @@ fn camera_raw_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"layer": id.0, "identity": cr.is_identity(), "ms": t0.ms()}))
 }
 
-fn lens_batch(_s: &mut Session, p: &Value) -> Result<Value> {
+fn lens_batch(s: &mut Session, p: &Value) -> Result<Value> {
     let inputs = crate::file_cmds::batch_inputs(p, LENS_BATCH)?;
     let output = crate::file_cmds::str_param(p, "output", LENS_BATCH)?.to_string();
     let format = p.get("format").and_then(Value::as_str).unwrap_or("same").to_string();
@@ -402,7 +402,7 @@ fn lens_batch(_s: &mut Session, p: &Value) -> Result<Value> {
         // Batch default: the EXIF-driven profile, as Photoshop's dialog suggests.
         m.entry("profile").or_insert(json!("auto"));
     }
-    let r = crate::file_cmds::process_files(&inputs, &output, &format, crate::file_cmds::SaveOpts::from_params(p, LENS_BATCH)?, "", &|scratch| {
+    let r = crate::file_cmds::process_files(&inputs, &output, &format, crate::file_cmds::SaveOpts::from_params(s, p, LENS_BATCH)?, "", &|scratch| {
         if scratch.active().is_some_and(|d| d.doc.layers.len() > 1) {
             scratch.execute("layer.flattenImage", json!({}))?;
         }

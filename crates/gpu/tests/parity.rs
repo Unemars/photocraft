@@ -29,6 +29,47 @@ struct Gpu {
 /// Simulated texture limit (pages and chunks of 256 px).
 const PAGED_LIMIT: u32 = 256;
 
+#[test]
+fn hdr_adjustments_preserve_range_and_cpu_parity() {
+    let Some(mut g) = gpu() else { return };
+    let identity = vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }];
+    let channel = LevelsChannel { in_black: 0.25, in_white: 0.75, gamma: 2.0, out_black: -0.1, out_white: 1.5 };
+    for adj in [
+        Adjustment::Exposure { exposure: 0.0, offset: 0.0, gamma: 1.0 },
+        Adjustment::Exposure { exposure: 1.0, offset: 0.1, gamma: 1.3 },
+        Adjustment::Exposure { exposure: 0.8, offset: -0.02, gamma: 1.2 },
+        Adjustment::Levels { master: Default::default(), per_channel: Default::default(), space: Default::default(), black: Default::default() },
+        Adjustment::Levels {
+            master: channel.clone(),
+            per_channel: [channel.clone(), Default::default(), channel],
+            space: Default::default(),
+            black: Default::default(),
+        },
+        Adjustment::Curves {
+            master: identity.clone(),
+            per_channel: std::array::from_fn(|_| identity.clone()),
+            space: Default::default(),
+            black: Vec::new(),
+            pencil: false,
+        },
+        Adjustment::Curves {
+            master: Vec::new(),
+            per_channel: [Vec::new(), identity.clone(), vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 0.5 }]],
+            space: Default::default(),
+            black: Vec::new(),
+            pencil: false,
+        },
+    ] {
+        let mut d = Document::new("HDR adjustments", Size::new(3, 1), ColorMode::Rgb, SampleType::F32);
+        let mut layer = Layer::raster("pixels", PixelFormat::RGBA32F);
+        layer.surface_mut().unwrap().write_region(Rect::new(0, 0, 3, 1), &[4.0, 2.0, 0.5, 1.0, -0.1, 3.0, 0.25, 0.75, 0.0, 0.0, 0.0, 1.0]);
+        d.layers = vec![layer, Layer::new("adjustment", LayerContent::Adjustment(adj.clone()))];
+        let cpu = photocraft_compose::flatten(&d);
+        assert!(cpu.px[0][0] > 1.0, "HDR reference unexpectedly clipped: {adj:?}");
+        check(&mut g, &d, &format!("HDR {adj:?}"));
+    }
+}
+
 fn gpu() -> Option<Gpu> {
     let lock = GPU_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let instance = wgpu::Instance::default();
@@ -40,6 +81,7 @@ fn gpu() -> Option<Gpu> {
         }
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
+    eprintln!("GPU parity backend: {:?}", adapter.get_info().backend);
     // Exact parity needs 32-bit float targets. Adapters without them (e.g. GL software
     // rasterizers) use the CPU compositor in the app, so there is nothing to compare there.
     if Compositor::preferred_acc_format(&adapter) != wgpu::TextureFormat::Rgba32Float {
@@ -449,6 +491,7 @@ fn adjustments() -> Vec<Adjustment> {
             per_channel: [pts(&[(0.0, 0.0), (0.5, 0.3), (1.0, 1.0)]), pts(&[(0.0, 0.0), (1.0, 1.0)]), pts(&[(0.0, 0.2), (1.0, 1.0)])],
             space: Default::default(),
             black: Vec::new(),
+            pencil: false,
         },
         Adjustment::HueSaturation { hue: 40.0, saturation: 30.0, lightness: -10.0, colorize: false, ranges: HueRange::defaults() },
         Adjustment::HueSaturation { hue: 200.0, saturation: 50.0, lightness: 20.0, colorize: true, ranges: HueRange::defaults() },
@@ -1048,7 +1091,11 @@ fn fx_doc(w: u32, h: u32, depth: SampleType) -> Document {
 }
 
 fn contour() -> Contour {
-    Contour::Custom { name: "cove".into(), points: vec![Cp { input: 0.0, output: 0.1 }, Cp { input: 0.4, output: 0.8 }, Cp { input: 1.0, output: 0.6 }] }
+    Contour::Custom {
+        name: "cove".into(),
+        points: vec![Cp { input: 0.0, output: 0.1 }, Cp { input: 0.4, output: 0.8 }, Cp { input: 1.0, output: 0.6 }],
+        corners: vec![],
+    }
 }
 
 fn shadow(blend: BlendMode, opacity: f32, angle: f32, distance: f32, size: f32, spread: f32) -> Shadow {
@@ -1419,6 +1466,14 @@ fn layer_effects_on_groups_clipping_and_fills() {
         d.layers.push(grp);
         fx_check(&mut g, &d, &format!("group {blend:?}"));
     }
+    // A child's stroke reaching past the group's own effect reach (#3274).
+    let mut d = fx_doc(100, 80, SampleType::U8);
+    let mut a = blob("a", d.pixel_format(), 45.0, 40.0, 16.0, [0.6, 0.6, 0.6]);
+    a.effects.items = vec![Effect::Stroke(stroke(8.0, StrokePosition::Outside, FxPaint::Color(Color::rgb(0.0, 0.0, 0.0))))];
+    let mut grp = Layer::group("g", vec![a]);
+    grp.effects.items = vec![Effect::DropShadow(shadow(BlendMode::Multiply, 0.8, 120.0, 3.0, 2.0, 0.0))];
+    d.layers.push(grp);
+    fx_check(&mut g, &d, "group effects around a child's stroke");
     // An effect layer as a clipping base, and a clipped layer with effects.
     let mut d = fx_doc(100, 80, SampleType::U8);
     let mut base = blob("base", d.pixel_format(), 45.0, 40.0, 24.0, [0.3, 0.8, 0.4]);

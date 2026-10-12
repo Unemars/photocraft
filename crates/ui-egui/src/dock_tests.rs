@@ -383,6 +383,67 @@ fn double_clicking_a_tab_collapses_and_dragging_a_strip_reorders() {
 }
 
 #[test]
+fn dragging_a_tab_onto_another_group_moves_only_that_panel() {
+    let (app, _, _) = app_with_layers();
+    let mut h = harness(app, vec2(1200.0, 800.0), ThemeKind::ProMedium);
+    let strips = last_strips(&h.ctx);
+    let source = strips
+        .iter()
+        .find(|strip| strip.group == Group::Color)
+        .and_then(|strip| strip.tabs.iter().find(|(index, _)| *index == 1))
+        .map(|(_, rect)| rect.center())
+        .unwrap();
+    let destination = strips.iter().find(|strip| strip.group == Group::Layers).and_then(|strip| strip.tabs.first()).map(|(_, rect)| rect.center()).unwrap();
+
+    drag(&mut h, source, destination);
+
+    let layout = h.state().ui.docking.as_ref().expect("moving one native tab promotes to the shared layout");
+    fn tabs<'a>(node: &'a craft_ui::docking::Node<String>, panel: &str) -> Option<&'a [String]> {
+        match node {
+            craft_ui::docking::Node::Tabs { panels, .. } if panels.iter().any(|id| id == panel) => Some(panels),
+            craft_ui::docking::Node::Split { first, second, .. } => tabs(first, panel).or_else(|| tabs(second, panel)),
+            _ => None,
+        }
+    }
+    let source_group = tabs(layout.root.as_ref().unwrap(), "swatches").unwrap();
+    assert!(source_group.contains(&"layers".to_owned()), "dropped into the destination tab group");
+    assert!(!source_group.contains(&"color".to_owned()), "the source group remains intact");
+    assert!(crate::panel_docking::valid(layout));
+}
+
+/// The strip shows reordered tabs by position; the drop moves the panel that was dragged, not
+/// the one at that position in the default order.
+#[test]
+fn dragging_a_reordered_tab_onto_another_group_moves_that_panel() {
+    let (mut app, _, _) = app_with_layers();
+    // Gradients (original tab 2) drawn first: Gradients | Color | Swatches | Patterns.
+    app.ui.dock.move_tab(Group::Color, 2, Some(0), true);
+    let mut h = harness(app, vec2(1200.0, 800.0), ThemeKind::ProMedium);
+    let strips = last_strips(&h.ctx);
+    let source = strips
+        .iter()
+        .find(|strip| strip.group == Group::Color)
+        .and_then(|strip| strip.tabs.iter().find(|(index, _)| *index == 2))
+        .map(|(_, rect)| rect.center())
+        .unwrap();
+    let destination = strips.iter().find(|strip| strip.group == Group::Layers).and_then(|strip| strip.tabs.first()).map(|(_, rect)| rect.center()).unwrap();
+
+    drag(&mut h, source, destination);
+
+    let layout = h.state().ui.docking.as_ref().expect("moving one native tab promotes to the shared layout");
+    fn tabs<'a>(node: &'a craft_ui::docking::Node<String>, panel: &str) -> Option<&'a [String]> {
+        match node {
+            craft_ui::docking::Node::Tabs { panels, .. } if panels.iter().any(|id| id == panel) => Some(panels),
+            craft_ui::docking::Node::Split { first, second, .. } => tabs(first, panel).or_else(|| tabs(second, panel)),
+            _ => None,
+        }
+    }
+    let moved = tabs(layout.root.as_ref().unwrap(), "gradients").unwrap();
+    assert!(moved.contains(&"layers".to_owned()), "the dragged Gradients tab joined Layers: {moved:?}");
+    assert!(!moved.contains(&"color".to_owned()), "Color stayed in its group: {moved:?}");
+}
+
+#[test]
 fn tiny_windows_do_not_panic() {
     for theme in [ThemeKind::ProMedium, ThemeKind::Studio] {
         for (w, ht) in [(40.0, 30.0), (300.0, 80.0), (600.0, 200.0), (2000.0, 120.0)] {
@@ -575,6 +636,29 @@ fn panel_tab_context_menu_closes_one_tab_or_its_group() {
 
 fn is_pro(theme: ThemeKind) -> bool {
     theme.is_pro()
+}
+
+#[test]
+fn theme_switch_keeps_the_selected_color_group_panel() {
+    use egui_kittest::kittest::Queryable;
+
+    for theme in ThemeKind::ALL {
+        for (tab, name) in Group::Color.tabs(true).iter().enumerate() {
+            let (mut app, _, _) = app_with_layers();
+            app.ui.dock_tabs.color = tab;
+            let mut h = harness(app, vec2(1200.0, 900.0), ThemeKind::Pro);
+            let ctx = h.ctx.clone();
+            h.state_mut().set_theme(&ctx, theme);
+            h.run_steps(4);
+            assert_eq!(Group::Color.tabs(is_pro(theme)).get(h.state().ui.dock_tabs.color), Some(name), "{theme:?}");
+            if *name == "Color" && !is_pro(theme) {
+                assert!(h.query_by_label("Hue").is_some(), "{theme:?}: Color picker missing");
+            }
+            h.state_mut().set_theme(&ctx, ThemeKind::Pro);
+            h.run_steps(4);
+            assert_eq!(h.state().ui.dock_tabs.color, tab, "{theme:?}: switching back changed the panel");
+        }
+    }
 }
 
 /// Full app at `size` (1× scale) on a document with `n` layers named "Row 00", "Row 01", …
@@ -975,14 +1059,14 @@ fn dragging_a_tab_reorders_the_group_and_the_order_persists() {
     }
 }
 
-/// Dragging a tab off its strip moves the whole group (as dragging the strip does); a locked
-/// workspace keeps both the tab and group order.
+/// Dragging a tab onto another group's body moves the whole group; onto its tab strip moves only
+/// the tab. A locked workspace keeps both the tab and group order.
 #[test]
 fn a_tab_dragged_off_the_strip_moves_the_group_and_locking_stops_reordering() {
     let (app, _, _) = app_with_layers();
     let mut h = harness(app, vec2(1200.0, 800.0), ThemeKind::ProMedium);
     let paths = tab_rect(&h, Group::Layers, 2);
-    let to = rect_of(&h, Group::Color).left_top() + vec2(120.0, 10.0);
+    let to = rect_of(&h, Group::Color).left_top() + vec2(120.0, 40.0);
     drag(&mut h, paths.center(), to);
     assert_eq!(h.state().ui.dock.order().first(), Some(&Group::Layers));
     assert!(h.state().ui.dock.tab_order.is_empty(), "the tabs kept their order");

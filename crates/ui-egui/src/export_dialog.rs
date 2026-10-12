@@ -54,6 +54,77 @@ pub fn quick_export_layer_png(app: &mut PhotocraftApp, layer: photocraft_doc::La
     confirm(app, &f)
 }
 
+/// Export each selected layer separately, with one destination prompt for the batch.
+/// The chosen path names the first file; subsequent files have numbered sibling names.
+pub fn quick_export_selected_layers_png(app: &mut PhotocraftApp) -> Result<Value, String> {
+    let st = app.session.active().ok_or("no document")?;
+    let layers = st.selected_layers();
+    if layers.len() == 1 {
+        return quick_export_layer_png(app, layers[0]);
+    }
+    if layers.is_empty() {
+        return Err("no selected layers".into());
+    }
+    // Capture all sources before showing the dialog: changing selection or document while it
+    // is open cannot change which layers get exported.
+    let docs: Vec<_> =
+        layers.into_iter().map(|id| photocraft_engine::layer_menu_cmds::layer_document(&st.doc, id).map_err(|e| e.to_string())).collect::<Result<_, _>>()?;
+    let suggested = format!("{}.png", export_name(&st.doc.name));
+    app.pick_save(&suggested, move |app, path| {
+        if !path.to_ascii_lowercase().ends_with(".png") {
+            return Err("Quick Export as PNG writes .png files".into());
+        }
+        let paths = batch_paths(&path, &docs);
+        let mut exported = Vec::new();
+        for (doc, path) in docs.iter().zip(paths) {
+            let export = app.services.export.as_ref().ok_or("no exporter configured")?;
+            let (bytes, warnings) = export(doc, &path, &ExportSettings { xmp_all: false, ..Default::default() })?;
+            let write = app.services.write.as_mut().ok_or("no writer configured")?;
+            write(&path, &bytes)?;
+            crate::notices::io_warnings(app, &format!("Exported {}", crate::file_open::display_name(&path)), &warnings);
+            exported.push(json!({"path": path, "bytes": bytes.len(), "warnings": warnings}));
+        }
+        app.ui.status = format!("Exported {} PNG files", exported.len());
+        app.ui.status_error = false;
+        Ok(json!({"files": exported}))
+    })
+}
+
+fn export_name(name: &str) -> String {
+    let name: String = name.chars().take(80).map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c }).collect();
+    let name = name.trim().trim_matches('.');
+    if name.is_empty() { "layer".into() } else { name.into() }
+}
+
+fn batch_paths(path: &str, docs: &[Document]) -> Vec<String> {
+    let first = std::path::Path::new(path);
+    let parent = first.parent().unwrap_or_else(|| std::path::Path::new(""));
+    let stem = first.file_stem().and_then(|s| s.to_str()).unwrap_or("layers");
+    docs.iter()
+        .enumerate()
+        .map(|(i, doc)| {
+            if i == 0 {
+                return path.to_string();
+            }
+            let name = export_name(&doc.name);
+            let candidate = parent.join(format!("{stem}-{}-{name}.png", i + 1));
+            // The first file's overwrite is handled by the Save dialog; never overwrite sibling
+            // files silently on desktop. Downloads on the web are named by the browser.
+            #[cfg(not(target_arch = "wasm32"))]
+            let candidate = {
+                let mut candidate = candidate;
+                let mut suffix = 1u64;
+                while candidate.exists() {
+                    candidate = parent.join(format!("{stem}-{}-{name}-{suffix}.png", i + 1));
+                    suffix = suffix.saturating_add(1);
+                }
+                candidate
+            };
+            candidate.to_string_lossy().into_owned()
+        })
+        .collect()
+}
+
 /// The document a dialog exports: the whole image, or one layer (`__layer`).
 fn source_document(app: &PhotocraftApp, f: &Map<String, Value>) -> Result<Arc<Document>, String> {
     let st = app.session.active().ok_or("no document")?;
@@ -275,9 +346,12 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
         let (bytes, warnings) = export(&out, &path, &settings)?;
         let write = app.services.write.as_mut().ok_or("no writer configured")?;
         write(&path, &bytes)?;
-        app.ui.status = format!("Exported {path} ({})", crate::sizing::human_bytes(bytes.len() as f64));
+        let template = "Exported {path} ({size})";
+        app.ui.status = crate::i18n::fmt(tl!(template), &[("path", &path), ("size", &crate::sizing::human_bytes(bytes.len() as f64))]);
         app.ui.status_error = false;
-        crate::notices::io_warnings(app, &format!("Exported {}", crate::file_open::display_name(&path)), &warnings);
+        let template = "Exported {path}";
+        let what = crate::i18n::fmt(tl!(template), &[("path", &crate::file_open::display_name(&path))]);
+        crate::notices::io_warnings(app, &what, &warnings);
         Ok(json!({"path": path, "bytes": bytes.len(), "warnings": warnings}))
     })
 }
@@ -312,7 +386,8 @@ pub fn quick_export_png(app: &mut PhotocraftApp) -> Result<Value, String> {
 /// Runs Quick Export with `p` (an explicit `path`, or none for the document's folder).
 fn quick_export(app: &mut PhotocraftApp, p: Value) -> Result<Value, String> {
     let r = app.run("file.export.quickExport", p)?;
-    app.ui.status = format!("Exported {}", r["path"].as_str().unwrap_or_default());
+    let template = "Exported {path}";
+    app.ui.status = crate::i18n::fmt(tl!(template), &[("path", r["path"].as_str().unwrap_or_default())]);
     Ok(r)
 }
 

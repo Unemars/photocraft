@@ -394,17 +394,17 @@ mod tests {
         let out = warp_mesh_surface(&src, r, &|x, y| (x + 10.0, y - 2.0), Interp::Bilinear);
         assert_eq!(out.content_bounds(), r.translate(10, -2));
         assert_eq!(out.pixel(20, 10), src.pixel(10, 12));
-        // Arc 50 %: the centre column keeps its pixels, the ends drop.
+        // Arc 50 % (Photoshop): the bottom corners keep their pixels, the top rises and spreads.
         let b = [f64::from(r.x0), f64::from(r.y0), f64::from(r.x1), f64::from(r.y1)];
         let w = Warp::preset(WarpStyle::Arc, 50.0, b);
         let arc = warp_mesh_surface(&src, r, &|x, y| w.map(x, y), Interp::Bilinear);
-        let cx = (r.x0 + r.x1) / 2;
-        let (p, q) = (arc.pixel(cx, 10), src.pixel(cx, 10));
-        assert!(p.iter().zip(&q).all(|(a, b)| (a - b).abs() < 0.05), "{p:?} vs {q:?}");
+        let corner = w.map(f64::from(r.x0), f64::from(r.y1));
+        assert!((corner.0 - f64::from(r.x0)).abs() < 1e-9 && (corner.1 - f64::from(r.y1)).abs() < 1e-9, "{corner:?}");
         let (ex, ey) = w.map(f64::from(r.x0) + 2.5, f64::from(r.y0) + 2.5);
         let e = arc.pixel(ex.floor() as i32, ey.floor() as i32);
         assert!(e[3] > 0.2, "a point near the top-left corner lands at its mapped position: {e:?}");
-        assert!(arc.content_bounds().y1 > r.y1 + 2, "ends drop below the original box");
+        let c = arc.content_bounds();
+        assert!(c.y0 < r.y0 - 2 && c.x0 < r.x0 && c.x1 > r.x1, "the top rises and spreads past the box: {c:?}");
     }
 
     #[test]

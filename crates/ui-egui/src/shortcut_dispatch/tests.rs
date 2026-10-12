@@ -301,6 +301,16 @@ fn a_disabled_shortcut_says_why() {
     assert!(!h.state().ui.status.is_empty() && h.state().ui.status_error, "the status bar says why");
 }
 
+#[test]
+fn a_disabled_shortcut_uses_the_command_id_translation() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+    crate::i18n::with_language(crate::i18n::Lang::from_code("cs").unwrap(), || {
+        super::dispatch(&mut app, &egui::Context::default(), "select.all");
+        assert!(app.ui.status.starts_with("Vybrat vše není k dispozici:"), "{}", app.ui.status);
+        assert!(app.ui.status_error);
+    });
+}
+
 /// #352: ⌥[ ⌥] ⌥, ⌥. and ⇧⌥[ walk the Layers panel's rows from the keyboard.
 #[test]
 fn alt_brackets_walk_the_layers_panel() {
@@ -542,7 +552,7 @@ fn named_action_function_key_replays_and_survives_preferences_roundtrip() {
     h.state_mut().ui.actions.selected = None;
     press(&mut h, "F6");
     assert_eq!(active_name(&h), "F6 overlay");
-    assert_eq!(h.state().ui.status, "Played 1 steps");
+    assert_eq!(h.state().ui.status, "Played 1 step");
     assert!(!h.state().ui.status_error);
     assert_eq!(take_log(&h.ctx), vec![(crate::actions::shortcut_id("LivePrint 2R"), Outcome::Ran)]);
     h.state_mut().run("actions.delete", json!({"action": "LivePrint 2R"})).unwrap();

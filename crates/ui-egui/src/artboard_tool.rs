@@ -1,9 +1,11 @@
 //! Artboard tool (Move group, V / ⇧V cycles with the Move tool): drag on an empty spot to draw a
 //! new artboard, click a board to select it, drag it to move it with its contents, and drag the
-//! selected board's edge and corner handles to resize it. The options bar sets the selected board's
-//! size (preset, W/H, portrait/landscape) and adds a board of the same size beside the last one.
-//! Every change is one engine command (`layer.new.artboard`, `layer.artboard.set`), so each gesture
-//! is one undo step; this module only turns pointer gestures into them.
+//! selected board's edge and corner handles to resize it (⇧ on a corner keeps its proportions).
+//! The "+" buttons beside the selected board's sides add a board of the same size there (⌥: a copy
+//! with its contents). The options bar sets the selected board's size (preset, W/H,
+//! portrait/landscape) and adds a board of the same size beside the last one. Every change is one
+//! engine command (`layer.new.artboard`, `layer.artboard.set`, `layer.artboard.addBeside`), so each
+//! gesture is one undo step; this module only turns pointer gestures into them.
 
 use egui::{CursorIcon, Pos2, Rect, Stroke, vec2};
 use photocraft_doc::{Document, Layer, LayerId};
@@ -20,6 +22,13 @@ use crate::theme::Tokens;
 const HANDLE_PX: f64 = 6.0;
 /// A press that moves less than this (screen points) is a click, not a drawn board.
 const CLICK_PX: f64 = 3.0;
+/// How far the "+" buttons sit outside the selected board's edges (screen points, to their centre).
+const PLUS_OFFSET_PX: f64 = 18.0;
+/// The "+" buttons' radius (screen points).
+const PLUS_RADIUS_PX: f64 = 8.0;
+/// The sides the "+" buttons add a board on, as `layer.artboard.addBeside` names them, with the
+/// direction from the board's centre.
+const SIDES: [(&str, [f64; 2]); 4] = [("top", [0.0, -1.0]), ("right", [1.0, 0.0]), ("bottom", [0.0, 1.0]), ("left", [-1.0, 0.0])];
 
 /// Artboard tool state (serde: readable through the control channel).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -37,7 +46,8 @@ pub enum ArtboardDrag {
     /// Moving board `id`, whose rect was `rect` at the press.
     Move { id: LayerId, rect: [i64; 4], start: [f64; 2], cur: [f64; 2] },
     /// Dragging handle (`hx`, `hy`) of board `id`: −1 the left/top edge, 1 the right/bottom, 0 neither.
-    Resize { id: LayerId, rect: [i64; 4], hx: i8, hy: i8, start: [f64; 2], cur: [f64; 2] },
+    /// `keep`: ⇧ is down, so a corner keeps the board's proportions.
+    Resize { id: LayerId, rect: [i64; 4], hx: i8, hy: i8, start: [f64; 2], cur: [f64; 2], keep: bool },
 }
 
 fn edges(r: photocraft_geom::Rect) -> [i64; 4] {
@@ -79,6 +89,27 @@ fn handle_at(app: &PhotocraftApp, p: [f64; 2]) -> Option<(LayerId, [i64; 4], i8,
     }
 }
 
+/// Each side's name and "+" button centre.
+type PlusButtons = [(&'static str, [f64; 2]); 4];
+
+/// The "+" buttons of the selected board: its id and each side's name and button centre (document
+/// pixels).
+fn plus_buttons(app: &PhotocraftApp) -> Option<(LayerId, PlusButtons)> {
+    let (id, r) = active_board(app)?;
+    let r = as_f64(r);
+    let off = PLUS_OFFSET_PX / f64::from(app.point_zoom()).max(0.01);
+    let (cx, cy) = ((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0);
+    let (hw, hh) = ((r[2] - r[0]) / 2.0 + off, (r[3] - r[1]) / 2.0 + off);
+    Some((id, SIDES.map(|(side, [dx, dy])| (side, [cx + dx * hw, cy + dy * hh]))))
+}
+
+/// The side of the "+" button under a document point.
+fn plus_at(app: &PhotocraftApp, p: [f64; 2]) -> Option<(LayerId, &'static str)> {
+    let (id, buttons) = plus_buttons(app)?;
+    let r = PLUS_RADIUS_PX / f64::from(app.point_zoom()).max(0.01);
+    buttons.iter().find(|(_, c)| (p[0] - c[0]).hypot(p[1] - c[1]) <= r).map(|(side, _)| (id, *side))
+}
+
 /// The board drawn from `a` to `b`, edges on whole pixels.
 fn drawn(a: [f64; 2], b: [f64; 2]) -> [i64; 4] {
     [a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1])].map(|v| v.round() as i64)
@@ -105,6 +136,21 @@ fn resized(r: [i64; 4], hx: i8, hy: i8, d: [i64; 2]) -> [i64; 4] {
     e
 }
 
+/// `r` with corner (`hx`, `hy`) dragged by `d`, keeping its proportions (⇧): the opposite corner
+/// stays, and the board scales by the larger of the two axes' factors.
+fn resized_keep(r: [i64; 4], hx: i8, hy: i8, d: [i64; 2]) -> [i64; 4] {
+    let (w, h) = ((r[2] - r[0]).max(1) as f64, (r[3] - r[1]).max(1) as f64);
+    // The fixed corner, and the dragged one's offset from it.
+    let (ax, ay) = (if hx > 0 { r[0] } else { r[2] }, if hy > 0 { r[1] } else { r[3] });
+    let (cx, cy) = (if hx > 0 { r[2] } else { r[0] }.saturating_add(d[0]), if hy > 0 { r[3] } else { r[1] }.saturating_add(d[1]));
+    let (dw, dh) = (cx.saturating_sub(ax) as f64, cy.saturating_sub(ay) as f64);
+    let k = (dw.abs() / w).max(dh.abs() / h);
+    let (nw, nh) = ((w * k).round().max(1.0) as i64, (h * k).round().max(1.0) as i64);
+    let span = |a: i64, len: i64, toward: f64| if toward < 0.0 { [a.saturating_sub(len), a] } else { [a, a.saturating_add(len)] };
+    let ([x0, x1], [y0, y1]) = (span(ax, nw, dw), span(ay, nh, dh));
+    [x0, y0, x1, y1]
+}
+
 /// The board a gesture would leave, for the preview.
 fn preview(d: &ArtboardDrag) -> [i64; 4] {
     match *d {
@@ -113,6 +159,7 @@ fn preview(d: &ArtboardDrag) -> [i64; 4] {
             let o = offset(start, cur);
             [rect[0].saturating_add(o[0]), rect[1].saturating_add(o[1]), rect[2].saturating_add(o[0]), rect[3].saturating_add(o[1])]
         }
+        ArtboardDrag::Resize { rect, hx, hy, start, cur, keep: true, .. } if hx != 0 && hy != 0 => resized_keep(rect, hx, hy, offset(start, cur)),
         ArtboardDrag::Resize { rect, hx, hy, start, cur, .. } => resized(rect, hx, hy, offset(start, cur)),
     }
 }
@@ -124,8 +171,17 @@ fn report(app: &mut PhotocraftApp, r: Result<Value, String>) {
     }
 }
 
+/// Moves a gesture's pointer to `p`; ⇧ (held or released mid-drag) decides whether a corner keeps
+/// the board's proportions.
+fn follow(d: &mut ArtboardDrag, p: [f64; 2], mods: egui::Modifiers) {
+    match d {
+        ArtboardDrag::New { cur, .. } | ArtboardDrag::Move { cur, .. } => *cur = p,
+        ArtboardDrag::Resize { cur, keep, .. } => (*cur, *keep) = (p, mods.shift),
+    }
+}
+
 /// Pointer input for the Artboard tool. Returns true when the event was its own.
-pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, _mods: egui::Modifiers) -> bool {
+pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) -> bool {
     if app.ui.tool != Tool::Artboard {
         return false;
     }
@@ -133,8 +189,15 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, _mods: egui::Modifiers) -
     match ev {
         ToolEvent::Down { x, y, .. } => {
             let p = [x, y];
+            // A "+" button: a board the size of the selected one on that side (⌥: a copy).
+            if let Some((id, side)) = plus_at(app, p) {
+                app.ui.artboard_tool.drag = None;
+                let r = app.run("layer.artboard.addBeside", json!({"layer": id.0, "side": side, "duplicate": mods.alt}));
+                report(app, r);
+                return true;
+            }
             app.ui.artboard_tool.drag = Some(if let Some((id, rect, hx, hy)) = handle_at(app, p) {
-                ArtboardDrag::Resize { id, rect, hx, hy, start: p, cur: p }
+                ArtboardDrag::Resize { id, rect, hx, hy, start: p, cur: p, keep: mods.shift }
             } else if let Some((id, rect)) = board_at(&doc, p) {
                 if app.session.active().and_then(|st| st.active_layer) != Some(id) {
                     let r = app.run("layer.select", json!({"layer": id.0}));
@@ -146,14 +209,13 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, _mods: egui::Modifiers) -
             });
         }
         ToolEvent::Move { x, y, .. } => {
-            if let Some(ArtboardDrag::New { cur, .. } | ArtboardDrag::Move { cur, .. } | ArtboardDrag::Resize { cur, .. }) = &mut app.ui.artboard_tool.drag {
-                *cur = [x, y];
+            if let Some(d) = &mut app.ui.artboard_tool.drag {
+                follow(d, [x, y], mods);
             }
         }
         ToolEvent::Up { x, y } => {
             let Some(mut d) = app.ui.artboard_tool.drag.take() else { return true };
-            let (ArtboardDrag::New { cur, .. } | ArtboardDrag::Move { cur, .. } | ArtboardDrag::Resize { cur, .. }) = &mut d;
-            *cur = [x, y];
+            follow(&mut d, [x, y], mods);
             let r = preview(&d);
             let result = match d {
                 ArtboardDrag::New { start, cur } => {
@@ -181,6 +243,7 @@ pub fn cursor(app: &PhotocraftApp, p: [f64; 2]) -> Option<CursorIcon> {
     let (hx, hy) = match app.ui.artboard_tool.drag {
         Some(ArtboardDrag::Resize { hx, hy, .. }) => (hx, hy),
         Some(_) => return None,
+        None if plus_at(app, p).is_some() => return Some(CursorIcon::PointingHand),
         None => handle_at(app, p).map(|h| (h.2, h.3))?,
     };
     Some(match (hx, hy) {
@@ -191,7 +254,7 @@ pub fn cursor(app: &PhotocraftApp, p: [f64; 2]) -> Option<CursorIcon> {
     })
 }
 
-/// The selected board's handles and the board a gesture in progress would leave.
+/// The selected board's handles, its "+" buttons, and the board a gesture in progress would leave.
 pub fn draw_overlay(app: &PhotocraftApp, painter: &egui::Painter, xf: &ViewXform) {
     if app.ui.tool != Tool::Artboard {
         return;
@@ -204,6 +267,19 @@ pub fn draw_overlay(app: &PhotocraftApp, painter: &egui::Painter, xf: &ViewXform
         painter.add(egui::Shape::line(outline(preview(d)), Stroke::new(1.5, t.accent)));
     }
     let Some((_, r)) = active_board(app).filter(|_| !matches!(drag, Some(ArtboardDrag::New { .. }))) else { return };
+    if drag.is_none()
+        && let Some((_, buttons)) = plus_buttons(app)
+    {
+        let rad = PLUS_RADIUS_PX as f32;
+        for (_, c) in buttons {
+            let c = xf.to_screen(c[0] as f32, c[1] as f32);
+            painter.circle(c, rad, t.card, Stroke::new(1.0, t.accent));
+            let arm = rad * 0.5;
+            let s = Stroke::new(1.5, t.accent);
+            painter.line_segment([c - vec2(arm, 0.0), c + vec2(arm, 0.0)], s);
+            painter.line_segment([c - vec2(0.0, arm), c + vec2(0.0, arm)], s);
+        }
+    }
     let r = drag.as_ref().map_or(r, preview);
     let (mx, my) = (r[0].saturating_add(r[2]) / 2, r[1].saturating_add(r[3]) / 2);
     for (x, y) in [(r[0], r[1]), (mx, r[1]), (r[2], r[1]), (r[2], my), (r[2], r[3]), (mx, r[3]), (r[0], r[3]), (r[0], my)] {
@@ -310,6 +386,27 @@ mod tests {
         // A click on empty canvas draws nothing.
         drag(&mut app, [300.0, 250.0], [300.0, 250.0]);
         assert_eq!(boards(&app).len(), 1);
+    }
+
+    /// #3033: a click on the selected board's right "+" adds a board of its size a gap to the right;
+    /// ⇧ on a corner keeps the board's proportions.
+    #[test]
+    fn plus_buttons_add_boards_and_shift_keeps_proportions() {
+        let mut app = app();
+        drag(&mut app, [20.0, 30.0], [120.0, 80.0]);
+        let (_, buttons) = plus_buttons(&app).unwrap();
+        let right = buttons.iter().find(|b| b.0 == "right").unwrap().1;
+        assert!(right[0] > 120.0 && (right[1] - 55.0).abs() < 1e-9, "{right:?}");
+        drag(&mut app, right, right);
+        assert_eq!(boards(&app), vec![photocraft_geom::Rect::new(20, 30, 120, 80), photocraft_geom::Rect::new(220, 30, 320, 80)]);
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(boards(&app).len(), 1);
+        // The 100×50 board's bottom-right corner, dragged 40 right and 5 down with ⇧: 140×70.
+        let m = egui::Modifiers::SHIFT;
+        tool_event(&mut app, ToolEvent::Down { x: 120.0, y: 80.0, pressure: 1.0 }, m);
+        tool_event(&mut app, ToolEvent::Move { x: 160.0, y: 85.0, pressure: 1.0 }, m);
+        tool_event(&mut app, ToolEvent::Up { x: 160.0, y: 85.0 }, m);
+        assert_eq!(boards(&app), vec![photocraft_geom::Rect::new(20, 30, 160, 100)]);
     }
 
     /// V picks the Move group, ⇧V cycles Move ↔ Artboard as in Photoshop.

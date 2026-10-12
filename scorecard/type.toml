@@ -28,9 +28,9 @@ note = "Thai is covered: THAI_FAMILIES (fonts.rs) lists the Windows, macOS and L
 [[item]]
 id = "TYPE-218-4"
 target = "Variable font axis sliders from the font's axes; opsz follows the point size"
-status = "partial"
+status = "done"
 issue = 218
-note = "type_cmds.rs:184 accepts variations; FaceInfo.axes unused in the UI"
+note = "One slider per axis of the style's font in the Character section (Properties and Window > Character), setting type.setStyle variations; opsz follows the type size unless set (layout.rs variation_list); a style or weight resets the wght axis (#2985). PSD does not round-trip axis values yet"
 
 [[item]]
 id = "TYPE-218-5"
@@ -56,13 +56,13 @@ note = "view_cmds.rs:834 always seeds arc, bend 50"
 [[item]]
 id = "TYPE-218-8"
 target = "Text editing: select all, double/triple/quadruple-click selection, paste, with tests"
-status = "partial"
+status = "done"
 issue = 218
-note = "Cmd+A, paste and double-click exist; no triple/quadruple click, no tests"
+note = "Like Photoshop, 2 clicks select the word, 3 the laid-out line (a column in vertical type), 4 the paragraph up to the hard return, 5 all text, and the next quick click starts over (#3493; type_tool.rs next_click_count, click_selection, multi_click). Tested through real canvas clicks in point, paragraph and vertical type, with paste replacing the selection and Cmd+A selecting all (type_tool_tests.rs multi_click_selects_word_line_paragraph_and_all_in_point_text, multi_click_separates_wrapped_lines_from_paragraphs, click_counts_cycle_and_restart, click_selection_without_layout_and_on_hostile_input, multi_click_without_a_session_does_nothing)"
 
 [[item]]
 id = "TYPE-218-9"
-target = "Offer 'Rasterize and continue?' for Distort/Perspective/Warp on live type"
-status = "missing"
+target = "Distort/Perspective/Warp on live type as in Photoshop (was: offer 'Rasterize and continue?'; Photoshop doesn't prompt)"
+status = "done"
 issue = 218
-note = "No such prompt"
+note = "Photoshop 2026 prompts for none of these: Edit › Transform › Warp on live type stays enabled with no rasterize prompt and offers only the warp styles (the mesh can't be dragged), so the type stays editable; Distort, Perspective and the split warps are greyed. PhotoCraft does the same: Warp on type commits the layer's Warp Text in one step (transform_tool.rs enter_type_warp, warp_cmds.rs warp_type_layer, #3004; warp_on_type_takes_a_style_and_keeps_the_type_editable), Distort/Perspective greyed (enable_rules.rs, #2701)"

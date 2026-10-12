@@ -189,9 +189,11 @@ fn run_commands_and_save() {
     let lines: Vec<Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[2]["command"], "document.inspect");
+    assert_eq!(lines[2]["result"]["name"], "Run");
     let (info, _) = ok(bin().arg("info").arg(&out_pc));
     let v: Value = serde_json::from_str(&info).unwrap();
-    assert_eq!(v["name"], "Run");
+    // Saving a native document gives the reopened bundle its output filename.
+    assert_eq!(v["name"], "r.pcraft");
     let names: Vec<&str> = v["layers"].as_array().unwrap().iter().filter_map(|l| l["name"].as_str()).collect();
     assert_eq!(names, ["Ink", "Background"]);
     // Continue from the saved file and export PNG.
@@ -261,6 +263,37 @@ fn batch_applies_actions_to_directory() {
     let o = bin().args(["batch", "--actions"]).arg(&actions).arg("--in").arg(&inp).arg("--out").arg(&outp).output().unwrap();
     assert_eq!(o.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&o.stderr).contains("FAIL"));
+    std::fs::remove_dir_all(d).unwrap();
+}
+
+#[test]
+fn batch_skips_recorded_view_and_save_steps() {
+    let d = tmp("batch-shell-steps");
+    let input = d.join("in");
+    std::fs::create_dir_all(&input).unwrap();
+    let source = input.join("a.png");
+    write_png(&source, 12, 8, 3);
+    let original = std::fs::read(&source).unwrap();
+    let recorded_save = d.join("recorded-save.psd");
+    let mut cases = Vec::new();
+    for (name, id) in [("zoom-in", "view.zoomIn"), ("zoom-out", "view.zoomOut"), ("fit", "view.fitOnScreen"), ("actual-pixels", "view.actualPixels")] {
+        cases.push((name, json!([[id, {}], ["image.imageRotation.90cw", {}]]).to_string()));
+    }
+    cases.push(("save", json!([["file.save", {}], ["image.imageRotation.90cw", {}]]).to_string()));
+    cases.push(("save-as", json!([["file.saveAs", {"path": recorded_save.to_string_lossy()}], ["image.imageRotation.90cw", {}]]).to_string()));
+
+    for (name, actions) in cases {
+        let o = batch_with(&d, &input, name, &actions, &[]);
+        let (stdout, stderr) = (String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(o.status.success(), "{name}: {stdout}\n{stderr}");
+        assert!(stdout.contains("1 succeeded, 0 failed"), "{name}: {stdout}");
+        let output = d.join(name).join("a.png");
+        let (info, _) = ok(bin().arg("info").arg(&output));
+        let info: Value = serde_json::from_str(&info).unwrap();
+        assert_eq!((info["width"].as_u64(), info["height"].as_u64()), (Some(8), Some(12)), "{name}: {info}");
+        assert_eq!(std::fs::read(&source).unwrap(), original, "{name} changed its input");
+        assert!(!recorded_save.exists(), "{name} wrote the recorded Save As path");
+    }
     std::fs::remove_dir_all(d).unwrap();
 }
 

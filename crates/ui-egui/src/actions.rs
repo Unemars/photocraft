@@ -179,14 +179,15 @@ fn begin_recording(app: &mut PhotocraftApp, append: bool) {
 pub(crate) fn report_play(app: &mut PhotocraftApp, v: &Value) {
     let Some(failed) = v.get("failed").filter(|f| f.is_object()) else {
         let ran = v.get("ran").and_then(Value::as_u64).unwrap_or(0);
-        app.ui.status = format!("Played {ran} steps");
+        app.ui.status = crate::i18n::trn(crate::i18n::current(), ran, "Played {n} step", "Played {n} steps");
         app.ui.status_error = false;
         return;
     };
     let step = failed.get("step").and_then(Value::as_u64).unwrap_or(0);
     let id = failed.get("id").and_then(Value::as_str).unwrap_or("");
     let error = failed.get("error").and_then(Value::as_str).unwrap_or("");
-    app.ui.status = format!("Step {} ({id}) failed: {error}", step + 1);
+    let template = "Step {step} ({id}) failed: {error}";
+    app.ui.status = crate::i18n::fmt(tl!(template), &[("step", &(step + 1).to_string()), ("id", id), ("error", error)]);
     app.ui.status_error = true;
 }
 
@@ -196,7 +197,12 @@ fn visible_steps(app: &PhotocraftApp, action: usize) -> Vec<(String, Value)> {
 
 /// "3 steps", or "2/3 steps" when some are switched off (Photoshop shows a red partial check).
 fn step_count(steps: usize, disabled: usize) -> String {
-    if disabled == 0 { format!("{steps} steps") } else { format!("{}/{steps} steps", steps.saturating_sub(disabled)) }
+    if disabled == 0 {
+        crate::i18n::trn(crate::i18n::current(), steps as u64, "{n} step", "{n} steps")
+    } else {
+        let count = crate::i18n::trn(crate::i18n::current(), steps as u64, "{n} step", "{n} steps");
+        format!("{}/{count}", steps.saturating_sub(disabled))
+    }
 }
 
 fn paint_check(ui: &egui::Ui, rect: Rect, on: bool, t: &Tokens) {
@@ -312,7 +318,8 @@ fn rename_field(app: &mut PhotocraftApp, ui: &mut egui::Ui, index: usize, rect: 
 
 fn rename_action(app: &mut PhotocraftApp, index: usize, name: String) {
     if let Err(e) = app.run("actions.rename", json!({"action": index, "name": name})) {
-        app.ui.status = format!("Could not rename the action: {e}");
+        let template = "Could not rename the action: {error}";
+        app.ui.status = crate::i18n::fmt(tl!(template), &[("error", &e)]);
         app.ui.status_error = true;
     }
 }
@@ -338,7 +345,7 @@ pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     }
     let mut renamed = None;
     let mut toggled = None;
-    let max_h = (ui.available_height() - 70.0).clamp(80.0, 320.0);
+    let max_h = (ui.available_height() - 38.0).max(0.0);
     let mut play_idx = None;
     let mut moved = None;
     let recording_row = recording.and_then(|(_, i)| rows.get(i).map(|(_, steps, _)| (i, steps.len())));
@@ -350,7 +357,7 @@ pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             *expanded = true;
         }
     }
-    egui::ScrollArea::vertical().id_salt("actions-rows").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("actions-rows").max_height(max_h).min_scrolled_height(max_h).auto_shrink([false, false]).show(ui, |ui| {
         if rows.is_empty() {
             ui.label(egui::RichText::new(tl!("Record ● a sequence of edits, then play ▶ it on any document.")).color(t.text_faint).size(11.5));
         }
@@ -530,7 +537,8 @@ pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         match app.run("actions.play", json!({"action": i})) {
             Ok(v) => report_play(app, &v),
             Err(e) => {
-                app.ui.status = format!("Action playback failed: {e}");
+                let template = "Action playback failed: {error}";
+                app.ui.status = crate::i18n::fmt(tl!(template), &[("error", &e)]);
                 app.ui.status_error = true;
             }
         }
@@ -540,6 +548,24 @@ pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn actions_list_grows_with_panel_and_keeps_footer_visible() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let bottom = |height: f32| {
+            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+            for i in 0..50 {
+                app.session.actions.list.push(Action { name: format!("Action {i}"), steps: vec![], disabled: Default::default() });
+            }
+            let mut h = Harness::builder().with_size(vec2(320.0, height)).build_ui_state(|ui, app| panel(app, ui), app);
+            h.run_steps(3);
+            let rect = h.get_by_label("Play selection").rect();
+            assert!(rect.bottom() <= height, "footer must fit: {rect:?}");
+            rect.top()
+        };
+        assert!(bottom(700.0) - bottom(300.0) > 350.0, "list uses the additional panel height instead of stopping at 320 px");
+        assert!(crate::dock::Group::History.scrolls_itself(1));
+    }
 
     #[test]
     fn double_clicking_an_action_name_renames_it_in_place() {
@@ -650,14 +676,14 @@ mod tests {
         begin_recording(h.state_mut(), false);
         h.run_steps(20);
         let rect = h.get_by_label("Action 31").rect();
-        assert!(rect.top() >= 0.0 && rect.bottom() <= 205.0, "new action visible: {rect:?}");
+        assert!(rect.top() >= 0.0 && rect.bottom() <= h.get_by_label("Play selection").rect().top(), "new action visible: {rect:?}");
         for _ in 0..20 {
             h.state_mut().run("view.zoomOut", json!({})).unwrap();
         }
         h.state_mut().run("view.fitOnScreen", json!({})).unwrap();
         h.run_steps(20);
         let rect = h.get_by_label("Fit on Screen").rect();
-        assert!(rect.top() >= 0.0 && rect.bottom() <= 205.0, "latest step visible: {rect:?}");
+        assert!(rect.top() >= 0.0 && rect.bottom() <= h.get_by_label("Play selection").rect().top(), "latest step visible: {rect:?}");
     }
 
     #[test]

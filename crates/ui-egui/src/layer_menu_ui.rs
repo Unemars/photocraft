@@ -40,13 +40,13 @@ pub fn mask_button_command(layer: Option<&Layer>, has_selection: bool, alt: bool
 }
 
 /// Commands that act on the active layer only and have no sensible meaning for a selection: Blending
-/// Options (one dialog), Copy Layer Style (copy from which layer?), the exports, and the per-layer
+/// Options (one dialog), Copy Layer Style (copy from which layer?), Export As, and the per-layer
 /// mask items. With several layers selected they would hit whichever layer is active, not the one
 /// that was right-clicked, so the menu greys them. Adding a mask, Paste/Clear Layer Style and
 /// Rasterize run on every selected layer instead.
 pub fn single_layer_only(id: &str) -> bool {
     let adds_mask = matches!(id, "layer.layerMask.revealAll" | "layer.layerMask.hideAll" | "layer.layerMask.revealSelection" | "layer.layerMask.hideSelection");
-    matches!(id, "layer.layerStyle.blendingOptions" | "layer.layerStyle.copyLayerStyle" | "layer.quickExportAsPng" | "layer.exportAs")
+    matches!(id, "layer.layerStyle.blendingOptions" | "layer.layerStyle.copyLayerStyle" | "layer.exportAs")
         || (id.starts_with("layer.layerMask.") && !adds_mask)
 }
 
@@ -120,42 +120,31 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
     v
 }
 
+/// The layer style menu of an effect row ("Effects" or one effect) under a layer (#2846), in
+/// Photoshop's order. It acts on that layer, like Layer ▸ Layer Style.
+pub fn effects_entries() -> Vec<Entry> {
+    vec![
+        Some((tl!("Blending Options…"), "layer.layerStyle.blendingOptions")),
+        None,
+        Some((tl!("Copy Layer Style"), "layer.layerStyle.copyLayerStyle")),
+        Some((tl!("Paste Layer Style"), "layer.layerStyle.pasteLayerStyle")),
+        Some((tl!("Clear Layer Style"), "layer.layerStyle.clear")),
+        None,
+        Some((tl!("Global Light…"), "layer.layerStyle.globalLight")),
+        Some((tl!("Create Layer"), "layer.layerStyle.createLayer")),
+        Some((tl!("Hide All Effects"), "layer.layerStyle.hideAllEffects")),
+        Some((tl!("Scale Effects…"), "layer.layerStyle.scaleEffects")),
+    ]
+}
+
 /// Render the menu. Pushes `(command, params)` actions; `Value::Null` params mean "invoke like the
 /// menu item" (opens the command's dialog when it has one).
 pub fn show(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, on_set: bool, actions: &mut Vec<(String, Value)>) -> bool {
     crate::widgets::menu_scroll(ui, |ui| {
         ui.set_min_width(220.0);
         let mut rename = false;
-        let mut last_sep = true;
         let has_selection = app.session.active().is_some_and(|s| s.doc.selection.is_some());
-        for e in entries(l, on_set, has_selection) {
-            match e {
-                None => {
-                    if !last_sep {
-                        ui.separator();
-                    }
-                    last_sep = true;
-                }
-                Some((label, id)) => {
-                    // Skip commands this build doesn't have rather than showing dead items.
-                    if photocraft_engine::commands::find(id).is_none() && !crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) {
-                        continue;
-                    }
-                    last_sep = false;
-                    // Enablement is exact for the active layer (or the selection); another row is
-                    // selected first when clicked, so its items stay available.
-                    let is_active = app.session.active().is_some_and(|s| s.active_layer == Some(l.id));
-                    let enabled = !(on_set && single_layer_only(id)) && if on_set || is_active { crate::menus::is_enabled(app, id) } else { true };
-                    if ui.add_enabled(enabled, egui::Button::new(tl!(&label))).clicked() {
-                        if !on_set {
-                            actions.push(("layer.select".into(), json!({"layer": l.id.0})));
-                        }
-                        actions.push((id.into(), Value::Null));
-                        ui.close();
-                    }
-                }
-            }
-        }
+        items(app, ui, l, on_set, entries(l, on_set, has_selection), actions);
         ui.separator();
         if ui.button(tl!("Rename Layer…")).clicked() {
             rename = true;
@@ -166,7 +155,49 @@ pub fn show(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, on_set: bo
     })
 }
 
-fn color_name(color: LabelColor) -> &'static str {
+/// Render the layer style menu of `l`'s effect rows ([`effects_entries`]); the actions select `l`
+/// first when it isn't the active layer.
+pub fn show_effects(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, actions: &mut Vec<(String, Value)>) {
+    crate::widgets::menu_scroll(ui, |ui| {
+        ui.set_min_width(200.0);
+        items(app, ui, l, false, effects_entries(), actions);
+    });
+}
+
+/// The command items of a layer menu, separators collapsed.
+fn items(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, on_set: bool, entries: Vec<Entry>, actions: &mut Vec<(String, Value)>) {
+    let mut last_sep = true;
+    for e in entries {
+        match e {
+            None => {
+                if !last_sep {
+                    ui.separator();
+                }
+                last_sep = true;
+            }
+            Some((label, id)) => {
+                // Skip commands this build doesn't have rather than showing dead items.
+                if photocraft_engine::commands::find(id).is_none() && !crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) {
+                    continue;
+                }
+                last_sep = false;
+                // Enablement is exact for the active layer (or the selection); another row is
+                // selected first when clicked, so its items stay available.
+                let is_active = app.session.active().is_some_and(|s| s.active_layer == Some(l.id));
+                let enabled = !(on_set && single_layer_only(id)) && if on_set || is_active { crate::menus::is_enabled(app, id) } else { true };
+                if ui.add_enabled(enabled, egui::Button::new(tl!(&label))).clicked() {
+                    if !on_set {
+                        actions.push(("layer.select".into(), json!({"layer": l.id.0})));
+                    }
+                    actions.push((id.into(), Value::Null));
+                    ui.close();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn color_name(color: LabelColor) -> &'static str {
     crate::i18n::tr_ctx(crate::i18n::current(), "layerLabel", color.label())
 }
 
@@ -536,10 +567,19 @@ mod tests {
     fn multi_selection_menu_greys_what_acts_on_one_layer() {
         use egui_kittest::kittest::{NodeT, Queryable};
         let (h, _) = open_multi_selection_menu();
-        for label in ["Blending Options…", "Copy Layer Style", "Quick Export As PNG", "Export As…"] {
+        for label in ["Blending Options…", "Copy Layer Style", "Export As…"] {
             assert!(h.get_by_label(label).accesskit_node().is_disabled(), "{label} works on one layer only");
         }
-        for label in ["Add Layer Mask", "Duplicate Layers…", "Delete Layers", "Convert to Smart Object", "Rasterize Layers", "Link Layers", "Merge Layers"] {
+        for label in [
+            "Quick Export As PNG",
+            "Add Layer Mask",
+            "Duplicate Layers…",
+            "Delete Layers",
+            "Convert to Smart Object",
+            "Rasterize Layers",
+            "Link Layers",
+            "Merge Layers",
+        ] {
             assert!(!h.get_by_label(label).accesskit_node().is_disabled(), "{label} acts on the selection");
         }
         // Greyed here only for lack of something to act on: no style on the clipboard, no style to clear.
@@ -562,12 +602,12 @@ mod tests {
             "layer.layerMask.enabled",
             "layer.layerMask.apply",
             "layer.layerMask.delete",
-            "layer.quickExportAsPng",
             "layer.exportAs",
         ] {
             assert!(single_layer_only(id), "{id}");
         }
         for id in [
+            "layer.quickExportAsPng",
             "layer.duplicate",
             "layer.delete",
             "layer.rasterize.layer",
@@ -680,7 +720,8 @@ mod tests {
         let mut s = photocraft_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         let l = s.active().unwrap().doc.layers[0].clone();
-        for (_, id) in entries(&l, false, true).into_iter().chain(entries(&l, false, false)).chain(entries(&l, true, false)).flatten() {
+        for (_, id) in entries(&l, false, true).into_iter().chain(entries(&l, false, false)).chain(entries(&l, true, false)).chain(effects_entries()).flatten()
+        {
             assert!(crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) || photocraft_engine::commands::find(id).is_some(), "{id}");
         }
     }

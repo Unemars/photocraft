@@ -41,6 +41,7 @@ fn frame_from_layers(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(name) = p.get("name") {
         gp.insert("name".into(), name.clone());
     }
+    let journal = s.journal.len();
     let grouped = s.execute("layer.new.groupFromLayers", Value::Object(gp))?;
     match frame_group(s, &grouped) {
         Ok(r) => {
@@ -51,8 +52,10 @@ fn frame_from_layers(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(r)
         }
         Err(e) => {
-            // The group couldn't be framed: take the grouping back, leaving nothing to redo.
+            // The group couldn't be framed: take the grouping back, leaving nothing to redo and
+            // no grouping step to record.
             s.undo();
+            s.journal.truncate(journal);
             if let Some(st) = s.active_mut() {
                 st.history.clear_redo();
             }

@@ -231,6 +231,13 @@ fn curves_params(f: &Descriptor) -> Option<J> {
     let mut out = Map::new();
     for a in adjustment_list(f)? {
         let key = channel_key(a)?;
+        // A pencil-drawn curve is a mapping of 256 output levels (`Mpng`) instead of points.
+        if let Some(Value::List(map)) = a.get("Mpng") {
+            let map: Option<Vec<J>> = map.iter().map(|v| int_value(v).map(|o| json!(o.clamp(0, 255)))).collect();
+            out.insert(if key.is_empty() { "points".into() } else { key.into() }, J::Array(map.filter(|m| m.len() == 256)?));
+            out.insert("pencil".into(), J::Bool(true));
+            continue;
+        }
         let Some(Value::List(pts)) = a.get("Crv ") else { return None };
         let pts: Option<Vec<J>> = pts
             .iter()
@@ -370,7 +377,7 @@ fn channel_ref(code: &[u8; 4]) -> Value {
 fn adjustments(p: &J, curves: bool) -> Result<Value, String> {
     let obj = p.as_object().ok_or("parameters are not an object")?;
     let allowed: &[&str] =
-        if curves { &["points", "red", "green", "blue"] } else { &["inBlack", "inWhite", "gamma", "outBlack", "outWhite", "red", "green", "blue"] };
+        if curves { &["points", "red", "green", "blue", "pencil"] } else { &["inBlack", "inWhite", "gamma", "outBlack", "outWhite", "red", "green", "blue"] };
     if let Some(k) = obj.keys().find(|k| !is_meta(k) && !allowed.contains(&k.as_str())) {
         return Err(format!("setting `{k}` has no PSD equivalent"));
     }
@@ -382,6 +389,13 @@ fn adjustments(p: &J, curves: bool) -> Result<Value, String> {
         if curves {
             let src = if key.is_empty() { p.get("points") } else { Some(o) };
             let Some(pts) = src.and_then(J::as_array) else { continue };
+            if p.get("pencil").and_then(J::as_bool) == Some(true) {
+                let map: Option<Vec<Value>> =
+                    pts.iter().map(|o| o.as_f64().filter(|o| o.is_finite()).map(|o| Value::Integer(o.round().clamp(0.0, 255.0) as i32))).collect();
+                a = a.with("Mpng", Value::List(map.filter(|m| m.len() == 256).ok_or("a pencil-drawn curve is not 256 output levels")?));
+                list.push(Value::Descriptor(a));
+                continue;
+            }
             let pts: Option<Vec<Value>> = pts
                 .iter()
                 .map(|q| {
@@ -824,6 +838,8 @@ mod tests {
             sf("image.adjustments.levels", json!({"inBlack": 20, "inWhite": 220, "gamma": 1.4, "red": {"inBlack": 0, "inWhite": 255, "gamma": 0.8}})),
             sf("image.adjustments.curves", json!({"points": [[0.0, 0.0], [64.0, 40.0], [255.0, 255.0]], "blue": [[0.0, 20.0], [255.0, 235.0]]})),
             sf("image.adjustments.shadowsHighlights", json!({})),
+            // A pencil-drawn curve: 256 output levels (`Mpng`).
+            sf("image.adjustments.curves", json!({"pencil": true, "points": (0..256).rev().collect::<Vec<i32>>()})),
         ];
         for mut f in filters {
             f.blend = BlendMode::Overlay;

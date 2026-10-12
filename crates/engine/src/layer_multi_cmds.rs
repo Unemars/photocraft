@@ -305,7 +305,7 @@ pub fn translate(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let moves: Vec<_> = ids.iter().map(|&id| (id, dx, dy)).collect();
         move_layers(doc, &moves)?;
-        // A board moved past the right or bottom edge grows the canvas, as a new one does (#1531).
+        // A board moved past any canvas edge grows the canvas, as a new one does (#1531, #3070).
         if ids.iter().any(|id| doc.layer(*id).is_some_and(|l| l.artboard().is_some())) {
             crate::artboard_cmds::fit_canvas(doc);
         }
@@ -584,6 +584,7 @@ fn doc_pixels_equal(a: &Document, b: &Document) -> bool {
         work_path: _,
         clipping_path: _,
         quick_mask,
+        quick_mask_unselected: _,
         patterns,
         color_table,
         duotone,
@@ -1002,6 +1003,7 @@ pub fn move_to(s: &mut Session, p: &Value) -> Result<Value> {
     let original_active = st.active_layer;
     let background = crate::background_cmds::background_id(doc);
     let (count, copies) = s.edit(if copy { "Duplicate Layer" } else { "Reorder Layers" }, |doc, active| {
+        let before = if copy { Default::default() } else { crate::clip_group::Before::read(doc, &moved_ids) };
         let mut moved = Vec::with_capacity(moved_ids.len());
         for &id in &moved_ids {
             moved.push(if copy { crate::commands::layer_copy(doc, id)? } else { doc.remove(id).ok_or(EngineError::NoLayer(id))? });
@@ -1024,6 +1026,7 @@ pub fn move_to(s: &mut Session, p: &Value) -> Result<Value> {
         }
         check_group_depth(doc, "Reorder Layer")?;
         crate::background_cmds::keep_background_at_bottom(background, doc)?;
+        crate::clip_group::settle(doc, if copy { &copies } else { &moved_ids }, &before, false);
         *active = if copy {
             copies.last().copied()
         } else if batch.is_some() {
@@ -1244,9 +1247,11 @@ pub fn delete_selected(s: &mut Session) -> Result<Value> {
     s.edit("Delete Layers", |doc, active| {
         let ids = top_level(doc, &sel);
         let neighbours = active.map(|id| deletion_neighbours(doc, id)).unwrap_or_default();
+        let before = crate::clip_group::Before::read(doc, &ids);
         for id in &ids {
             doc.remove(*id).ok_or(EngineError::NoLayer(*id))?;
         }
+        crate::clip_group::settle(doc, &[], &before, false);
         if doc.layers.is_empty() {
             return Err(EngineError::Other("a document must keep at least one layer".into()));
         }
@@ -1512,16 +1517,20 @@ mod tests {
         })
         .unwrap();
         s.execute("layer.setProps", json!({"layer": clipped.0, "clipped": true})).unwrap();
-        // A new layer between a clipping base and its clipped layer becomes their base.
+        // New Layer between a clipping base and its clipped layer joins their clip group (#2203),
+        // so it draws nothing; an empty layer there that stayed unclipped would become their base.
         s.execute("layer.select", json!({"layer": base.0})).unwrap();
         let shown = photocraft_compose::render(doc(&s), doc(&s).bounds());
+        let before = doc(&s).clone();
         s.execute("layer.new.layer", json!({})).unwrap();
-        assert_eq!(damage(&s), None);
-        assert_ne!(photocraft_compose::render(doc(&s), doc(&s).bounds()), shown);
+        assert_eq!(damage(&s), Some(Rect::EMPTY));
+        assert_eq!(photocraft_compose::render(doc(&s), doc(&s).bounds()), shown);
+        let mut split = before.clone();
+        split.insert_above(Some(base), Layer::raster("split", split.pixel_format()));
+        assert_ne!(photocraft_compose::render(&split, split.bounds()), shown);
+        assert_eq!(step_damage(&before, &split), None);
+        assert_eq!(step_damage(&split, &before), None);
         s.execute("edit.undo", json!({})).unwrap();
-        assert_eq!(damage(&s), None);
-        s.execute("edit.redo", json!({})).unwrap();
-        assert_eq!(damage(&s), None);
         // A step that adds a layer with pixels (Layer via Copy, paste…) is not inert either.
         let before = doc(&s).clone();
         let mut after = before.clone();

@@ -67,8 +67,7 @@ fn targets(s: &Session, p: &Value) -> Result<Vec<Rect>> {
     }
 }
 
-fn push_unique(out: &mut Vec<f32>, value: f64) -> Result<()> {
-    let value = value as f32;
+fn push_unique(out: &mut Vec<f64>, value: f64) -> Result<()> {
     if !value.is_finite() {
         return Err(bad("guide coordinates exceed the supported range"));
     }
@@ -80,7 +79,7 @@ fn push_unique(out: &mut Vec<f32>, value: f64) -> Result<()> {
 
 /// Guide positions for `count` columns (or rows) across `[start, end]`, Photoshop-style: both
 /// edges of every column; a fixed `width` packs columns from `start` (or centres them).
-fn axis(start: f64, end: f64, count: u64, fixed: f64, gap: f64, center: bool, out: &mut Vec<f32>) -> Result<()> {
+fn axis(start: f64, end: f64, count: u64, fixed: f64, gap: f64, center: bool, out: &mut Vec<f64>) -> Result<()> {
     if count == 0 {
         return Ok(());
     }
@@ -158,17 +157,20 @@ pub fn calculate(s: &Session, p: &Value) -> Result<Layout> {
     if clear {
         if p.get("target").and_then(Value::as_str) == Some("selectedArtboards") {
             // Guides are stored as document-wide axes, matching Clear Selected Artboard Guides.
-            guides.vertical.retain(|v| !bounds.iter().any(|r| f64::from(*v) >= f64::from(r.x0) && f64::from(*v) <= f64::from(r.x1)));
-            guides.horizontal.retain(|v| !bounds.iter().any(|r| f64::from(*v) >= f64::from(r.y0) && f64::from(*v) <= f64::from(r.y1)));
+            guides.vertical.retain(|v| !bounds.iter().any(|r| *v >= f64::from(r.x0) && *v <= f64::from(r.x1)));
+            guides.horizontal.retain(|v| !bounds.iter().any(|r| *v >= f64::from(r.y0) && *v <= f64::from(r.y1)));
         } else {
             guides = Guides::default();
         }
+        // Cleared guides take their colours along, so a new guide at the same place doesn't
+        // inherit one.
+        guides.prune_colors();
     }
     for x in &added.vertical {
-        push_unique(&mut guides.vertical, f64::from(*x))?;
+        push_unique(&mut guides.vertical, *x)?;
     }
     for y in &added.horizontal {
-        push_unique(&mut guides.horizontal, f64::from(*y))?;
+        push_unique(&mut guides.horizontal, *y)?;
     }
     Ok(Layout { added, guides })
 }

@@ -65,7 +65,13 @@ pub fn import_raw_tuned(name: &str, bytes: &[u8], tuning: &RawTuning) -> Result<
         return Err(IoError::Raw(RawError::Malformed(format!("exposure {} EV is out of range", tuning.exposure))));
     }
     let sensor = photocraft_raw::decode(bytes, &limits()).map_err(IoError::Raw)?;
-    let mut opts = DevelopOptions { limits: limits(), exposure, ..Default::default() };
+    let mut opts = DevelopOptions { limits: limits(), ..Default::default() };
+    // Use the same camera rendering as normal import. Fit at the camera's default WB and
+    // exposure before applying user controls, so the fit cannot cancel their adjustments.
+    if sensor.color.calibrations.is_empty() {
+        opts.camera_look = fit_preview_look(bytes, &sensor, &opts).ok();
+    }
+    opts.exposure = exposure;
     let wb_applied = match sensor.camera_wb {
         Some(m) => {
             let g = wb_gains(tuning.temperature, tuning.tint);
@@ -165,6 +171,7 @@ fn develop_fitted(bytes: &[u8], opts: &DevelopOptions) -> Result<photocraft_raw:
     let mut opts = Cow::Borrowed(opts);
     if opts.camera_look.is_none()
         && sensor.color.calibrations.is_empty()
+        && !sensor.is_monochrome()
         && let Ok(look) = fit_preview_look(bytes, &sensor, &opts)
     {
         opts.to_mut().camera_look = Some(look);

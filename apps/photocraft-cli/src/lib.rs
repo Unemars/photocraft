@@ -45,7 +45,7 @@ USAGE:
       [--automation-read-root <dir>] [--automation-write-root <dir>]
       Keep one headless session open and answer JSON lines ({\"id\",\"method\",\"params\"}) on stdio,
       or on 127.0.0.1:<port>. Methods: engine.execute, jobs.list/cancel, engine.commands,
-      doc.open/new/save/inspect/render/select/close, session.list, batch, methods
+      doc.open/new/place/save/exportLayers/exportDataSets/importDataSets/inspect/render/select/close, session.list, batch, methods
       (docs/control-protocol.md#headless-server).
 
   photocraft-cli <subcommand> --help (or -h) prints this text. A flag the subcommand doesn't take is
@@ -434,6 +434,9 @@ fn batch(a: &Args, out: &mut dyn Write, err: &mut dyn Write) -> R {
             h.session.actions.list = set.clone();
             h.open(input).map_err(|e| e.to_string())?;
             for (id, p) in &actions {
+                if photocraft_engine::actions_cmds::shell_view_command(id) || photocraft_engine::actions_cmds::shell_save_command(id) {
+                    continue;
+                }
                 let r = h.command_run(id, p.clone()).map_err(|e| format!("`{id}`: {e}"))?;
                 // A failed step inside a called action makes this file an error, not a saved result.
                 if let Some(e) = photocraft_engine::actions_cmds::nested_failure(id, &r) {

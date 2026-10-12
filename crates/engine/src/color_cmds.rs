@@ -43,7 +43,7 @@ pub struct ProofSetup {
 impl Default for ProofSetup {
     fn default() -> Self {
         ProofSetup {
-            name: Builtin::CoatedCmyk.id().into(),
+            name: "working-cmyk".into(),
             profile: Arc::new(Builtin::CoatedCmyk.profile().clone()),
             intent: Intent::RelativeColorimetric,
             bpc: true,
@@ -238,11 +238,28 @@ impl ColorState {
 
     /// Apply the colour management policy to a document being opened. Returns what happened
     /// (`action`: kept|converted|discarded|assigned|untagged) and whether to ask the user.
-    pub fn open_policy(&self, doc: &mut Document) -> Value {
+    ///
+    /// An RGB file with no embedded profile whose EXIF ColorSpace tag says sRGB (as cameras write)
+    /// is opened as sRGB, as in Photoshop; `ignore_exif` (Preferences › File Handling › Ignore
+    /// EXIF Profile Tag) treats it as untagged instead. The report then has `exif: true`.
+    pub fn open_policy(&self, doc: &mut Document, ignore_exif: bool) -> Value {
         let space = mode_space(doc.mode);
         if !matches!(space, ColorSpace::Rgb | ColorSpace::Cmyk | ColorSpace::Gray) {
             return json!({"action": "kept"});
         }
+        let exif_srgb = space == ColorSpace::Rgb
+            && !ignore_exif
+            && doc.icc_profile.is_none()
+            && doc.metadata.exif.as_deref().and_then(|e| photocraft_codecs::exif_color_space(e)) == Some(photocraft_codecs::EXIF_COLOR_SPACE_SRGB);
+        if exif_srgb {
+            doc.icc_profile = Some(Builtin::Srgb.profile().to_bytes());
+        }
+        let report = self.apply_open_policy(doc, space);
+        if exif_srgb { merge(report, json!({"exif": true})) } else { report }
+    }
+
+    /// [`ColorState::open_policy`] once the document's profile is known.
+    fn apply_open_policy(&self, doc: &mut Document, space: ColorSpace) -> Value {
         let working = self.working(doc.mode);
         let policy = self.settings.policy(doc.mode);
         let embedded = doc.icc_profile.as_ref().and_then(|b| profile_from_bytes(b).ok()).filter(|p| p.color_space == space);
@@ -1012,7 +1029,7 @@ impl Session {
     /// convert to the working space, or discard the embedded profile). Returns the document
     /// index and a report (`action`, `mismatch`, `ask`) the UI can turn into a prompt.
     pub fn open_document(&mut self, mut doc: Document, path: Option<String>) -> (usize, Value) {
-        let report = self.color.open_policy(&mut doc);
+        let report = self.color.open_policy(&mut doc, self.prefs().file_handling.ignore_exif_profile_tag);
         (self.add_document(doc, path), report)
     }
 }
@@ -1378,6 +1395,76 @@ mod settings_tests {
         let (_, r) = s.open_document(d, None);
         assert_eq!(r["action"], "assigned");
         assert_eq!(desc(&s.active().unwrap().doc).as_deref(), Some("Display P3"));
+    }
+
+    /// A little-endian EXIF block whose Exif IFD holds ColorSpace = `space`.
+    fn exif_color_space(space: u16) -> Vec<u8> {
+        let mut b = b"Exif\0\0II\x2a\0\x08\0\0\0".to_vec();
+        // IFD0: the Exif IFD pointer (LONG) to offset 26, then no next IFD.
+        b.extend([1, 0, 0x69, 0x87, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0]);
+        // Exif IFD: ColorSpace (SHORT).
+        b.extend([1, 0, 0x01, 0xA0, 3, 0, 1, 0, 0, 0]);
+        b.extend(space.to_le_bytes());
+        b.extend([0, 0, 0, 0, 0, 0]);
+        b
+    }
+
+    fn untagged_camera_file(space: Option<u16>) -> Document {
+        let mut d = tagged("srgb");
+        d.icc_profile = None;
+        d.metadata.exif = space.map(|v| Arc::new(exif_color_space(v)));
+        d
+    }
+
+    /// The tag survives a real JPEG: written without an ICC profile, read back, opened as sRGB.
+    #[test]
+    fn exif_srgb_jpeg_round_trip() {
+        let mut s = Session::new();
+        s.execute("edit.colorSettings", json!({"workingRgb": "display-p3"})).unwrap();
+        let r = photocraft_io::export(&untagged_camera_file(Some(1)), "x.jpg", &photocraft_io::ExportOptions::default()).unwrap();
+        let back = photocraft_io::import("x.jpg", &r.bytes).unwrap().document;
+        assert!(back.icc_profile.is_none(), "no ICC profile in the file");
+        let (_, r) = s.open_document(back, None);
+        assert_eq!((r["action"].as_str(), r["exif"].as_bool()), (Some("kept"), Some(true)));
+        assert!(desc(&s.active().unwrap().doc).unwrap().starts_with("sRGB"));
+    }
+
+    /// #204: a camera file with no ICC profile but EXIF ColorSpace = sRGB opens as sRGB, as in
+    /// Photoshop; Ignore EXIF Profile Tag opens it untagged (the working space).
+    #[test]
+    fn exif_srgb_tag_unless_ignored() {
+        let mut s = Session::new();
+        // Working sRGB: tagged sRGB, nothing to ask.
+        let (_, r) = s.open_document(untagged_camera_file(Some(1)), None);
+        assert_eq!((r["action"].as_str(), r["exif"].as_bool(), r.get("ask")), (Some("kept"), Some(true), None));
+        assert!(desc(&s.active().unwrap().doc).unwrap().starts_with("sRGB"));
+        // Working Display P3, Preserve: it stays sRGB instead of being read as P3.
+        s.execute("edit.colorSettings", json!({"policyRgb": "preserve", "workingRgb": "display-p3"})).unwrap();
+        let (_, r) = s.open_document(untagged_camera_file(Some(1)), None);
+        assert_eq!((r["action"].as_str(), r["mismatch"].as_bool(), r["exif"].as_bool()), (Some("kept"), Some(true), Some(true)));
+        assert!(desc(&s.active().unwrap().doc).unwrap().starts_with("sRGB"));
+        // Convert: converted from sRGB to P3, so the pixel values change.
+        s.execute("edit.colorSettings", json!({"policyRgb": "convert"})).unwrap();
+        let (_, r) = s.open_document(untagged_camera_file(Some(1)), None);
+        assert_eq!(r["action"], "converted");
+        let d = &s.active().unwrap().doc;
+        assert_eq!(desc(d).as_deref(), Some("Display P3"));
+        assert!((d.layers[0].surface().unwrap().pixel(1, 1)[0] - 0.2).abs() > 0.01);
+        // Uncalibrated, no EXIF, or Ignore EXIF Profile Tag on: untagged, so the working space.
+        s.execute("edit.colorSettings", json!({"policyRgb": "preserve"})).unwrap();
+        for (space, ignore) in [(Some(0xFFFF), false), (None, false), (Some(1), true)] {
+            s.execute("prefs.set", json!({"path": "fileHandling.ignoreExifProfileTag", "value": ignore})).unwrap();
+            let (_, r) = s.open_document(untagged_camera_file(space), None);
+            assert_eq!((r["action"].as_str(), r.get("exif")), (Some("assigned"), None), "{space:?}, ignore {ignore}");
+            assert_eq!(desc(&s.active().unwrap().doc).as_deref(), Some("Display P3"));
+        }
+        // An embedded profile always wins over the EXIF tag.
+        s.execute("prefs.set", json!({"path": "fileHandling.ignoreExifProfileTag", "value": false})).unwrap();
+        let mut d = tagged("adobe-rgb-compat");
+        d.metadata.exif = Some(Arc::new(exif_color_space(1)));
+        let (_, r) = s.open_document(d, None);
+        assert_eq!((r["action"].as_str(), r.get("exif")), (Some("kept"), None));
+        assert_eq!(desc(&s.active().unwrap().doc), Some(Builtin::from_id("adobe-rgb-compat").unwrap().profile().description.clone()));
     }
 
     #[test]

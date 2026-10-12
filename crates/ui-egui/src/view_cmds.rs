@@ -397,17 +397,19 @@ pub fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
     })
 }
 
-/// Checkmarks of the Type menu's anti-aliasing, orientation and OpenType items.
+/// Checkmarks of the Type menu's anti-aliasing, orientation and OpenType items, for the layer the
+/// options bar and Properties show: the one being edited, else the active or a selected type layer.
+/// Anti-aliasing and orientation stay check items (`Some(false)`) without a type layer: a native
+/// menu can't change an item's kind in place.
 fn type_checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
-    use photocraft_doc::LayerContent;
-    let st = app.session.active()?;
-    let LayerContent::Text(t) = &st.doc.layer(st.active_layer?)?.content else { return None };
+    let t = crate::type_tool::target_text(app);
     if let Some(k) = id.strip_prefix("type.antiAlias.") {
-        return Some(photocraft_engine::type_extra_cmds::aa_name(t.antialias) == k);
+        return Some(t.is_some_and(|t| photocraft_engine::type_extra_cmds::aa_name(t.antialias) == k));
     }
     if let Some(k) = id.strip_prefix("type.orientation.") {
-        return Some((t.orientation == photocraft_doc::text::Orientation::Vertical) == (k == "vertical"));
+        return Some(t.is_some_and(|t| (t.orientation == photocraft_doc::text::Orientation::Vertical) == (k == "vertical")));
     }
+    let t = t?;
     let tag = match id.strip_prefix("type.openType.")? {
         "standardLigatures" => "liga",
         "contextualAlternates" => "calt",
@@ -1171,13 +1173,16 @@ fn save_a_copy(app: &mut PhotocraftApp) -> Result<Value, String> {
         if parked {
             return Ok(json!({"path": path, "warnings": []}));
         }
+        let settings = app.save_settings();
         let export = app.services.export.as_ref().ok_or("no exporter configured")?;
-        let (bytes, warnings) = export(&doc, &path, &crate::ExportSettings::default())?;
+        let (bytes, warnings) = export(&doc, &path, &settings)?;
         let write = app.services.write.as_mut().ok_or("no writer configured")?;
         write(&path, &bytes)?;
-        app.ui.status = format!("Saved a copy as {path}");
+        let template = "Saved a copy as {path}";
+        app.ui.status = crate::i18n::fmt(tl!(template), &[("path", &path)]);
         app.ui.status_error = false;
-        crate::notices::io_warnings(app, &format!("Saved a copy as {}", crate::file_open::display_name(&path)), &warnings);
+        let what = crate::i18n::fmt(tl!(template), &[("path", &crate::file_open::display_name(&path))]);
+        crate::notices::io_warnings(app, &what, &warnings);
         Ok(json!({"path": path, "warnings": warnings}))
     })
 }
@@ -1191,7 +1196,8 @@ fn export_contents(app: &mut PhotocraftApp) -> Result<Value, String> {
     app.pick_save(&name.clone(), move |app, path| {
         let write = app.services.write.as_mut().ok_or("no writer configured")?;
         write(&path, &bytes)?;
-        app.ui.status = format!("Exported contents to {path}");
+        let template = "Exported contents to {path}";
+        app.ui.status = crate::i18n::fmt(tl!(template), &[("path", &path)]);
         app.ui.status_error = false;
         Ok(json!({"path": path, "fileName": name, "bytes": bytes.len()}))
     })

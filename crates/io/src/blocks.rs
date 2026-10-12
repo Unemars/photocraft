@@ -214,6 +214,13 @@ pub(crate) fn enum_of<'a>(d: &'a Descriptor, key: &str) -> Option<&'a [u8]> {
     }
 }
 
+/// A gradient's interpolation method code. Photoshop (27.11, checked by saving gradient fill
+/// layers) stores it as the enum `gradientsInterpolationMethod` (`Perc`, `Lnr `, `Smoo`, `Gcls`);
+/// `gs99` is kept as a fallback.
+pub(crate) fn gradient_method(d: &Descriptor) -> Option<&[u8]> {
+    enum_of(d, "gradientsInterpolationMethod").or_else(|| enum_of(d, "gs99"))
+}
+
 pub(crate) fn bool_of(d: &Descriptor, key: &str) -> bool {
     matches!(d.get(key), Some(Value::Boolean(true)))
 }
@@ -245,7 +252,7 @@ pub(crate) fn gradient_style_value(s: GradientStyle) -> Value {
 pub(crate) type Stops = (Vec<(f32, Color)>, Vec<(f32, f32)>);
 
 /// Stops of a `Grdn` descriptor, baked to Photoshop's interpolation (smoothness `Intr`, stop
-/// midpoints, and the parent's `gs99` interpolation method when given).
+/// midpoints, and the parent's interpolation method when given, see [`gradient_method`]).
 pub(crate) fn gradient_stops_with(grad: &Descriptor, method: Option<&[u8]>) -> Stops {
     let raw = gradient_stops_raw(grad);
     let stops = if raw.stops.len() >= 2 {
@@ -406,7 +413,7 @@ pub fn fill_from_desc(key: &[u8; 4], d: &Descriptor) -> Option<Fill> {
         b"GdFl" => {
             let angle = num(d.get("Angl")).unwrap_or(90.0) as f32;
             let scale = num(d.get("Scl ")).map_or(1.0, |v| v as f32 / 100.0);
-            let raw = get_desc(d, "Grad").map(|g| gradient_stops_editable(g, enum_of(d, "gs99")));
+            let raw = get_desc(d, "Grad").map(|g| gradient_stops_editable(g, gradient_method(d)));
             let (mut stops, midpoints) = raw.map(|r| (r.stops, r.mids)).unwrap_or_default();
             // Opacity stops with Photoshop's smoothness and opacity midpoints applied (raw when
             // the interpolation is plain); none when fully opaque.
@@ -654,6 +661,31 @@ mod tests {
         let (k, data) = super::write_fill(&Fill::gradient(vec![(0.0, red), (1.0, Color::WHITE)], 0.0, 1.0, GradientStyle::Linear, false));
         let Some(Fill::Gradient { opacity_stops, .. }) = super::parse_fill(&k, &data) else { panic!("gradient") };
         assert!(opacity_stops.is_empty());
+    }
+
+    /// Photoshop 27.11 stores a gradient's method as the enum `gradientsInterpolationMethod`
+    /// (seen in gradient fill layers saved by scripted Photoshop): a black→white Linear gradient
+    /// is at 188 of 255 halfway (measured), where Classic gives 128. The key used to be read as
+    /// `gs99`, which Photoshop doesn't write, so every gradient opened as Classic.
+    #[test]
+    fn gradient_fill_reads_the_interpolation_method() {
+        use photocraft_color::Color;
+        use photocraft_doc::{Fill, GradientStyle};
+        use photocraft_psd::descriptor::{Id, Value};
+        let f = Fill::gradient(vec![(0.0, Color::BLACK), (1.0, Color::WHITE)], 0.0, 1.0, GradientStyle::Linear, false);
+        let (k, data) = super::write_fill(&f);
+        let d = super::parse_prefix_versioned(&data).unwrap();
+        let mid = |code: &str| {
+            let d =
+                d.clone().with("gradientsInterpolationMethod", Value::Enumerated { type_id: Id::new("gradientInterpolationMethodType"), value: Id::new(code) });
+            let back = super::fill_from_desc(&k, &d).unwrap();
+            let ramp = photocraft_compose::gradient_fill::Ramp::new(&back).unwrap();
+            (ramp.sample(0.5)[0] * 255.0).round()
+        };
+        assert_eq!(mid("Gcls"), 128.0);
+        assert!((mid("Lnr ") - 188.0).abs() <= 1.0, "Linear: {}", mid("Lnr "));
+        assert!((mid("Perc") - 99.0).abs() <= 2.0, "Perceptual: {}", mid("Perc"));
+        assert!((mid("Smoo") - 99.0).abs() <= 2.0, "Smooth: {}", mid("Smoo"));
     }
 
     #[test]

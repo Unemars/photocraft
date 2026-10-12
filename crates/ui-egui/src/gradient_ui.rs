@@ -1116,6 +1116,18 @@ mod tests {
     }
 
     #[test]
+    fn dragging_the_midpoint_diamond_moves_it() {
+        let mut app = app_with_gradient("linear");
+        drag(&mut app, [20.0, 60.0], [180.0, 60.0]);
+        // The untouched midpoint sits at the segment centre (doc x = 100). Drag it to a quarter.
+        drag(&mut app, [100.0, 60.0], [60.0, 60.0]);
+        let g = get(&mut app);
+        assert_eq!(g["stops"].as_array().map(Vec::len), Some(2), "a midpoint drag must not add a stop: {g}");
+        let m = g["midpoints"][0].as_f64().unwrap_or(f64::NAN);
+        assert!((m - 0.25).abs() < 1e-3, "the midpoint did not move: {g}");
+    }
+
+    #[test]
     fn shift_snaps_live_drags_to_45_degrees() {
         let mut app = app_with_gradient("linear");
         let shift = egui::Modifiers::SHIFT;

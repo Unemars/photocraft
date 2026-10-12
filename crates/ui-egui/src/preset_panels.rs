@@ -834,7 +834,8 @@ pub fn finish_custom_shape(app: &mut PhotocraftApp, rect: [f64; 4], keep: bool, 
     let name = app.ui.presets_ui.shape().to_string();
     let r = run(app, "shape.presets.place", json!({"preset": name, "rect": rect, "keepAspect": keep, "fill": fill, "stroke": stroke}));
     if r.is_none() && !photocraft_engine::presets::shapes::all_groups(&app.session).iter().any(|g| g.items.iter().any(|s| s.name == name)) {
-        app.ui.status = format!("No custom shape \"{name}\": pick one in the options bar or Window › Shapes");
+        let template = "No custom shape \"{name}\": pick one in the options bar or Window › Shapes";
+        app.ui.status = crate::i18n::fmt(tl!(template), &[("name", &name)]);
     }
 }
 
@@ -1006,7 +1007,7 @@ pub fn clone_source_panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let (mut ox, mut oy) = (off[0] as f32, off[1] as f32);
     let (mut w, mut h) = (slot.scale[0] as f32, slot.scale[1] as f32);
     let mut rot = slot.rotation as f32;
-    egui::Grid::new("clone-src-grid").num_columns(4).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
+    egui::Grid::new("clone-src-grid").num_columns(5).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
         lbl(ui, "X:");
         if crate::widgets::value_field(ui, &mut ox, -30000.0..=30000.0, "px", 72.0).changed() && slot.source.is_some() {
             action = Some(json!({"offset": [ox, oy]}));
@@ -1014,6 +1015,11 @@ pub fn clone_source_panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         lbl(ui, "W:");
         if crate::widgets::value_field(ui, &mut w, -1000.0..=1000.0, "%", 64.0).changed() {
             action = Some(json!({"width": w}));
+        }
+        // The W/H chain: with it on, a new W or H scales the other by the same factor.
+        let icon = if slot.linked { "link" } else { "unlink" };
+        if crate::icons::button(ui, icon, 22.0, slot.linked, tl!("Maintain aspect ratio")).clicked() {
+            action = Some(json!({"linked": !slot.linked}));
         }
         ui.end_row();
         lbl(ui, "Y:");

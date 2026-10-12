@@ -101,3 +101,16 @@ sync_github_name = true
 [people.TheTeslak]
 sync_github_name = true
 
+[people.timothydaly1]
+display_name = "SyntaxError"
+
+[people.atoslins]
+real_name = "Atos Lins"
+display_name = "Atos Lins"
+sync_github_name = false
+
+[people.axlecoffee]
+sync_github_name = true
+
+[people.Losminek]
+sync_github_name = true

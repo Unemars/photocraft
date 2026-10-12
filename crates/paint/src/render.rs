@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use photocraft_color::{BlendMode, PixelFormat};
+use photocraft_color::{BlendMode, PixelFormat, SampleType};
 use photocraft_geom::Rect;
 use photocraft_raster::{Surface, from_rgba_into, to_rgba};
 
@@ -20,6 +20,22 @@ use crate::retouch::{Footprint, alpha_index, over_native};
 use crate::rng::hash2;
 use crate::tile::{Mips, PatternImage};
 use crate::{Dab, StrokePoint, dab_coverage, tip_falloff};
+
+/// Salt of the 8-bit dither's per-pixel noise.
+const DITHER_SALT: u64 = 0x0000_6469_7468_6572;
+
+/// Before a stroke's result is quantised to 8 bits, offset every channel of the pixel by the same
+/// deterministic noise of under half a level, so fractional values round up or down in proportion
+/// (a soft, low-flow stroke's fine gradient survives as grain instead of bands). A value already on
+/// an 8-bit level still rounds back to itself, and because the noise depends only on the pixel's
+/// position, the live preview, the commit and a replay all agree.
+#[inline]
+fn dither8(px: &mut [f32], x: i32, y: i32) {
+    let d = (hash2(x, y, DITHER_SALT) - 0.5) / 255.0;
+    for v in px.iter_mut() {
+        *v += d;
+    }
+}
 
 /// Edge of a stroke-buffer tile.
 pub const COV_TILE: i32 = 64;
@@ -229,6 +245,24 @@ impl BrushContext {
         // position, and thin lines beaded.
         let small = mips.is_none() && !aliased && rm < SMALL_TIP_RADIUS;
         let small_reach2 = (rm + 0.75) * (rm + 0.75);
+        // Keep ordinary computed tips separate from the feature loop, so their dense rows
+        // can be vectorised without the per-pixel sampled-mask and stroke-depth branches.
+        if !(mips.is_some() || small || (aliased && b.square) || noise || tex_tip || wet)
+            && depth.is_none()
+            && proj.is_none()
+            && d.angle == 0.0
+            && d.radius.is_finite()
+            && d.roundness.is_finite()
+            && rm.is_finite()
+            && cx.is_finite()
+            && cy.is_finite()
+            && hardness.is_finite()
+            && d.alpha.is_finite()
+            && w > 0
+        {
+            rasterize_round(d, rect, out, hardness, aliased);
+            return;
+        }
         for yy in 0..h {
             let y = rect.y0 + yy as i32;
             let dy = y as f32 + 0.5 - cy;
@@ -615,6 +649,12 @@ impl StrokeRenderer {
         self.generator.wants_time()
     }
 
+    /// The string between the brush and the pointer while smoothing lags (see
+    /// [`Smoother::string`](crate::dynamics::Smoother::string)).
+    pub fn smoothing_string(&self) -> Option<([f64; 2], [f64; 2])> {
+        self.generator.smoothing_string()
+    }
+
     /// Feed input points (any chunking gives the same result).
     pub fn push(&mut self, pts: &[StrokePoint]) {
         self.generator.push(pts, &mut self.dab_buf, &mut self.dual_buf);
@@ -777,6 +817,9 @@ impl StrokeRenderer {
         if let Some(a) = a_idx {
             src[a] = b.color[3];
         }
+        // 8-bit targets: the pixels the stroke changes are dithered as they are quantised, so
+        // soft, low-flow strokes don't band (see `dither8`).
+        let dither = fmt.sample == SampleType::U8;
         let mut dmg = Rect::EMPTY;
         let mut region = Vec::new();
         for (tx, ty) in keys {
@@ -813,6 +856,9 @@ impl StrokeRenderer {
                         if let (Some(a), false) = (a_idx, lock_transparency) {
                             px[a] *= 1.0 - k;
                         }
+                        if dither {
+                            dither8(px, x, y);
+                        }
                         continue;
                     }
                     if lock_transparency && a_idx.is_some_and(|a| px[a] <= 0.0) {
@@ -836,6 +882,9 @@ impl StrokeRenderer {
                         let mut enc = [0.0f32; 8];
                         from_rgba_into(&fmt, o, &mut enc);
                         px.copy_from_slice(&enc[..n]);
+                    }
+                    if dither {
+                        dither8(px, x, y);
                     }
                 }
             }
@@ -864,3 +913,48 @@ pub fn render_stroke(
     r.finish();
     r.composite(&pre, target, selection, lock_transparency, true)
 }
+
+// The zero-angle transform only changes signs; squaring gives the same radial distance.
+#[inline(never)]
+fn rasterize_round(d: &Dab, rect: Rect, out: &mut [f32], hardness: f32, aliased: bool) {
+    let (cx, cy) = if aliased { grid_center(d.center.x, d.center.y, 2.0 * d.radius) } else { (d.center.x as f32, d.center.y as f32) };
+    let ro = d.roundness.max(0.5 / d.radius).min(1.0);
+    let rm = (d.radius * ro).max(0.5);
+    let w = rect.width() as usize;
+    let reach2 = (rm + 0.5) * (rm + 0.5);
+    let inner = rm * hardness.clamp(0.0, 1.0);
+    for (yy, row) in out.chunks_exact_mut(w).enumerate() {
+        let dy = (rect.y0 + yy as i32) as f32 + 0.5 - cy;
+        if aliased {
+            for (xx, dst) in row.iter_mut().enumerate() {
+                let dx = (rect.x0 + xx as i32) as f32 + 0.5 - cx;
+                let d2 = (dx * ro).powi(2) + dy * dy;
+                *dst = if d2 < reach2 && d2.sqrt() <= rm { d.alpha } else { 0.0 };
+            }
+        } else if rm - inner < 1e-3 {
+            for (xx, dst) in row.iter_mut().enumerate() {
+                let dx = (rect.x0 + xx as i32) as f32 + 0.5 - cx;
+                let d2 = (dx * ro).powi(2) + dy * dy;
+                let edge = ((rm + 0.5 - d2.sqrt()).clamp(0.0, 1.0)).min(1.0);
+                *dst = if d2 >= reach2 || edge <= 0.0 { 0.0 } else { edge * d.alpha };
+            }
+        } else {
+            for (xx, dst) in row.iter_mut().enumerate() {
+                let dx = (rect.x0 + xx as i32) as f32 + 0.5 - cx;
+                let d2 = (dx * ro).powi(2) + dy * dy;
+                let dd = d2.sqrt();
+                let edge = ((rm + 0.5 - dd).clamp(0.0, 1.0)).min(1.0);
+                let t = ((dd - inner) / (rm - inner)).clamp(0.0, 1.0);
+                let s = 1.0 - t * t;
+                let s2 = s * s;
+                let falloff = if dd <= inner { 1.0 } else { s2 * s2 };
+                let val = edge * falloff;
+                *dst = if d2 >= reach2 || val <= 0.0 { 0.0 } else { val * d.alpha };
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "render_reference.rs"]
+mod reference;

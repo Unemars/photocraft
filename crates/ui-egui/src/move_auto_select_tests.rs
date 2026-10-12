@@ -158,6 +158,8 @@ fn every_theme_shows_the_type_options() {
     // text", so there was no font, style or size control while typing.
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
+    // The font menus show "Loading fonts…" until the font scan is done (#3021): wait for it.
+    let _ = photocraft_text::shared();
     for theme in crate::theme::ThemeKind::ALL {
         let (mut app, _, _) = app();
         app.ui.tool = Tool::Type;

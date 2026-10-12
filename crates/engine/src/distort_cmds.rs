@@ -232,7 +232,8 @@ fn check_locks(l: &Layer, group: Locks, position: bool) -> Result<()> {
 
 /// Shared driver: a smart object records `cmd` as a smart filter; a pixel layer is edited in
 /// place by `f(surface, selection)`.
-type MaskFn<'a> = Option<&'a dyn Fn(&Surface) -> Surface>;
+/// Deforms a linked layer mask the same way, limited to the selection when there is one.
+type MaskFn<'a> = Option<&'a dyn Fn(&Surface, Option<&Surface>) -> Result<Surface>>;
 /// Deforms a layer's pixels (with the selection and canvas); an `Err` leaves the layer as it was.
 type LayerFn<'a> = &'a dyn Fn(&Surface, Option<&Surface>, Rect) -> Result<Surface>;
 
@@ -259,11 +260,11 @@ fn run_on_layer(s: &mut Session, cmd: &str, label: &str, p: &Value, moves: bool,
             return Err(EngineError::Other(format!("{label} needs a pixel layer (rasterize it first)")));
         };
         *surf = f(surf, selection.as_ref(), canvas)?;
-        // A linked layer mask follows a geometric warp.
+        // A linked layer mask follows a geometric warp, only where the pixels moved (#3083).
         if let (Some(mf), Some(m)) = (mask, l.mask.as_mut())
             && m.linked
         {
-            m.surface = mf(&m.surface);
+            m.surface = mf(&m.surface, selection.as_ref())?;
         }
         Ok(())
     })?;
@@ -344,9 +345,14 @@ fn perspective(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     }
     let it = interp(p);
     let map = PerspectiveMap::new(&planes);
-    let mask_fn = |m: &Surface| match &map {
-        Some(map) => warp_mesh_gray(m, &|x, y| map.map(x, y), Interp::Bilinear),
-        None => m.clone(),
+    let mask_fn = |m: &Surface, sel: Option<&Surface>| {
+        let Some(map) = &map else { return Ok(m.clone()) };
+        let f = |x, y| map.map(x, y);
+        let whole = |m: &Surface| Ok(warp_mesh_gray(m, &f, Interp::Bilinear));
+        match sel {
+            Some(sel) => crate::transform_cmds::move_gray_selected(m, sel, &|lifted, src| Ok(warp_mesh_surface(lifted, src, &f, Interp::Bilinear)), &whole),
+            None => whole(m),
+        }
     };
     let mut r = run_on_layer(
         s,

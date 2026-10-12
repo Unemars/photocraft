@@ -500,6 +500,12 @@
 	Color Range…	色域指定…
 	Focus Area…	焦点領域…
 	Select and Mask…	選択とマスク…
+# Select and Mask dialog labels
+	Smart Radius	スマート半径
+	Shift Edge	エッジをシフト
+	Decontaminate	混入を除去
+	Output	出力
+	Refine Edge	境界線を調整
 	Modify	選択範囲を修正
 	Border…	境界…
 	Smooth…	滑らかに…
@@ -768,6 +774,7 @@
 	Split Warp Horizontally	ワープを水平方向に分割
 	Split Warp Vertically	ワープを垂直方向に分割
 	Statistics…	統計情報…
+	Refine Strokes	調整ストローク
 @plural	{n} item|{n} items	{n} 件
 	Auto	自動
 
@@ -843,6 +850,9 @@
 	Bend:	曲げ:
 	Bicubic	バイキュービック
 	Bicubic (smooth gradients)	バイキュービック(滑らかな階調)
+	Automatic	自動
+	Bicubic Smoother (enlargement)	バイキュービック法 - 滑らか(拡大)
+	Bicubic Sharper (reduction)	バイキュービック法 - シャープ(縮小)
 	Bilinear	バイリニア
 	Black	黒
 	Black & White	白黒
@@ -899,6 +909,7 @@
 	Click to zoom in  ·  {key}-click to zoom out  ·  drag right/left to zoom in/out	クリックで拡大 · {key}+クリックで縮小 · 右/左にドラッグで拡大/縮小
 	Click with the Note tool to add a note.	注釈ツールでクリックすると注釈を追加できます。
 	Click: corner · Drag: smooth · Click first point: close · {key} finish · Esc cancel	クリック: 角 · ドラッグ: 滑らか · 最初の点をクリック: 閉じる · {key} 完了 · Esc キャンセル
+	Click: corner · Drag: smooth · {alt}-drag: break handle · Click or drag first point: close · {key} finish · Esc cancel	クリック: 角 · ドラッグ: 滑らか · {alt}+ドラッグ: ハンドルを分割 · 最初の点をクリックまたはドラッグ: 閉じる · {key} 完了 · Esc キャンセル
 	Clip to layer below	下のレイヤーでクリッピング
 	Clipped	クリッピング済み
 	Close Style Options	スタイルオプションを閉じる
@@ -1524,6 +1535,7 @@
 	White Balance: As Shot	ホワイトバランス: 撮影時の設定
 	Whites	白レベル
 	Width	幅
+	Slant	傾斜
 	Width:	幅:
 	Work Path	作業用パス
 	Yellow	イエロー
@@ -1541,6 +1553,8 @@
 	↑↓ navigate   {key} run   esc close	↑↓ 移動   {key} 実行   esc 閉じる
 	Version {version}	バージョン {version}
 	New Document	新規ドキュメント
+	New Document With Mask	新規ドキュメント（マスク付き）
+	New Layer With Mask	新規レイヤー（マスク付き）
 	Saved	保存済み
 	Save Preset…	プリセットを保存…
 	Preset Name	プリセット名
@@ -1701,6 +1715,7 @@
 	Pen Pressure	ペンの筆圧
 	Pen Tilt	ペンの傾き
 	Pen Tool	ペンツール
+	Convert Point Tool	アンカーポイントの変換ツール
 	Photo	写真
 	PhotoCraft website	PhotoCraft の Web サイト
 	Picas	パイカ
@@ -1947,6 +1962,7 @@
 	Show only crosshair while painting	描画中は十字線のみ表示
 	Show slice numbers	スライス番号を表示
 	Show tooltips	ツールチップを表示
+	Enable animations	アニメーションを有効にする
 	Show highlight on rollover	ロールオーバー時にハイライトを表示
 	Show bounding box when dragging layer	レイヤーのドラッグ中にバウンディングボックスを表示
 	System title bar	システムのタイトルバー
@@ -2127,9 +2143,11 @@
 	Developing {name}	{name} を現像中
 	Cancelled {label}	{label} をキャンセルしました
 	Esc to cancel	Esc キーでキャンセル
+	Opened {name}	{name} を開きました
 	Opening {name}	{name} を開いています
 	Saved {name}	{name} を保存しました
 	Saving {name}	{name} を保存しています
+	Saving {percent}	保存中 {percent}
 	A save to {name} is still running; try again when it finishes	{name} への保存がまだ実行中です。完了してからもう一度お試しください
 	{label} is writing the file and can no longer be cancelled	{label} はファイルを書き込み中のため、キャンセルできません
 	Opening {name}…	{name} を開いています…
@@ -2176,6 +2194,8 @@ cameraRaw	Color	カラー
 	Patch Tool	パッチツール
 	Patch:	パッチ:
 	Lasso around an area, then drag the selection	投げ縄で範囲を囲み、選択範囲をドラッグします
+	Transform On Drop	ドロップ時に変形
+	Scale or rotate the moved area, then press {key}	移動した範囲を拡大・縮小または回転し、{key} を押します
 	Now drag the selection onto another area	選択範囲を別の場所へドラッグします
 	Edit Type	文字を編集
 
@@ -2291,6 +2311,19 @@ cameraRaw	Color	カラー
 	Domed	ドーム
 	Domed (Inverted)	ドーム (反転)
 	Diagonal (Descending)	斜め (下降)
+	Contour Editor	輪郭エディター
+	Anti-aliased	アンチエイリアス
+	Corner	コーナー
+	Gloss Contour	光沢輪郭
+	Contour	輪郭
+	Cone - Inverted	円錐 - 反転
+	Cove - Deep	入り江 - 深
+	Cove - Shallow	入り江 - 浅
+	Half Round	半円
+	Ring - Double	リング - ダブル
+	Rolling Slope - Descending	ローリングスロープ - 下降
+	Rounded Steps	丸い階段
+	Sawtooth 1	のこぎり波 1
 
 	Red Eye Tool	赤目ツール
 	Red Eye	赤目
@@ -3539,7 +3572,7 @@ cameraData	Lens	レンズ
 	Freeform Pen Tool	フリーフォームペンツール
 	Curvature Pen Tool	曲線ペンツール
 	Curve Fit:	カーブフィット:
-	Drag: draw freehand · Release on the start point: close	ドラッグ: フリーハンドで描画 · 始点で離す: 閉じる
+	Drag: draw freehand · {alt}-click: straight segment · Release on the start point: close	ドラッグ: フリーハンドで描画 · {alt}+クリック: 直線セグメント · 始点で離す: 閉じる
 	Click: smooth point · Double-click: corner · Drag a point: move · Click first point: close · {key} finish	クリック: スムーズポイント · ダブルクリック: 角 · 点をドラッグ: 移動 · 最初の点をクリック: 閉じる · {key} 完了
 	New Crop Preset…	新規切り抜きプリセット…
 	Delete Crop Preset…	切り抜きプリセットを削除…
@@ -3547,5 +3580,80 @@ cameraData	Lens	レンズ
 	Select the crop presets to delete	削除する切り抜きプリセットを選択してください
 	Enter a name for the crop preset	切り抜きプリセットの名前を入力してください
 	There is no crop size or ratio to save	保存する切り抜きのサイズまたは比率がありません
+	Scale:	比率:
+	Snap to Origin	原点にスナップ
 	Search settings…	設定を検索…
 	No matching settings	一致する設定はありません
+	Loading fonts…	フォントを読み込み中…
+	Simulate Pressure	筆圧をシミュレート
+	Stroke Path…	パスのストローク…
+	Background Eraser	背景消しゴム
+	Healing Brush	修復ブラシ
+	Spot Healing Brush	スポット修復ブラシ
+	Smudge	指先
+	Amount:	量:
+	Protect:	保護:
+	Protect skin tones	肌色を保護
+	Edit points to modify the curve	ポイントを編集してカーブを変更
+	Draw to modify the curve	描画してカーブを変更
+curves	Smooth	スムーズ
+	Smooth the curve values	カーブの値を滑らかにする
+	Drag to draw the curve · {key}-click draws a straight line	ドラッグしてカーブを描画 · {key}+クリックで直線を描画
+	Grid Size:	グリッドサイズ:
+	Vanishing Point: click four corners to create a plane	消点：4 つの角をクリックして面を作成します
+	Vanishing Point is not active	消点はアクティブではありません
+	Apply Vanishing Point ({key})	消点を適用({key})
+	Fix the red plane first: its corners must form a convex quad	先に赤い面を修正してください：角が凸四角形になる必要があります
+# Select and Mask view modes (#1754)
+	Onion Skin	オニオンスキン
+	Marching Ants	点線の境界
+	On Black	黒地
+	On White	白地
+	On Layers	レイヤー上
+	Show Edge	エッジを表示
+	Show Original	元の状態を表示
+	F cycles the views; hold X to see the image	F で表示を切り替え、X を押している間は画像を表示
+# Select and Mask Refine Edge Brush (#2972)
+	Refine Edge Brush (R)	境界線調整ブラシ (R)
+	Expand Detection Area	検出領域を拡張
+	Restore Original Edge	元のエッジを復元
+	Paint over hair or fur on the image; Alt paints the other mode	画像の髪や毛の上をペイントします。Alt で反対のモードでペイント
+	Clear Brush Strokes	ブラシストロークを消去
+	Show rulers	定規を表示
+
+# Color Sampler (added with the i18n coverage repair)
+	Click to place · Alt-click or drag off-canvas to remove	クリックで配置 · Alt キーを押しながらクリック、またはカンバス外へドラッグで削除
+	No document open	ドキュメントが開かれていません
+	{n} of {max} sample points	{max} 個中 {n} 個のサンプルポイント
+# Print dialog (#2697)
+	Emulsion Down	乳剤面を下
+	Functions	機能
+	Print Resolution:	プリント解像度:
+	Use Previous Layer to Create Clipping Mask	下のレイヤーを使用してクリッピングマスクを作成
+	Fill with {mode}-neutral color (white)	{mode} の中間色で塗りつぶす (白)
+	Fill with {mode}-neutral color (black)	{mode} の中間色で塗りつぶす (黒)
+	Fill with {mode}-neutral color (50% gray)	{mode} の中間色で塗りつぶす (50% グレー)
+	(No neutral color exists for {mode} mode.)	({mode} モードには中間色がありません。)
+	Apply mask to layer before removing?	削除する前にマスクをレイヤーに適用しますか？
+	The layer or its mask changed. Drag the mask onto the Trash again.	レイヤーまたはそのマスクが変更されました。もう一度マスクをゴミ箱にドラッグしてください。
+	Delete the vector mask?	ベクトルマスクを削除しますか？
+# Counted status messages and labels (#3454; adapted from PR #3821)
+@plural	Exported {n} swatch to {file}|Exported {n} swatches to {file}	スウォッチ {n} 個を {file} に書き出しました
+@plural	Imported {n} brush from {group}|Imported {n} brushes from {group}	{group} からブラシ {n} 個を読み込みました
+@plural	Imported {n} swatch from {file}|Imported {n} swatches from {file}	{file} からスウォッチ {n} 個を読み込みました
+@plural	Played {n} step|Played {n} steps	{n} ステップを再生しました
+@plural	Updated {n} linked smart object changed on disk|Updated {n} linked smart objects changed on disk	ディスク上で変更されたリンクされたスマートオブジェクト {n} 個を更新しました
+@plural	Saved for Web: {n} file|Saved for Web: {n} files	Web 用に保存: {n} ファイル
+@plural	{n} layer recorded by this comp was deleted. Update the comp, or clear the warning.|{n} layers recorded by this comp were deleted. Update the comp, or clear the warning.	このカンプに記録されたレイヤー {n} 個が削除されました。カンプを更新するか、警告を消去してください。
+@plural	{n} plane|{n} planes	{n} 個の平面
+@plural	{n} preset|{n} presets	{n} 個のプリセット
+@plural	{n} sample point removed|{n} sample points removed	サンプルポイント {n} 個を削除しました
+@plural	{n} slice|{n} slices	{n} 個のスライス
+@plural	{n} step|{n} steps	{n} ステップ
+@plural	{warning} (+{n} more brush preset warning)|{warning} (+{n} more brush preset warnings)	{warning}(ほかにブラシプリセットの警告 {n} 件)
+@plural	{what} with {n} warning|{what} with {n} warnings	{what}(警告 {n} 件)
+# View › Guides › New Guide… › Color
+	Light Blue	ライトブルー
+	Light Red	ライトレッド
+	Medium Blue	ミディアムブルー
+	Light Gray	ライトグレー

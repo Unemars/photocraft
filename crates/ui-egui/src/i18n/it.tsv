@@ -499,6 +499,12 @@
 	Color Range…	Intervallo colori…
 	Focus Area…	Area di messa a fuoco…
 	Select and Mask…	Seleziona e maschera…
+# Select and Mask dialog labels
+	Smart Radius	Raggio avanzato
+	Shift Edge	Sposta bordo
+	Decontaminate	Decontamina
+	Output	Output
+	Refine Edge	Migliora bordo
 	Modify	Modifica
 	Border…	Bordo…
 	Smooth…	Smussa…
@@ -766,6 +772,7 @@
 	Split Warp Horizontally	Dividi altera orizzontalmente
 	Split Warp Vertically	Dividi altera verticalmente
 	Statistics…	Statistiche…
+	Refine Strokes	Tratti di perfezionamento
 @plural	{n} item|{n} items	{n} elemento|{n} elementi
 	Auto	Automatico
 
@@ -840,6 +847,9 @@
 	Bend:	Curvatura:
 	Bicubic	Bicubica
 	Bicubic (smooth gradients)	Bicubica (sfumature morbide)
+	Automatic	Automatico
+	Bicubic Smoother (enlargement)	Bicubica più morbida (ingrandimento)
+	Bicubic Sharper (reduction)	Bicubica più nitida (riduzione)
 	Bilinear	Bilineare
 	Black	Nero
 	Black & White	Bianco e nero
@@ -897,6 +907,7 @@
 	Click to zoom in  ·  {key}-click to zoom out  ·  drag right/left to zoom in/out	Click per ingrandire · {key}-click per ridurre · trascina dx/sx per zoom
 	Click with the Note tool to add a note.	Fai click con lo strumento Nota per aggiungere una nota.
 	Click: corner · Drag: smooth · Click first point: close · {key} finish · Esc cancel	Click: angolo · Trascina: morbido · Click primo punto: chiudi · {key} termina · Esc annulla
+	Click: corner · Drag: smooth · {alt}-drag: break handle · Click or drag first point: close · {key} finish · Esc cancel	Click: angolo · Trascina: morbido · {alt}+trascina: spezza maniglia · Click o trascina sul primo punto: chiudi · {key} termina · Esc annulla
 	Clip to layer below	Ritaglia al livello sotto
 	Clipped	Ritagliato
 	Close Style Options	Chiudi opzioni stile
@@ -1524,6 +1535,7 @@
 	White Balance: As Shot	Bilanciamento bianco: Come scattato
 	Whites	Bianchi
 	Width	Larghezza
+	Slant	Inclinazione
 	Width:	Larghezza:
 	Work Path	Tracciato di lavoro
 	Yellow	Giallo
@@ -1541,6 +1553,9 @@
 	↑↓ navigate   {key} run   esc close	↑↓ naviga {key} esegui esc chiudi
 	Version {version}	Versione {version}
 	New Document	Nuovo documento
+	New Document With Mask	Nuovo documento con maschera
+	New Layer With Mask	Nuovo livello con maschera
+	New Layer	Nuovo livello
 	Save Preset…	Salva predefinito…
 	Preset Name	Nome del predefinito
 	No saved presets yet.	Nessun predefinito salvato.
@@ -1699,6 +1714,7 @@
 	Pen Pressure	Pressione penna
 	Pen Tilt	Inclinazione penna
 	Pen Tool	Strumento Penna
+	Convert Point Tool	Strumento Converti punto
 	Photo	Foto
 	PhotoCraft website	Sito web PhotoCraft
 	Picas	Pica
@@ -1945,6 +1961,7 @@
 	Show only crosshair while painting	Mostra solo mirino durante pittura
 	Show slice numbers	Mostra numeri sezioni
 	Show tooltips	Mostra tooltip
+	Enable animations	Attiva animazioni
 	Show highlight on rollover	Mostra evidenziazione al passaggio del mouse
 	Show bounding box when dragging layer	Mostra riquadro selezione al trascinamento livello
 	System title bar	Barra del titolo di sistema
@@ -2129,9 +2146,11 @@
 	Developing {name}	Sviluppo di {name}
 	Cancelled {label}	{label} annullato
 	Esc to cancel	Esc per annullare
+	Opened {name}	Aperto: {name}
 	Opening {name}	Apertura {name}
 	Saved {name}	Salvato: {name}
 	Saving {name}	Salvataggio {name}
+	Saving {percent}	Salvataggio {percent}
 	A save to {name} is still running; try again when it finishes	Un salvataggio in {name} è ancora in corso; riprova quando termina
 	{label} is writing the file and can no longer be cancelled	{label} sta scrivendo il file e non può più essere annullato
 	Opening {name}…	Apertura {name}…
@@ -2281,6 +2300,8 @@ cameraRaw	Amount	Quantità
 	Patch Tool	Strumento Toppa
 	Patch:	Toppa:
 	Lasso around an area, then drag the selection	Seleziona un'area con lazo, poi trascina la selezione
+	Transform On Drop	Trasforma al rilascio
+	Scale or rotate the moved area, then press {key}	Ridimensiona o ruota l'area spostata, poi premi {key}
 	Now drag the selection onto another area	Ora trascina la selezione su un'altra area
 	Edit Type	Modifica testo
 
@@ -2389,6 +2410,21 @@ cameraRaw	Amount	Quantità
 	Domed	Bombato
 	Domed (Inverted)	Bombato (invertito)
 	Diagonal (Descending)	Diagonale (discendente)
+	Contour Editor	Editor contorno
+	Anti-aliased	Con antialiasing
+	Corner	Angolo
+	Gloss Contour	Contorno lucido
+	Contour	Contorno
+	Cone - Inverted	Cono - invertito
+	Cove - Deep	Insenatura - profonda
+	Cove - Shallow	Insenatura - poco profonda
+	Gaussian	Gaussiana
+	Half Round	Semicerchio
+	Ring	Anello
+	Ring - Double	Anello - doppio
+	Rolling Slope - Descending	Pendio ondulato - discendente
+	Rounded Steps	Gradini arrotondati
+	Sawtooth 1	Dente di sega 1
 	Red Eye Tool	Strumento Occhi rossi
 	Red Eye	Occhi rossi
 	Pupil Size	Dimensione pupilla
@@ -2594,7 +2630,7 @@ cameraData	Lens	Obiettivo
 	Freeform Pen Tool	Strumento Penna a mano libera
 	Curvature Pen Tool	Strumento Penna curvatura
 	Curve Fit:	Adattamento curva:
-	Drag: draw freehand · Release on the start point: close	Trascina: disegna a mano libera · Rilascia sul punto iniziale: chiudi
+	Drag: draw freehand · {alt}-click: straight segment · Release on the start point: close	Trascina: disegna a mano libera · {alt}-clic: segmento retto · Rilascia sul punto iniziale: chiudi
 	Click: smooth point · Double-click: corner · Drag a point: move · Click first point: close · {key} finish	Click: punto morbido · Doppio click: angolo · Trascina un punto: sposta · Click primo punto: chiudi · {key} termina
 	New Crop Preset…	Nuovo predefinito di ritaglio…
 	Delete Crop Preset…	Elimina predefinito di ritaglio…
@@ -2602,5 +2638,84 @@ cameraData	Lens	Obiettivo
 	Select the crop presets to delete	Seleziona i predefiniti di ritaglio da eliminare
 	Enter a name for the crop preset	Inserisci un nome per il predefinito di ritaglio
 	There is no crop size or ratio to save	Non c'è nessuna dimensione o proporzione di ritaglio da salvare
+	Scale:	Scala:
+	Snap to Origin	Aggancia all'origine
 	Search settings…	Cerca impostazioni…
 	No matching settings	Nessuna impostazione corrispondente
+	Loading fonts…	Caricamento font…
+	Tool	Strumento
+	Simulate Pressure	Simula pressione
+	Stroke Path…	Traccia tracciato…
+	Background Eraser	Gomma per sfondo
+	Healing Brush	Pennello correttivo
+	Spot Healing Brush	Pennello correttivo al volo
+	Smudge	Sfumino
+	Sponge	Spugna
+	Amount:	Quantità:
+	Protect:	Proteggi:
+	Protect skin tones	Proteggi toni pelle
+	Edit points to modify the curve	Modifica i punti per cambiare la curva
+	Draw to modify the curve	Disegna per modificare la curva
+curves	Smooth	Leviga
+	Smooth the curve values	Leviga i valori della curva
+	Drag to draw the curve · {key}-click draws a straight line	Trascina per disegnare la curva · {key}-clic traccia una linea retta
+	Edit Plane	Modifica piano
+	Create Plane	Crea piano
+	Grid Size:	Dimensione griglia:
+	Vanishing Point: click four corners to create a plane	Punto di fuga: fai clic su quattro angoli per creare un piano
+	Vanishing Point is not active	Punto di fuga non è attivo
+	Apply Vanishing Point ({key})	Applica punto di fuga ({key})
+	Fix the red plane first: its corners must form a convex quad	Correggi prima il piano rosso: i suoi angoli devono formare un quadrilatero convesso
+# Select and Mask view modes (#1754)
+	Onion Skin	Velina
+	Marching Ants	Formiche in marcia
+	On Black	Su nero
+	On White	Su bianco
+	On Layers	Su livelli
+	Show Edge	Mostra bordo
+	Show Original	Mostra originale
+	F cycles the views; hold X to see the image	F scorre le viste; tieni premuto X per vedere l'immagine
+# Select and Mask Refine Edge Brush (#2972)
+	Refine Edge Brush (R)	Pennello per migliorare il bordo (R)
+	Expand Detection Area	Espandi area di rilevamento
+	Restore Original Edge	Ripristina bordo originale
+	Paint over hair or fur on the image; Alt paints the other mode	Dipingi su capelli o pelo nell'immagine; Alt dipinge nell'altra modalità
+	Clear Brush Strokes	Cancella tratti del pennello
+	Show rulers	Mostra righelli
+
+# Color Sampler (added with the i18n coverage repair)
+	Click to place · Alt-click or drag off-canvas to remove	Fai clic per posizionare · Alt-clic o trascina fuori dalla tela per rimuovere
+	No document open	Nessun documento aperto
+	{n} of {max} sample points	{n} di {max} punti di campionamento
+# Print dialog (#2697)
+	Emulsion Down	Emulsione sotto
+	Functions	Funzioni
+	Print Resolution:	Risoluzione di stampa:
+	Use Previous Layer to Create Clipping Mask	Usa il livello precedente per creare una maschera di ritaglio
+	Fill with {mode}-neutral color (white)	Riempi con il colore neutro di {mode} (bianco)
+	Fill with {mode}-neutral color (black)	Riempi con il colore neutro di {mode} (nero)
+	Fill with {mode}-neutral color (50% gray)	Riempi con il colore neutro di {mode} (grigio 50%)
+	(No neutral color exists for {mode} mode.)	(Non esiste un colore neutro per il metodo {mode}.)
+	Apply mask to layer before removing?	Applicare la maschera al livello prima di rimuoverla?
+	The layer or its mask changed. Drag the mask onto the Trash again.	Il livello o la sua maschera è cambiato. Trascina di nuovo la maschera nel cestino.
+	Delete the vector mask?	Eliminare la maschera vettoriale?
+# Counted status messages and labels (#3454; adapted from PR #3821)
+@plural	Exported {n} swatch to {file}|Exported {n} swatches to {file}	{n} campione esportato in {file}|{n} campioni esportati in {file}
+@plural	Imported {n} brush from {group}|Imported {n} brushes from {group}	{n} pennello importato da {group}|{n} pennelli importati da {group}
+@plural	Imported {n} swatch from {file}|Imported {n} swatches from {file}	{n} campione importato da {file}|{n} campioni importati da {file}
+@plural	Played {n} step|Played {n} steps	{n} passaggio riprodotto|{n} passaggi riprodotti
+@plural	Updated {n} linked smart object changed on disk|Updated {n} linked smart objects changed on disk	{n} oggetto avanzato collegato modificato su disco aggiornato|{n} oggetti avanzati collegati modificati su disco aggiornati
+@plural	Saved for Web: {n} file|Saved for Web: {n} files	Salvato per il Web: {n} file|Salvato per il Web: {n} file
+@plural	{n} layer recorded by this comp was deleted. Update the comp, or clear the warning.|{n} layers recorded by this comp were deleted. Update the comp, or clear the warning.	{n} livello registrato da questa composizione è stato eliminato. Aggiorna la composizione o cancella l'avviso.|{n} livelli registrati da questa composizione sono stati eliminati. Aggiorna la composizione o cancella l'avviso.
+@plural	{n} plane|{n} planes	{n} piano|{n} piani
+@plural	{n} preset|{n} presets	{n} predefinito|{n} predefiniti
+@plural	{n} sample point removed|{n} sample points removed	{n} punto di campionamento rimosso|{n} punti di campionamento rimossi
+@plural	{n} slice|{n} slices	{n} sezione|{n} sezioni
+@plural	{n} step|{n} steps	{n} passaggio|{n} passaggi
+@plural	{warning} (+{n} more brush preset warning)|{warning} (+{n} more brush preset warnings)	{warning} (+{n} altro avviso sui predefiniti pennello)|{warning} (+{n} altri avvisi sui predefiniti pennello)
+@plural	{what} with {n} warning|{what} with {n} warnings	{what} con {n} avviso|{what} con {n} avvisi
+# View › Guides › New Guide… › Color
+	Light Blue	Blu chiaro
+	Light Red	Rosso chiaro
+	Medium Blue	Blu medio
+	Light Gray	Grigio chiaro

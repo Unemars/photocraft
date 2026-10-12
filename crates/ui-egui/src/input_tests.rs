@@ -551,17 +551,17 @@ fn eyedropper_and_alt_sampling_show_a_pipette() {
     h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
     assert_eq!(cursor(&mut h), egui::CursorIcon::None, "⌥ samples with a pipette");
     h.state_mut().run("prefs.set", json!({"values": {"cursors.other": "precise"}})).unwrap();
-    // Every platform reports the crosshair. Windows also hands the OS a black-and-white bitmap
-    // for it (`tool_cursor`, #1160), with `Crosshair` underneath as the fallback.
+    // Every platform reports the crosshair. The desktop builds also hand the OS a black-and-white
+    // bitmap for it (`tool_cursor`, #1160, #1343), with `Crosshair` underneath as the fallback.
     let precise = |h: &mut Harness<'static, PhotocraftApp>| {
         let icon = cursor(h);
         (icon, h.output().platform_output.cursor_image.is_some())
     };
-    let windows = cfg!(target_os = "windows");
-    assert_eq!(precise(&mut h), (egui::CursorIcon::Crosshair, windows), "Precise keeps the crosshair");
+    let desktop = cfg!(not(target_arch = "wasm32"));
+    assert_eq!(precise(&mut h), (egui::CursorIcon::Crosshair, desktop), "Precise keeps the crosshair");
     h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
     h.state_mut().ui.tool = crate::state::Tool::Eyedropper;
-    assert_eq!(precise(&mut h), (egui::CursorIcon::Crosshair, windows));
+    assert_eq!(precise(&mut h), (egui::CursorIcon::Crosshair, desktop));
 }
 
 /// The Hand tool, and Space held over another tool, show an open hand while hovering and a fist

@@ -11,7 +11,7 @@
 //! stay [`Adjustment::Unsupported`] and are written back verbatim.
 
 use photocraft_doc::Adjustment;
-use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel, ToneSpace};
+use photocraft_doc::adjust::{CURVE_MAP_LEN, CurvePoint, HueRange, LevelsChannel, ToneSpace, curve_map, curve_map_outputs};
 use photocraft_psd::descriptor::{Descriptor, Value, VersionedDescriptor};
 
 /// All PSD adjustment keys recognized as adjustment layers.
@@ -43,7 +43,9 @@ fn levels_rec(d: &[u8], at: usize) -> Option<LevelsChannel> {
 }
 
 fn parse_curves(d: &[u8]) -> Option<Adjustment> {
-    // pad(1) version(2) bitmap(4)
+    // map flag(1) version(2) bitmap(4). A map (Photoshop's pencil-drawn curves) stores 256 output
+    // bytes per channel instead of a point list (psd-tools reads the flag as `is_map`).
+    let pencil = *d.first()? != 0;
     let version = be16(d, 1)?;
     if version != 1 && version != 4 {
         return None;
@@ -54,6 +56,14 @@ fn parse_curves(d: &[u8]) -> Option<Adjustment> {
     let mut curves: Vec<Vec<CurvePoint>> = vec![line(), line(), line(), line(), line()];
     for bit in 0..32usize {
         if bits & (1 << bit) == 0 {
+            continue;
+        }
+        if pencil {
+            let map = d.get(at..at + CURVE_MAP_LEN)?;
+            at += CURVE_MAP_LEN;
+            if let Some(slot) = curves.get_mut(bit) {
+                *slot = curve_map(&map.iter().map(|&b| f32::from(b) / 255.0).collect::<Vec<_>>());
+            }
             continue;
         }
         let n = usize::from(be16(d, at)?);
@@ -72,7 +82,7 @@ fn parse_curves(d: &[u8]) -> Option<Adjustment> {
     let mut it = curves.into_iter();
     let master = it.next()?;
     let (r, g, b, k) = (it.next()?, it.next()?, it.next()?, it.next()?);
-    Some(Adjustment::Curves { master, per_channel: [r, g, b], space: ToneSpace::Rgb, black: k })
+    Some(Adjustment::Curves { master, per_channel: [r, g, b], space: ToneSpace::Rgb, black: k, pencil })
 }
 
 fn desc_num(d: &Descriptor, key: &str) -> Option<f32> {
@@ -616,12 +626,16 @@ pub fn write(adj: &Adjustment) -> Vec<([u8; 4], Vec<u8>)> {
             }
             return vec![(*b"levl", v)];
         }
-        Adjustment::Curves { master, per_channel, space, black } => {
-            v.push(0);
+        Adjustment::Curves { master, per_channel, space, black, pencil } => {
+            v.push(u8::from(*pencil));
             put16(&mut v, 1);
             let ink = *space == ToneSpace::Cmyk && black.len() >= 2;
             v.extend_from_slice(&(if ink { 0b11111u32 } else { 0b1111 }).to_be_bytes());
             for c in std::iter::once(master).chain(per_channel.iter()).chain(ink.then_some(black)) {
+                if *pencil {
+                    v.extend(curve_map_outputs(c).iter().map(|&o| u8::try_from(q255(o)).unwrap_or(u8::MAX)));
+                    continue;
+                }
                 put16(&mut v, c.len().min(19) as u16);
                 for p in c.iter().take(19) {
                     put16(&mut v, q255(p.output));
@@ -788,6 +802,28 @@ mod tests {
         assert!(matches!(parse(b"grdm", &[0, 1, 0, 0, 0, 0, 0, 0, 0, 0], None, Channels::Rgb), Adjustment::Unsupported { .. }));
     }
 
+    #[test]
+    fn pencil_curves_read_and_write_the_map_form() {
+        // Photoshop's pencil-drawn curves: map flag 1, then 256 output bytes per channel.
+        let mut block = vec![1, 0, 1, 0, 0, 0, 0b1111];
+        let maps: [Vec<u8>; 4] = [
+            (0..=255u8).rev().collect(),
+            (0..=255u8).map(|k| if k < 128 { 0 } else { 255 }).collect(),
+            (0..=255u8).collect(),
+            (0..=255u8).map(|k| k / 2).collect(),
+        ];
+        for m in &maps {
+            block.extend_from_slice(m);
+        }
+        let a = parse(b"curv", &block, None, Channels::Rgb);
+        let Adjustment::Curves { master, per_channel, pencil, .. } = &a else { panic!("{a:?}") };
+        assert!(*pencil);
+        assert_eq!(master.len(), CURVE_MAP_LEN);
+        assert_eq!((master[0].output, master[255].output), (1.0, 0.0));
+        assert_eq!((per_channel[0][127].output, per_channel[0][128].output), (0.0, 1.0));
+        assert_eq!(write(&a)[0].1, block);
+    }
+
     fn rt(a: Adjustment) {
         let blocks = write(&a);
         assert!(!blocks.is_empty(), "{a:?}");
@@ -823,6 +859,7 @@ mod tests {
             per_channel: [pts(&[(0, 10), (255, 255)]), pts(&[(0, 0), (255, 245)]), pts(&[(0, 0), (64, 32), (255, 255)])],
             space: ToneSpace::Rgb,
             black: Vec::new(),
+            pencil: false,
         });
         // CMYK ink curves and levels keep their black record.
         let ink = Adjustment::Curves {
@@ -830,6 +867,7 @@ mod tests {
             per_channel: [pts(&[(0, 0), (255, 255)]), pts(&[(0, 30), (255, 255)]), pts(&[(0, 0), (255, 255)])],
             space: ToneSpace::Cmyk,
             black: pts(&[(0, 0), (128, 100), (255, 255)]),
+            pencil: false,
         };
         let b = write(&ink);
         assert_eq!(parse(&b[0].0, &b[0].1, None, Channels::Cmyk), ink);

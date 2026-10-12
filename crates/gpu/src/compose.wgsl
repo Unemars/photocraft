@@ -48,7 +48,7 @@ const F_STROKE_OUT: u32 = 1024u; // effect paint: outside stroke band
 const F_FIRST: u32 = 2048u;      // outside strokes: nothing accumulated yet
 const F_CHANNELS: u32 = 4096u;   // lerp: per-channel weights in p0 (channel restrictions)
 const F_LAB: u32 = 65536u;      // Lab document: Normal mixes in CIELAB
-const F_HDR: u32 = 262144u;     // 32-bit float document: Add / Divide and Hue/Saturation/Color/Luminosity don't clip at 1
+const F_HDR: u32 = 262144u;     // 32-bit float document: HDR blends and Exposure retain values above 1
 const F_QUANT: u32 = 32768u;    // lerp: A rounded to p0.x steps (adjustment results, integer docs)
 const F_ADD_DIFF: u32 = 16384u;  // lerp: A + (B - C) premultiplied (clips on pass-through groups)
 const F_TEXT_GAMMA: u32 = 8192u; // blend / atop / fx merge: type layer, mix coverage at gamma p4.w
@@ -552,8 +552,26 @@ fn selective_color(c: vec3<f32>, relative: bool) -> vec3<f32> {
 // Exposure on one channel (p = exposure scale, offset, gamma, transfer gamma). Per channel, not a
 // loop over `c[i]`: FXC aborts on that inside `adjust`'s switch.
 fn exposure(v: f32, p: vec4<f32>) -> f32 {
+    if ((op.flags & F_HDR) != 0u) {
+        let lin = v * p.x + p.y;
+        if (p.z == 1.0) { return lin; }
+        return sign(lin) * pow(abs(lin), 1.0 / p.z);
+    }
     let lin = pow(max(t_decode(v, p.w) * p.x + p.y, 0.0), 1.0 / p.z);
     return clamp(t_encode(lin, p.w), 0.0, 1.0);
+}
+
+// Mirrors compose::adjust::levels_float; coefficients are master, R, G, B in LUT row 0.
+fn levels_float(record: i32, v: f32) -> f32 {
+    let base = record * 5;
+    let t = (v - lut_at(base)) / max(lut_at(base + 1) - lut_at(base), 0.000001);
+    let mapped = sign(t) * pow(abs(t), 1.0 / lut_at(base + 2));
+    return lut_at(base + 3) + mapped * (lut_at(base + 4) - lut_at(base + 3));
+}
+
+fn tone_channel(row: i32, v: f32, identity: f32) -> f32 {
+    if (identity > 0.5) { return v; }
+    return lut(row, v);
 }
 
 // Modern Brightness curve: line of slope 1.375^(b/50) rolled off to (1,1) by a v^P white anchor.
@@ -598,7 +616,8 @@ fn adjust(c: vec3<f32>) -> vec3<f32> {
             return vec3(mcontrast(mbright(c.r, b), ct), mcontrast(mbright(c.g, b), ct), mcontrast(mbright(c.b, b), ct));
         }
         case 6: { return vec3(exposure(c.r, p0), exposure(c.g, p0), exposure(c.b, p0)); }  // Exposure
-        case 7: { return vec3(lut(0, c.r), lut(1, c.g), lut(2, c.b)); }        // Levels / Curves
+        case 7: { return vec3(tone_channel(0, c.r, p0.x), tone_channel(1, c.g, p0.y), tone_channel(2, c.b, p0.z)); } // Levels / Curves
+        case 17: { return vec3(levels_float(0, levels_float(1, c.r)), levels_float(0, levels_float(2, c.g)), levels_float(0, levels_float(3, c.b))); }
         case 8: {                                                              // Hue/Saturation
             let hsl = rgb_to_hsl(c);
             var hh: f32;
@@ -676,18 +695,6 @@ fn adjust(c: vec3<f32>) -> vec3<f32> {
             if (p0.x > 0.5) { t = 1.0 - t; }
             var o = vec3(lut(0, t), lut(1, t), lut(2, t));
             if (p0.y > 0.5) { o = clamp(o + bayer4(adj_px) / 255.0, vec3(0.0), vec3(1.0)); }
-            return o;
-        }
-        case 14: {                                                             // Color balance
-            let l = gray(c);
-            let ws = clamp(1.0 - l * 2.0, 0.0, 1.0);
-            let wh = clamp(l * 2.0 - 1.0, 0.0, 1.0);
-            let wm = 1.0 - ws - wh;
-            let o = clamp(c + (p0.rgb * ws + p1.rgb * wm + p2.rgb * wh) / 100.0 * 0.5, vec3(0.0), vec3(1.0));
-            if (p3.x > 0.5) {
-                let l1 = max(gray(o), 1e-6);
-                return clamp(o * l / l1, vec3(0.0), vec3(1.0));
-            }
             return o;
         }
         case 15: { return selective_color(c, p0.x > 0.5); }                       // Selective color

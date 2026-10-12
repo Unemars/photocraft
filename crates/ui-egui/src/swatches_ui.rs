@@ -162,9 +162,16 @@ pub fn import_bytes(app: &mut PhotocraftApp, name: &str, bytes: &[u8], replace: 
     let warnings: Vec<String> = r.get("warnings").and_then(|w| serde_json::from_value(w.clone()).ok()).unwrap_or_default();
     let shown = crate::file_open::display_name(name);
     app.ui.status_error = false;
+    let imported = crate::i18n::fmt(
+        &crate::i18n::trn(crate::i18n::current(), n, "Imported {n} swatch from {file}", "Imported {n} swatches from {file}"),
+        &[("file", &shown)],
+    );
     app.ui.status = match warnings.first() {
-        Some(w) => format!("Imported {n} swatches from {shown} ({} notes: {w})", warnings.len()),
-        None => format!("Imported {n} swatches from {shown}"),
+        Some(warning) => {
+            let template = "{message} (notes: {n}; {warning})";
+            crate::i18n::fmt(tl!(template), &[("message", &imported), ("n", &warnings.len().to_string()), ("warning", warning)])
+        }
+        None => imported,
     };
     app.ui.panels.color = true;
     Ok(r)
@@ -182,7 +189,10 @@ fn export_dialog(app: &mut PhotocraftApp, format: &str) -> Result<Value, String>
         let write = app.services.write.as_mut().ok_or("no writer configured")?;
         write(&path, &bytes)?;
         app.ui.status_error = false;
-        app.ui.status = format!("Exported {n} swatches to {}", crate::file_open::display_name(&path));
+        app.ui.status = crate::i18n::fmt(
+            &crate::i18n::trn(crate::i18n::current(), n, "Exported {n} swatch to {file}", "Exported {n} swatches to {file}"),
+            &[("file", &crate::file_open::display_name(&path))],
+        );
         Ok(json!({"path": path, "count": n}))
     })
 }
@@ -251,7 +261,8 @@ pub fn add_from_picker(app: &mut PhotocraftApp, f: &serde_json::Map<String, Valu
     if let Some(r) = run(app, "swatches.add", json!({"color": color})) {
         let name = r["name"].as_str().unwrap_or_default().to_string();
         app.ui.status_error = false;
-        app.ui.status = format!("Added swatch {name}");
+        let template = "Added swatch {name}";
+        app.ui.status = crate::i18n::fmt(tl!(template), &[("name", &name)]);
         app.ui.presets_ui.selected.insert(PANEL.into(), name);
     }
 }

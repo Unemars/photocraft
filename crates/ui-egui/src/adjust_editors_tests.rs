@@ -155,6 +155,50 @@ fn every_adjustment_layer_edits_through_properties() {
     }
 }
 
+/// #3264: wheel browsing previews without recording one edit per selected LUT.
+#[test]
+fn color_lookup_picker_cycles_luts_with_the_mouse_wheel() {
+    let mut h = app_harness("colorLookup", "rgb", 8);
+    let (_, before) = layer(&h);
+    let Adjustment::ColorLookup { name: before_name, .. } = before else { panic!("Color Lookup layer") };
+    let label = label_rect(&h, "3D LUT File").expect("Color Lookup file label");
+    let at = h
+        .query_all_by_role(egui::accesskit::Role::ComboBox)
+        .min_by(|a, b| a.rect().center().distance(label.center()).total_cmp(&b.rect().center().distance(label.center())))
+        .expect("Color Lookup picker")
+        .rect()
+        .center();
+    let steps = h.state().session.active().unwrap().history.past_len();
+    h.hover_at(at);
+    h.run_steps(1);
+    h.query_all_by_role(egui::accesskit::Role::ComboBox)
+        .min_by(|a, b| a.rect().center().distance(label.center()).total_cmp(&b.rect().center().distance(label.center())))
+        .expect("Color Lookup picker")
+        .click();
+    h.run_steps(1);
+    h.key_press(egui::Key::ArrowDown);
+    h.run_steps(1);
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps, "arrow navigation previews");
+    assert!(h.state().live_adjust.is_some(), "arrow navigation selects a preview LUT");
+    for _ in 0..3 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, -1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        });
+        h.run_steps(1);
+    }
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps, "cycling remains a preview");
+    assert!(h.state().live_adjust.is_some(), "the selected LUT is previewed");
+    h.run_steps(4);
+    let (_, after) = layer(&h);
+    let Adjustment::ColorLookup { name: after_name, .. } = after else { panic!("Color Lookup layer") };
+    assert_ne!(after_name, before_name, "wheel browsing selects a different LUT");
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps + 1, "one wheel gesture makes one adjustment edit");
+    assert!(h.state().live_adjust.is_none(), "the completed wheel gesture is committed");
+}
+
 fn curve_of(a: &Adjustment) -> Vec<[f32; 2]> {
     match a {
         Adjustment::Curves { master, .. } => master.iter().map(|p| [(p.input * 255.0).round(), (p.output * 255.0).round()]).collect(),
@@ -431,4 +475,58 @@ fn gradient_map_picker_offers_the_gradient_library() {
         assert_eq!(map_stops(&layer(&h).1), want, "{name}");
         assert_eq!(steps(&h), before + 1, "{name}: one history step");
     }
+}
+
+/// Document point (x, y) on screen in the app's first view.
+fn doc_on_screen(h: &Harness<'_, PhotocraftApp>, x: f32, y: f32) -> Pos2 {
+    let app = h.state();
+    let v = &app.ui.views[0];
+    let xf = crate::canvas::ViewXform {
+        rect: crate::rulers::content_rect(app, app.last_canvas_rect),
+        zoom: v.zoom,
+        center: v.center,
+        flip: app.ui.view.flip_horizontal,
+        rotation: v.rotation,
+        aspect: app.ui.view.display_aspect(),
+    };
+    xf.to_screen(x, y)
+}
+
+/// UI-217-15 (#3110, #3116): the Properties panel of a Curves or Levels layer has the Set
+/// Black/Neutral Gray/White Point eyedroppers. With Set White Point armed, a click on the image
+/// makes that pixel white as one history step (sampled below the layer), and Esc disarms the
+/// picker.
+#[test]
+fn curves_properties_white_point_eyedropper_edits_the_layer() {
+    properties_white_point_eyedropper_edits_the_layer("curves");
+}
+
+#[test]
+fn levels_properties_white_point_eyedropper_edits_the_layer() {
+    properties_white_point_eyedropper_edits_the_layer("levels");
+}
+
+fn properties_white_point_eyedropper_edits_the_layer(kind: &str) {
+    let mut h = app_harness(kind, "rgb", 8);
+    let (_, before) = layer(&h);
+    let steps = h.state().session.active().unwrap().history.past_len();
+    h.get_by_label("Set White Point").click();
+    h.run_steps(2);
+    assert!(crate::layer_picker::armed(h.state()).is_some(), "armed from the Properties panel");
+    // The left half is #6a3020: the white point moves to it, so it composites white.
+    let at = doc_on_screen(&h, 10.0, 10.0);
+    click(&mut h, at);
+    let pixel = |h: &mut Harness<'_, PhotocraftApp>| -> Vec<f32> {
+        serde_json::from_value(h.state_mut().run("document.pixel", json!({"x": 10, "y": 10})).unwrap()).unwrap()
+    };
+    let px = pixel(&mut h);
+    assert!(px.iter().take(3).all(|v| *v > 0.99), "{kind}: {px:?}");
+    assert_ne!(layer(&h).1, before, "{kind}: the layer changed");
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps + 1, "{kind}: one history step");
+    assert!(crate::layer_picker::armed(h.state()).is_some(), "stays armed for another click");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().ui.layer_picker.is_none(), "Esc disarms");
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert_eq!(layer(&h).1, before);
 }

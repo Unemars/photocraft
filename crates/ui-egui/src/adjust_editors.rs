@@ -194,7 +194,9 @@ fn sliders(ui: &mut egui::Ui, v: &mut Value, rows: &[(&str, &str, f32, f32, f32,
     let mut e = Edit::default();
     for &(key, text, min, max, default, unit) in rows {
         let mut x = num(v, key, default).clamp(min, max);
-        let r = widgets::slider_row(ui, text, &mut x, min..=max, unit, None);
+        // A double-click on the slider puts it back to its default (Photoshop).
+        let gestures = widgets::RowGestures { reset: Some(default), wheel_step: None };
+        let r = widgets::slider_row_with(ui, text, &mut x, min..=max, unit, None, gestures);
         if r.changed() {
             v[key] = json!(if max - min <= 10.0 { round(x, 0.01) } else { x.round() });
         }
@@ -347,6 +349,60 @@ fn curve_key(ch: &ToneChannel) -> &'static str {
     if ch.key.is_empty() { "points" } else { ch.key }
 }
 
+/// A pencil-drawn channel: its 256 output levels (identity when absent or not a map).
+fn read_map(v: &Value, key: &str) -> Vec<f32> {
+    let map: Option<Vec<f32>> = v
+        .get(key)
+        .and_then(Value::as_array)
+        .filter(|a| a.len() == photocraft_doc::adjust::CURVE_MAP_LEN)
+        .and_then(|a| a.iter().map(|o| o.as_f64().map(|o| o as f32)).collect());
+    map.unwrap_or_else(|| (0..photocraft_doc::adjust::CURVE_MAP_LEN).map(|k| k as f32).collect())
+}
+
+fn write_map(v: &mut Value, key: &str, map: &[f32]) {
+    v[key] = json!(map.iter().map(|o| (o * 100.0).round() / 100.0).collect::<Vec<_>>());
+}
+
+/// Switches the Curves values between point editing and the pencil: the engine draws the point
+/// curves into maps, or fits points to the drawn maps (Photoshop's two curve buttons).
+fn set_pencil(v: &mut Value, pencil: bool, gray: bool) -> bool {
+    let mut p = v.clone();
+    p["pencil"] = json!(pencil);
+    let mode = if gray { photocraft_doc::ColorMode::Grayscale } else { photocraft_doc::ColorMode::Rgb };
+    let Ok(a) = adjust_params::from_params("curves", &p, None, mode) else { return false };
+    *v = adjust_params::to_params(&a);
+    // Explicit, so an update over a pencil-drawn layer leaves the pencil.
+    v["pencil"] = json!(pencil);
+    true
+}
+
+/// Mode buttons above the graph: points, pencil, and Smooth for the shown channel's drawing.
+fn curves_mode_row(ui: &mut egui::Ui, v: &mut Value, key: &str, gray: bool) -> Edit {
+    let pencil = v.get("pencil").and_then(Value::as_bool).unwrap_or(false);
+    let mut e = Edit::default();
+    ui.horizontal(|ui| {
+        if crate::icons::button(ui, "spline", 24.0, !pencil, tl!("Edit points to modify the curve")).clicked() && pencil {
+            e.add(Edit::discrete(set_pencil(v, false, gray)));
+        }
+        if crate::icons::button(ui, "pencil", 24.0, pencil, tl!("Draw to modify the curve")).clicked() && !pencil {
+            e.add(Edit::discrete(set_pencil(v, true, gray)));
+        }
+        let label = crate::i18n::tr_ctx(crate::i18n::current(), "curves", "Smooth");
+        let smooth = ui
+            .add_enabled_ui(pencil, |ui| widgets::secondary_button(ui, label, 0.0))
+            .inner
+            .on_hover_text(tl!("Smooth the curve values"))
+            .on_disabled_hover_text(tl!("Smooth the curve values"));
+        if smooth.clicked() {
+            let mut map = read_map(v, key);
+            adjust_params::smooth_curve_map(&mut map);
+            write_map(v, key, &map);
+            e.add(Edit::discrete(true));
+        }
+    });
+    e
+}
+
 fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
     let t = Tokens::get(ui.ctx());
     let space = space_of(v);
@@ -359,17 +415,44 @@ fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
     }
     let chan = chans.get(ch).copied().unwrap_or(ToneChannel { key: "", label: "" });
     let key = curve_key(&chan);
+    let mut e = curves_mode_row(ui, v, key, cx.gray);
+    let pencil = v.get("pencil").and_then(Value::as_bool).unwrap_or(false);
     let mut pts = read_curve(v, key);
+    let mut map = read_map(v, key);
     let side = ui.available_width().clamp(120.0, 300.0);
     ui.add_space(4.0);
     let (full, resp) = ui.allocate_exact_size(vec2(side, side + 14.0), Sense::click_and_drag());
     let graph = curve_graph(full, side);
     ui.data_mut(|d| d.insert_temp(cx.mem.with("curves-graph"), graph));
     let to_scr = |q: [f32; 2]| pos2(graph.left() + q[0] / 255.0 * graph.width(), graph.bottom() - q[1] / 255.0 * graph.height());
-    let mut e = Edit::default();
-    let interaction = crate::point_curve::interact(ui, &resp, graph, &mut pts, &mut st.gesture);
-    let mut changed = interaction.changed;
-    e.commit = interaction.commit;
+    let mut changed = false;
+    let mut drawn = false;
+    if pencil {
+        // Pencil: a stroke draws while the button is down and commits on release; Shift
+        // continues from the previous stroke's end in a straight line.
+        let stroke_id = cx.mem.with("curves-pencil");
+        let (mut active, mut last): (bool, Option<[f32; 2]>) = ui.data(|d| d.get_temp(stroke_id)).unwrap_or_default();
+        if resp.is_pointer_button_down_on()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            let q = [
+                ((pos.x - graph.left()) / graph.width().max(1.0) * 255.0).clamp(0.0, 255.0),
+                ((graph.bottom() - pos.y) / graph.height().max(1.0) * 255.0).clamp(0.0, 255.0),
+            ];
+            let from = if active || ui.input(|i| i.modifiers.shift) { last.unwrap_or(q) } else { q };
+            drawn = curve_edit::pencil_line(&mut map, from, q);
+            active = true;
+            last = Some(q);
+        } else if active {
+            active = false;
+            e.commit = true;
+        }
+        ui.data_mut(|d| d.insert_temp(stroke_id, (active, last)));
+    } else {
+        let interaction = crate::point_curve::interact(ui, &resp, graph, &mut pts, &mut st.gesture);
+        changed = interaction.changed;
+        e.commit |= interaction.commit;
+    }
 
     // Draw: histogram, quarter grid, baseline, gradient bars, other channels, the curve, points.
     let p = ui.painter_at(full.expand(2.0));
@@ -403,17 +486,34 @@ fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
             (0..n).step_by((n / 256).max(1)).map(|i| to_scr([i as f32 / (n - 1) as f32 * 255.0, lut.get(i).copied().unwrap_or(0.0) * 255.0])).collect();
         p.add(egui::Shape::line(line, Stroke::new(width, color)));
     };
+    let draw_map = |map: &[f32], color: Color32, width: f32| {
+        let last = map.len().saturating_sub(1).max(1) as f32;
+        let line: Vec<Pos2> = map.iter().enumerate().map(|(k, o)| to_scr([k as f32 / last * 255.0, *o])).collect();
+        p.add(egui::Shape::line(line, Stroke::new(width, color)));
+    };
     if ch == 0 {
         // Photoshop overlays the edited channel curves on the composite.
         for c in chans.iter().skip(1) {
+            if pencil {
+                let m = read_map(v, c.key);
+                if m.iter().enumerate().any(|(k, o)| (o - k as f32).abs() > 0.5) {
+                    draw_map(&m, bar_color(c, &t).gamma_multiply(0.8), 1.0);
+                }
+                continue;
+            }
             let cp = read_curve(v, c.key);
             if cp.len() > 2 || cp.first().is_some_and(|q| q[1] != 0.0) || cp.last().is_some_and(|q| q[1] != 255.0) {
                 draw_curve(&cp, bar_color(c, &t).gamma_multiply(0.8), 1.0);
             }
         }
     }
-    draw_curve(&pts, if ch == 0 { t.text } else { bar_color(&chan, &t) }, 1.5);
-    for (i, q) in pts.iter().enumerate() {
+    let color = if ch == 0 { t.text } else { bar_color(&chan, &t) };
+    if pencil {
+        draw_map(&map, color, 1.5);
+    } else {
+        draw_curve(&pts, color, 1.5);
+    }
+    for (i, q) in pts.iter().enumerate().filter(|_| !pencil) {
         let r = Rect::from_center_size(to_scr(*q), vec2(CURVE_HANDLE_SIZE, CURVE_HANDLE_SIZE));
         if Some(i) == st.gesture.selected {
             p.rect_filled(r, 0.0, t.text);
@@ -427,7 +527,7 @@ fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
     // Input / Output of the selected point.
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let i = st.gesture.selected.filter(|i| *i < pts.len());
+        let i = st.gesture.selected.filter(|i| *i < pts.len() && !pencil);
         let (mut vi, mut vo) = i.map_or((0.0, 0.0), |i| (pts[i][0], pts[i][1]));
         label(ui, tl!("Input:"));
         let ri = ui.add_enabled_ui(i.is_some(), |ui| widgets::value_field(ui, &mut vi, 0.0..=255.0, "", 52.0)).inner;
@@ -445,16 +545,23 @@ fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
         }
     });
     let t2 = Tokens::get(ui.ctx());
-    ui.label(
-        RichText::new(crate::i18n::fmt(
-            tl!("Click to add a point · drag off or {key}-click or Delete to remove"),
-            &[("key", &crate::shortcuts::pretty("Cmd"))],
-        ))
-        .color(t2.text_faint)
-        .size(11.0),
-    );
+    let hint = if pencil {
+        crate::i18n::fmt(tl!("Drag to draw the curve · {key}-click draws a straight line"), &[("key", &crate::shortcuts::pretty("Shift"))])
+    } else {
+        crate::i18n::fmt(tl!("Click to add a point · drag off or {key}-click or Delete to remove"), &[("key", &crate::shortcuts::pretty("Cmd"))])
+    };
+    ui.label(RichText::new(hint).color(t2.text_faint).size(11.0));
     ui.data_mut(|d| d.insert_temp(state_id, st));
-    if changed {
+    if drawn {
+        write_map(v, key, &map);
+        if space == ToneSpace::Lab
+            && let Some(o) = v.as_object_mut()
+        {
+            o.remove("points");
+        }
+        e.changed = true;
+    }
+    if changed && !pencil {
         v[key] = json!(pts.iter().map(|q| [q[0].round(), q[1].round()]).collect::<Vec<_>>());
         if space == ToneSpace::Lab {
             // Lab has no composite: "points" would alias lightness.
@@ -1352,7 +1459,8 @@ pub fn layer_editor(app: &mut PhotocraftApp, ui: &mut egui::Ui, id: LayerId, adj
             return;
         }
         Adjustment::Unsupported { psd_key, .. } => {
-            ui.label(RichText::new(format!("This adjustment ({psd_key}) is kept as imported and can't be edited yet.")).color(t.text_faint));
+            let template = "This adjustment ({key}) is kept as imported and can't be edited yet.";
+            ui.label(RichText::new(crate::i18n::fmt(tl!(template), &[("key", psd_key)])).color(t.text_faint));
             return;
         }
         _ => {}
@@ -1377,6 +1485,9 @@ pub fn layer_editor(app: &mut PhotocraftApp, ui: &mut egui::Ui, id: LayerId, adj
         dialog: false,
         dynamic_color_sliders: app.session.prefs().interface.dynamic_color_sliders,
     };
+    if matches!(kind, "levels" | "curves") {
+        crate::layer_picker::controls(app, ui, id);
+    }
     let e = editor(ui, kind, &mut values, &cx);
     if e.changed {
         app.live_adjust = Some((id, values.clone()));

@@ -159,6 +159,10 @@ fn normalize(n: [f64; 3]) -> Option<[f64; 3]> {
 /// The camera-space neutral (max component 1) for `opts.white_balance`, as
 /// [`develop_sensor`] uses it (the same white balance [`crate::fit_look`] balances with).
 pub(crate) fn resolve_neutral(s: &Sensor, opts: &DevelopOptions, sc: &Scale, warnings: &mut Vec<String>) -> Result<[f64; 3]> {
+    // Monochrome data has no colour to balance.
+    if s.is_monochrome() {
+        return Ok([1.0; 3]);
+    }
     // White balance: camera-space neutral, max component 1.
     let as_shot = s
         .color
@@ -202,8 +206,10 @@ pub fn develop_sensor(s: &Sensor, opts: &DevelopOptions) -> Result<Developed> {
 
     // Balanced camera → XYZ D50: a look fitted to the camera's JPEG, the file's calibration,
     // or the neutral fallback.
-    let look = opts.camera_look.as_ref().filter(|l| l.is_usable());
-    if opts.camera_look.is_some() && look.is_none() {
+    // Monochrome data stays neutral grey: no camera look and no colour calibration.
+    let mono = s.is_monochrome();
+    let look = opts.camera_look.as_ref().filter(|l| l.is_usable() && !mono);
+    if opts.camera_look.is_some() && look.is_none() && !mono {
         warnings.push("the supplied camera look is not usable (non-finite or singular); ignored".into());
     }
     let to_xyz: Mat3 = match (look, s.color.balanced_to_xyz_d50(neutral)) {
@@ -213,7 +219,7 @@ pub fn develop_sensor(s: &Sensor, opts: &DevelopOptions) -> Result<Developed> {
         }
         (None, Some(m)) => m,
         (None, None) => {
-            if s.format != RawFormat::Dng {
+            if s.format != RawFormat::Dng && !mono {
                 warnings.push("no colour calibration for this camera; camera colours are treated as sRGB primaries".into());
             }
             color::srgb_to_xyz_d50()
@@ -223,6 +229,9 @@ pub fn develop_sensor(s: &Sensor, opts: &DevelopOptions) -> Result<Developed> {
     let out_m = color::scale(&color::mul(&color::xyz_d50_to_prophoto(), &to_xyz), gain);
     let out_m: [[f32; 3]; 3] = out_m.map(|r| r.map(|v| v as f32));
 
+    // Neutral grey through `out_m`: the gain alone (the matrix maps camera white to ProPhoto
+    // white, up to rounding), so the three output channels stay exactly equal.
+    let grey_gain = gain as f32;
     let (w, h) = (c.width, c.height);
     let band = par::band_rows(w);
     let mut rgb: Vec<f32>;
@@ -304,10 +313,12 @@ pub fn develop_sensor(s: &Sensor, opts: &DevelopOptions) -> Result<Developed> {
                     let y = c.y + b * band + r;
                     for i in 0..w {
                         for k in 0..3 {
-                            row[i * 3 + k] = (sc.value(c.x + i, y, k) * mult[k]).clamp(0.0, 1.0);
+                            // Monochrome: the one sample in all three channels.
+                            let sample = k.min(s.samples.saturating_sub(1));
+                            row[i * 3 + k] = (sc.value(c.x + i, y, sample) * mult[k]).clamp(0.0, 1.0);
                         }
                     }
-                    for k in 0..3 {
+                    for k in 0..s.samples.min(3) {
                         if let Some(g) = gain_row(s, y, c.x, w, k) {
                             for (i, g) in g.into_iter().enumerate() {
                                 row[i * 3 + k] = (row[i * 3 + k] * g).clamp(0.0, 1.0);
@@ -329,6 +340,10 @@ pub fn develop_sensor(s: &Sensor, opts: &DevelopOptions) -> Result<Developed> {
         let start = b * band * w * 3;
         let src = &rgb[start..start + chunk.len()];
         for (o, p) in chunk.as_chunks_mut::<3>().0.iter_mut().zip(src.as_chunks::<3>().0) {
+            if mono {
+                *o = [lut.encode(grey_gain * p[0]); 3];
+                continue;
+            }
             for k in 0..3 {
                 o[k] = lut.encode(out_m[k][0] * p[0] + out_m[k][1] * p[1] + out_m[k][2] * p[2]);
             }

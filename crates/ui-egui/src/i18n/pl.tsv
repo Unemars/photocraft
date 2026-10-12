@@ -498,6 +498,13 @@
 	Color Range…	Zakres kolorów…
 	Focus Area…	Obszar ostrości…
 	Select and Mask…	Zaznacz i maskuj…
+# Select and Mask dialog labels
+	Smart Radius	Inteligentny promień
+	Shift Edge	Przesuń krawędź
+	Decontaminate	Dekontaminacja
+	Output	Wyjście
+	Refine Edge	Popraw krawędź
+	Apply At Canvas Bounds	Zastosuj w granicach obszaru roboczego
 	Modify	Modyfikuj
 	Border…	Obramowanie…
 	Smooth…	Wygładź…
@@ -766,6 +773,7 @@
 	Split Warp Horizontally	Podziel wypaczenie w poziomie
 	Split Warp Vertically	Podziel wypaczenie w pionie
 	Statistics…	Statystyki…
+	Refine Strokes	Pociągnięcia udoskonalania
 @plural	{n} item|{n} items	{n} element|{n} elementy|{n} elementów
 	Auto	Automatycznie
 
@@ -840,6 +848,9 @@
 	Bend:	Zgięcie:
 	Bicubic	Dwusześcienna
 	Bicubic (smooth gradients)	Dwusześcienna (gładkie gradienty)
+	Automatic	Automatycznie
+	Bicubic Smoother (enlargement)	Dwusześcienna wygładzona (powiększanie)
+	Bicubic Sharper (reduction)	Dwusześcienna wyostrzona (zmniejszanie)
 	Bilinear	Dwuliniowa
 	Black	Czarny
 	Black & White	Czerń i biel
@@ -896,6 +907,7 @@
 	Click to zoom in  ·  {key}-click to zoom out  ·  drag right/left to zoom in/out	Kliknij, aby powiększyć  ·  kliknij z {key}, aby pomniejszyć  ·  przeciągnij w prawo/lewo, aby powiększyć/pomniejszyć
 	Click with the Note tool to add a note.	Kliknij narzędziem Notatka, aby dodać notatkę.
 	Click: corner · Drag: smooth · Click first point: close · {key} finish · Esc cancel	Klik: narożnik · Przeciągnięcie: gładki · Klik w pierwszy punkt: zamknij · {key} zakończ · Esc anuluj
+	Click: corner · Drag: smooth · {alt}-drag: break handle · Click or drag first point: close · {key} finish · Esc cancel	Klik: narożnik · Przeciągnięcie: gładki · {alt}+przeciągnięcie: rozdziel uchwyt · Klik lub przeciągnięcie pierwszego punktu: zamknij · {key} zakończ · Esc anuluj
 	Clip to layer below	Przytnij do warstwy poniżej
 	Clipped	Przycięta
 	Close Style Options	Zamknij opcje stylu
@@ -1519,6 +1531,7 @@
 	White Balance: As Shot	Balans bieli: jak w zdjęciu
 	Whites	Biele
 	Width	Szerokość
+	Slant	Pochylenie
 	Width:	Szerokość:
 	Work Path	Ścieżka robocza
 	Yellow	Żółty
@@ -1536,6 +1549,8 @@
 	↑↓ navigate   {key} run   esc close	↑↓ nawigacja   {key} uruchom   esc zamknij
 	Version {version}	Wersja {version}
 	New Document	Nowy dokument
+	New Document With Mask	Nowy dokument z maską
+	New Layer With Mask	Nowa warstwa z maską
 	Preset Name	Nazwa ustawienia wstępnego
 	No saved presets yet.	Nie ma jeszcze zapisanych ustawień wstępnych.
 	Error	Błąd
@@ -1694,6 +1709,7 @@
 	Pen Pressure	Nacisk pióra
 	Pen Tilt	Nachylenie pióra
 	Pen Tool	Narzędzie Pióro
+	Convert Point Tool	Narzędzie Konwertuj punkt
 	Photo	Zdjęcie
 	PhotoCraft website	Strona internetowa PhotoCraft
 	Picas	Pikasy
@@ -1939,6 +1955,7 @@
 	Show only crosshair while painting	Podczas malowania pokaż tylko celownik
 	Show slice numbers	Pokaż numery plasterków
 	Show tooltips	Pokaż podpowiedzi
+	Enable animations	Włącz animacje
 	Show highlight on rollover	Pokaż podświetlenie po najechaniu
 	Show bounding box when dragging layer	Pokaż ramkę ograniczającą podczas przeciągania warstwy
 	Show transformation values	Pokaż wartości przekształcenia
@@ -2117,9 +2134,11 @@
 	Cancelled opening {name}	Anulowano otwieranie {name}
 	Cancelled {label}	Anulowano: {label}
 	Esc to cancel	Esc, aby anulować
+	Opened {name}	Otworzono: {name}
 	Opening {name}	Otwieranie {name}
 	Saved {name}	Zapisano: {name}
 	Saving {name}	Zapisywanie {name}
+	Saving {percent}	Zapisywanie {percent}
 	A save to {name} is still running; try again when it finishes	Zapisywanie do {name} wciąż trwa; spróbuj ponownie, gdy się zakończy
 	{label} is writing the file and can no longer be cancelled	{label} zapisuje plik i nie można już tego anulować
 	Opening {name}…	Otwieranie {name}…
@@ -2655,6 +2674,8 @@ cameraRaw	Roughness	Chropowatość
 	Patch Tool	Narzędzie Łatka
 	Patch:	Łatka:
 	Lasso around an area, then drag the selection	Zakreśl obszar lassem, a następnie przeciągnij zaznaczenie
+	Transform On Drop	Przekształć po upuszczeniu
+	Scale or rotate the moved area, then press {key}	Przeskaluj lub obróć przeniesiony obszar, a następnie naciśnij {key}
 	Now drag the selection onto another area	Teraz przeciągnij zaznaczenie na inny obszar
 	Edit Type	Edytuj tekst
 	Make Default	Ustaw jako domyślne
@@ -3354,6 +3375,19 @@ cameraRaw	Roughness	Chropowatość
 	Domed	Kopuła
 	Domed (Inverted)	Kopuła (odwrócona)
 	Diagonal (Descending)	Przekątna (malejąca)
+	Contour Editor	Edytor konturu
+	Anti-aliased	Wygładzanie
+	Corner	Narożnik
+	Gloss Contour	Kontur połysku
+	Contour	Kontur
+	Cone - Inverted	Stożek - odwrócony
+	Cove - Deep	Zatoka - głęboka
+	Cove - Shallow	Zatoka - płytka
+	Half Round	Półokrągły
+	Ring - Double	Pierścień - podwójny
+	Rolling Slope - Descending	Falisty spadek - malejący
+	Rounded Steps	Zaokrąglone stopnie
+	Sawtooth 1	Piła 1
 	Red Eye Tool	Narzędzie Czerwone oczy
 	Pupil Size	Rozmiar źrenicy
 	Darken Amount	Stopień przyciemnienia
@@ -3540,7 +3574,7 @@ cameraData	Lens	Obiektyw
 	Freeform Pen Tool	Narzędzie Pióro dowolne
 	Curvature Pen Tool	Narzędzie Pióro krzywizny
 	Curve Fit:	Dopasowanie krzywej:
-	Drag: draw freehand · Release on the start point: close	Przeciągnięcie: rysowanie odręczne · Puszczenie w punkcie początkowym: zamknij
+	Drag: draw freehand · {alt}-click: straight segment · Release on the start point: close	Przeciągnięcie: rysowanie odręczne · {alt}-klik: prosty segment · Puszczenie w punkcie początkowym: zamknij
 	Click: smooth point · Double-click: corner · Drag a point: move · Click first point: close · {key} finish	Klik: punkt gładki · Dwuklik: narożnik · Przeciągnięcie punktu: przesuń · Klik w pierwszy punkt: zamknij · {key} zakończ
 	New Crop Preset…	Nowe ustawienie kadrowania…
 	Delete Crop Preset…	Usuń ustawienie kadrowania…
@@ -3548,5 +3582,65 @@ cameraData	Lens	Obiektyw
 	Select the crop presets to delete	Wybierz ustawienia kadrowania do usunięcia
 	Enter a name for the crop preset	Wprowadź nazwę ustawienia kadrowania
 	There is no crop size or ratio to save	Brak rozmiaru lub proporcji kadrowania do zapisania
+	Scale:	Skala:
+	Snap to Origin	Przyciągnij do początku
 	Search settings…	Szukaj ustawień…
 	No matching settings	Brak pasujących ustawień
+	Loading fonts…	Wczytywanie czcionek…
+	Simulate Pressure	Symuluj nacisk
+	Stroke Path…	Obrysuj ścieżkę…
+	Background Eraser	Gumka tła
+	Healing Brush	Pędzel korygujący
+	Spot Healing Brush	Punktowy pędzel korygujący
+	Smudge	Palec
+	Amount:	Wartość:
+	Protect:	Chroń:
+	Protect skin tones	Chroń odcienie skóry
+	Edit points to modify the curve	Edytuj punkty, aby zmienić krzywą
+	Draw to modify the curve	Rysuj, aby zmienić krzywą
+curves	Smooth	Wygładź
+	Smooth the curve values	Wygładź wartości krzywej
+	Drag to draw the curve · {key}-click draws a straight line	Przeciągnij, aby narysować krzywą · {key}-klik rysuje linię prostą
+	Grid Size:	Rozmiar siatki:
+	Vanishing Point: click four corners to create a plane	Punkt zbieżności: kliknij cztery narożniki, aby utworzyć płaszczyznę
+	Vanishing Point is not active	Punkt zbieżności nie jest aktywny
+	Apply Vanishing Point ({key})	Zastosuj punkt zbieżności ({key})
+	Fix the red plane first: its corners must form a convex quad	Najpierw popraw czerwoną płaszczyznę: jej narożniki muszą tworzyć czworokąt wypukły
+# Select and Mask view modes (#1754)
+	Onion Skin	Skórka cebuli
+	Marching Ants	Maszerujące mrówki
+	On Black	Na czarnym
+	On White	Na białym
+	On Layers	Na warstwach
+	Show Edge	Pokaż krawędź
+	Show Original	Pokaż oryginał
+	F cycles the views; hold X to see the image	F przełącza widoki; przytrzymaj X, aby zobaczyć obraz
+# Select and Mask Refine Edge Brush (#2972)
+	Refine Edge Brush (R)	Pędzel dopracowania krawędzi (R)
+	Expand Detection Area	Rozszerz obszar wykrywania
+	Restore Original Edge	Przywróć oryginalną krawędź
+	Paint over hair or fur on the image; Alt paints the other mode	Maluj po włosach lub sierści na obrazie; Alt maluje w drugim trybie
+	Clear Brush Strokes	Wyczyść pociągnięcia pędzla
+	Show rulers	Pokaż linijki
+
+# Color Sampler (added with the i18n coverage repair)
+	Click to place · Alt-click or drag off-canvas to remove	Kliknij, aby umieścić · Alt-kliknij lub przeciągnij poza obszar roboczy, aby usunąć
+	No document open	Brak otwartego dokumentu
+	{n} of {max} sample points	{n} z {max} punktów próbkowania
+# Print dialog (#2697)
+	Emulsion Down	Emulsja w dół
+	Functions	Funkcje
+	Print Resolution:	Rozdzielczość druku:
+	Use Previous Layer to Create Clipping Mask	Użyj poprzedniej warstwy do utworzenia maski przycinającej
+	Fill with {mode}-neutral color (white)	Wypełnij kolorem neutralnym dla trybu {mode} (biały)
+	Fill with {mode}-neutral color (black)	Wypełnij kolorem neutralnym dla trybu {mode} (czarny)
+	Fill with {mode}-neutral color (50% gray)	Wypełnij kolorem neutralnym dla trybu {mode} (50% szarości)
+	(No neutral color exists for {mode} mode.)	(Dla trybu {mode} nie istnieje kolor neutralny.)
+	Apply mask to layer before removing?	Zastosować maskę do warstwy przed usunięciem?
+	The layer or its mask changed. Drag the mask onto the Trash again.	Warstwa lub jej maska uległa zmianie. Przeciągnij maskę ponownie do kosza.
+	Delete the vector mask?	Usunąć maskę wektorową?
+# View › Guides › New Guide… › Color
+	Light Blue	Jasnoniebieski
+	Light Red	Jasnoczerwony
+	Medium Blue	Średnioniebieski
+	Light Gray	Jasnoszary

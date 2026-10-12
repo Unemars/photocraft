@@ -338,6 +338,19 @@ mod write_tests {
         }
     }
 
+    /// #2926: a PSB whose ZIP merged image declares more than `MAX_DECODED_BYTES` opens without
+    /// inflating that stream (its layers are still usable); decoding the composite reports the limit.
+    #[test]
+    fn over_budget_zip_merged_image_opens_without_inflating() {
+        let mut bytes = testgen::small(Version::Psb, Compression::Zip).to_bytes().unwrap();
+        // Header: height at 14, width at 18 (big-endian u32).
+        bytes[14..18].copy_from_slice(&300_000u32.to_be_bytes());
+        bytes[18..22].copy_from_slice(&300_000u32.to_be_bytes());
+        let file = PsdFile::from_bytes(&bytes).unwrap();
+        assert!(!file.layers().is_empty());
+        assert!(matches!(file.decode_merged(), Err(PsdError::LimitExceeded(_))));
+    }
+
     #[test]
     fn global_layer_info_serialization_propagates_layer_limit_errors() {
         let mut file = testgen::small(Version::Psd, Compression::Raw);

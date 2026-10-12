@@ -223,26 +223,35 @@ pub fn finish_patch(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
 }
 
 /// Content-Aware Move Tool: the selection was dragged from `start` to `end`. The engine runs it as
-/// a background job (progress dialog, Esc cancels); the selection follows the content.
+/// a background job (progress dialog, Esc cancels); the selection follows the content. With
+/// Transform On Drop a transform box comes up on the dropped patch first ([`crate::cam_transform`]).
 pub fn finish_content_aware_move(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
     let off = patch_offset(app, start, end);
     if off == [0, 0] {
         patch_hint(app);
         return;
     }
+    if app.ui.tool_options.cam_transform_on_drop && crate::cam_transform::begin(app, off) {
+        return;
+    }
+    let p = content_aware_move_params(app, [i64::from(off[0]), i64::from(off[1])]);
+    if let Err(e) = app.run("paint.contentAwareMove", p) {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
+}
+
+/// `paint.contentAwareMove`'s params for a drag by `offset`, from the options bar.
+pub fn content_aware_move_params(app: &PhotocraftApp, offset: [i64; 2]) -> Value {
     let o = &app.ui.tool_options;
-    let p = json!({
-        "offset": off,
+    json!({
+        "offset": offset,
         "mode": o.cam_mode,
         "structure": o.cam_structure.round().clamp(1.0, 7.0),
         "color": o.cam_color.round().clamp(0.0, 10.0),
         "sampleAllLayers": o.sample_all_layers,
         "target": crate::canvas::paint_target(app),
-    });
-    if let Err(e) = app.run("paint.contentAwareMove", p) {
-        app.ui.status = e;
-        app.ui.status_error = true;
-    }
+    })
 }
 
 /// Object Selection: the dragged rectangle. A click (or a sub-2 px nudge) cannot be a
@@ -287,7 +296,8 @@ pub fn set_source(app: &mut PhotocraftApp, x: f64, y: f64) {
     app.ui.clone_source = Some([x.round(), y.round()]);
     app.ui.clone_offset = None;
     let _ = app.run("cloneSource.set", json!({"source": [x.round(), y.round()]}));
-    app.ui.status = format!("Clone source set at {:.0}, {:.0}", x, y);
+    let template = "Clone source set at {x}, {y}";
+    app.ui.status = crate::i18n::fmt(tl!(template), &[("x", &format!("{x:.0}")), ("y", &format!("{y:.0}"))]);
     app.ui.status_error = false;
 }
 
@@ -382,8 +392,24 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui, tool: Tool) -> bo
             opt(ui, tl!("Color:"));
             crate::widgets::value_field(ui, &mut o.cam_color, 0.0..=10.0, "", 40.0);
             crate::widgets::checkbox(ui, &mut o.sample_all_layers, tl!("Sample All Layers"));
+            crate::widgets::checkbox(ui, &mut o.cam_transform_on_drop, tl!("Transform On Drop"));
             crate::widgets::vline(ui, 22.0);
-            opt(ui, tl!("Lasso around an area, then drag the selection"));
+            if crate::cam_transform::active(app) {
+                // The box on the dropped patch: ✓ computes the move, ⊘ drops it (as ↩ / Esc).
+                let tip = crate::i18n::fmt(tl!("Commit transform ({key})"), &[("key", &crate::shortcuts::pretty("Enter"))]);
+                let commit = crate::icons::button(ui, "check", 26.0, false, &tip);
+                commit.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Commit transform"));
+                if commit.clicked() {
+                    crate::cam_transform::commit(app);
+                }
+                let cancel = crate::icons::button(ui, "ban", 26.0, false, tl!("Cancel transform (Esc)"));
+                cancel.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Cancel transform"));
+                if cancel.clicked() {
+                    crate::cam_transform::cancel(app);
+                }
+            } else {
+                opt(ui, tl!("Lasso around an area, then drag the selection"));
+            }
         }
         Tool::PatternStamp => {
             pattern_stamp_options(app, ui);
@@ -438,11 +464,11 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui, tool: Tool) -> bo
             crate::widgets::vline(ui, 22.0);
             ui.spacing_mut().item_spacing.x = 2.0;
             for (k, icon, tip) in [
-                ("continuous", "pipette", tl!("Sampling: Continuous")),
-                ("once", "circle-dot", tl!("Sampling: Once")),
-                ("backgroundSwatch", "square", tl!("Sampling: Background Swatch")),
+                ("continuous", "pipette", "Sampling: Continuous"),
+                ("once", "circle-dot", "Sampling: Once"),
+                ("backgroundSwatch", "square", "Sampling: Background Swatch"),
             ] {
-                if crate::brush_picker::named(crate::icons::button(ui, icon, 24.0, o.cr_sampling == k, tip), tip).clicked() {
+                if crate::brush_picker::named(crate::icons::button(ui, icon, 24.0, o.cr_sampling == k, tl!(tip)), tip).clicked() {
                     o.cr_sampling = k.into();
                 }
             }
@@ -801,6 +827,48 @@ mod tests {
             let sel = app.session.active().unwrap().doc.selection.as_ref().unwrap();
             assert!(sel.sample_channel(72, 30, 0) > 0.0 && sel.sample_channel(22, 30, 0) == 0.0, "{mode}: the selection follows");
         }
+    }
+
+    #[test]
+    fn content_aware_move_transform_on_drop_turns_the_patch_on_enter() {
+        let mut app = app();
+        app.run("paint.pencil", json!({"points": [[16, 30], [28, 30]], "size": 4, "color": "#0000ff"})).unwrap();
+        let blue = |app: &PhotocraftApp, x: i32, y: i32| active(app).surface().unwrap().rgba(x, y)[0] < 0.5;
+        app.ui.tool = Tool::ContentAwareMove;
+        app.ui.tool_options.cam_transform_on_drop = true;
+        app.ui.tool_options.cam_structure = 7.0;
+        let m = egui::Modifiers::NONE;
+        let drag = |app: &mut PhotocraftApp, path: &[[f64; 2]]| {
+            let ([x, y], rest) = (path[0], &path[1..]);
+            tool_event(app, ToolEvent::Down { x, y, pressure: 1.0 }, m);
+            for &[x, y] in rest {
+                tool_event(app, ToolEvent::Move { x, y, pressure: 1.0 }, m);
+            }
+            let [x, y] = path[path.len() - 1];
+            tool_event(app, ToolEvent::Up { x, y }, m);
+        };
+        drag(&mut app, &[[6.0, 14.0], [38.0, 14.0], [38.0, 46.0], [6.0, 46.0]]);
+        let steps = app.session.active().unwrap().history.past_len();
+        // The drop puts a box on the patch; nothing is computed yet.
+        drag(&mut app, &[[22.0, 30.0], [50.0, 30.0], [72.0, 30.0]]);
+        assert!(crate::cam_transform::active(&app), "{}", app.ui.status);
+        assert!(blue(&app, 22, 30) && !blue(&app, 72, 30), "the document waits for the commit");
+        assert_eq!(app.session.active().unwrap().history.past_len(), steps);
+        // Dragging outside the box turns it 90° about its centre (72, 30).
+        drag(&mut app, &[[98.0, 55.0], [60.0, 58.0], [47.0, 56.0]]);
+        let place = crate::cam_transform::placement(app.ui.cam_transform.as_ref().unwrap()).unwrap();
+        assert_eq!((place.offset, place.scale), ([50, 0], [100.0, 100.0]));
+        assert!((place.rotate - 90.0).abs() < 1e-3, "{place:?}");
+        crate::cam_transform::commit(&mut app);
+        assert!(!crate::cam_transform::active(&app) && !app.ui.status_error, "{}", app.ui.status);
+        let (id, p) = app.session.journal.last().unwrap();
+        assert_eq!((id.as_str(), &p["offset"]), ("paint.contentAwareMove", &json!([50, 0])));
+        assert!((p["rotate"].as_f64().unwrap() - 90.0).abs() < 1e-3, "{p}");
+        // The horizontal line lands upright, in one History step.
+        assert!(blue(&app, 72, 26) && blue(&app, 72, 34), "the turned line");
+        assert!(!blue(&app, 66, 30) && !blue(&app, 78, 30), "no unturned line");
+        assert!(!blue(&app, 22, 30), "the old place is filled");
+        assert_eq!(app.session.active().unwrap().history.past_len(), steps + 1);
     }
 
     #[test]

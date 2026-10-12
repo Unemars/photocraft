@@ -224,7 +224,10 @@ pub fn morph(src: &[f32], w: usize, h: usize, r: usize, grow: bool) -> Vec<f32> 
     morphology::morph(src, w, h, r, grow)
 }
 
+mod brush;
 mod morphology;
+
+pub use brush::{EdgeBrush, EdgeStroke, MAX_SWEPT_AREA, SIZE_RANGE as BRUSH_SIZE_RANGE, swept_area};
 
 /// Running max (or min) over a window of radius `r` (edge-clipped), van Herk / Gil–Werman:
 /// three comparisons per sample whatever the radius.
@@ -293,10 +296,18 @@ pub fn edge_width(img: &RgbImage, r: usize) -> Vec<f32> {
 
 /// Refines a soft mask buffer `m` (`w × h`) with `img` as guide (required when `radius > 0`).
 pub fn refine_buffer(img: Option<&RgbImage>, m: &[f32], w: usize, h: usize, p: &RefineParams) -> Vec<f32> {
-    refine_buffer_with(img, m, w, h, p, morph)
+    refine_buffer_with(img, m, w, h, p, None, morph)
 }
 
-fn refine_buffer_with<F>(img: Option<&RgbImage>, m: &[f32], w: usize, h: usize, p: &RefineParams, morphology: F) -> Vec<f32>
+/// The Refine Edge Brush over one buffer: signed coverage (`w × h`, see [`EdgeBrush`]) and the
+/// box radius of its colour estimate.
+#[derive(Clone, Copy)]
+struct BrushBuf<'a> {
+    v: &'a [f32],
+    window: usize,
+}
+
+fn refine_buffer_with<F>(img: Option<&RgbImage>, m: &[f32], w: usize, h: usize, p: &RefineParams, brush: Option<BrushBuf>, morphology: F) -> Vec<f32>
 where
     F: Fn(&[f32], usize, usize, usize, bool) -> Vec<f32> + Copy,
 {
@@ -324,10 +335,23 @@ where
                     Some(wd) => wd[i].clamp(1.5, p.radius.max(1.5)),
                     None => p.radius,
                 };
-                let wgt = (reff + 1.0 - dist[i]).clamp(0.0, 1.0);
+                let mut wgt = (reff + 1.0 - dist[i]).clamp(0.0, 1.0);
+                // Restored by the brush: the original edge.
+                if let Some(b) = brush.and_then(|b| b.v.get(i)).filter(|b| **b < 0.0) {
+                    wgt *= 1.0 + b;
+                }
                 if wgt > 0.0 {
                     a[i] = m[i] + (q[i].clamp(0.0, 1.0) - m[i]) * wgt;
                 }
+            }
+        }
+    }
+    // Added by the brush: coverage estimated from the image.
+    if let (Some(b), Some(img)) = (brush.filter(|b| b.v.iter().any(|v| *v > 0.0)), img) {
+        let est = brush::estimate(img, m, b.v, w, h, b.window);
+        for ((ai, ei), bi) in a.iter_mut().zip(&est).zip(b.v) {
+            if *bi > 0.0 {
+                *ai += (ei - *ai) * bi;
             }
         }
     }
@@ -357,7 +381,21 @@ where
 /// its non-zero pixels; the result is clipped to `canvas`. `sampler` supplies the guide image
 /// (only read when `radius > 0`). Returns `None` when nothing remains selected.
 pub fn refine_mask(sampler: &dyn Sampler, mask: &(dyn Fn(Rect) -> Vec<f32> + Sync), content: Rect, canvas: Rect, p: &RefineParams) -> Option<Region> {
-    refine_mask_with(sampler, mask, content, canvas, p, morph)
+    refine_mask_with(sampler, mask, content, canvas, p, None, morph)
+}
+
+/// [`refine_mask`] with the Refine Edge Brush: where `brush` adds, coverage comes from the image
+/// (the area can reach beyond the edge-detection band); where it restores, the original edge
+/// stays. The sampler is read wherever the brush adds, whatever the radius.
+pub fn refine_mask_brushed(
+    sampler: &dyn Sampler,
+    mask: &(dyn Fn(Rect) -> Vec<f32> + Sync),
+    content: Rect,
+    canvas: Rect,
+    p: &RefineParams,
+    brush: Option<&EdgeBrush>,
+) -> Option<Region> {
+    refine_mask_with(sampler, mask, content, canvas, p, brush, morph)
 }
 
 fn refine_mask_with<F>(
@@ -366,6 +404,7 @@ fn refine_mask_with<F>(
     content: Rect,
     canvas: Rect,
     p: &RefineParams,
+    brush: Option<&EdgeBrush>,
     morphology: F,
 ) -> Option<Region>
 where
@@ -375,8 +414,8 @@ where
     if content.is_empty() {
         return None;
     }
-    let bbox = content.inflate(p.spread()).intersect(&canvas);
-    let halo = p.halo();
+    let bbox = content.inflate(p.spread()).union(&brush.map_or(Rect::EMPTY, EdgeBrush::added_bounds)).intersect(&canvas);
+    let halo = p.halo() + brush.map_or(0, |b| i32::try_from(b.window() * 4).unwrap_or(i32::MAX));
     let mut tiles = Vec::new();
     let mut y = bbox.y0;
     while y < bbox.y1 {
@@ -401,11 +440,17 @@ where
             }
             out
         };
-        if (first == 0.0 || first == 1.0) && m.iter().all(|v| *v == first) {
+        let painted = brush.filter(|b| !b.bounds().intersect(&r).is_empty()).map(|b| b.read(r));
+        let adds = painted.as_ref().is_some_and(|v| v.iter().any(|v| *v > 0.0));
+        if !adds && (first == 0.0 || first == 1.0) && m.iter().all(|v| *v == first) {
             return (*t, vec![q(first); cw * ch]);
         }
-        let img = p.uses_image().then(|| sampler.rgb(r));
-        let out = refine_buffer_with(img.as_ref(), &m, rw, rh, p, morphology);
+        let img = (p.uses_image() || adds).then(|| sampler.rgb(r));
+        let bb = match (&painted, brush) {
+            (Some(v), Some(b)) => Some(BrushBuf { v, window: b.window() }),
+            _ => None,
+        };
+        let out = refine_buffer_with(img.as_ref(), &m, rw, rh, p, bb, morphology);
         (*t, core(&out))
     };
     #[cfg(not(target_arch = "wasm32"))]

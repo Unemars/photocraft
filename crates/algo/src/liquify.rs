@@ -116,7 +116,8 @@ pub struct LiquifyStroke {
     /// Brush diameter (px).
     #[serde(default = "d_size")]
     pub size: f64,
-    /// Edge feathering, 0 (hard) ..100 (soft).
+    /// How far the full effect reaches toward the brush edge, 0 (only the centre; feathered)
+    /// ..100 (most of the brush). It always fades to nothing at the edge ([`falloff`]).
     #[serde(default = "d_density")]
     pub density: f64,
     /// Overall strength, 0..100.
@@ -420,8 +421,7 @@ impl LiquifyField {
                 if t2 >= 1.0 {
                     continue;
                 }
-                let soft = (1.0 - t2) * (1.0 - t2);
-                let fall = (1.0 - density) + density * soft;
+                let fall = falloff(t2, density);
                 let idx = j * self.w + i;
                 let k_raw = strength * fall;
                 if s.tool == LiquifyTool::Freeze || s.tool == LiquifyTool::Thaw {
@@ -524,6 +524,23 @@ impl LiquifyField {
         let j1 = (gy1.ceil() as isize + 2).clamp(0, self.h as isize - 1) as usize;
         (j0..=j1).any(|j| self.d[j * self.w + i0..=j * self.w + i1].iter().any(|v| v[0] != 0.0 || v[1] != 0.0))
     }
+}
+
+/// A dab's strength at squared distance `t2` (in brush radii, 0..1) for Density `density` (0..1):
+/// 1 at the centre, and down to 0 at the rim with a flat slope at every density, as in
+/// Photoshop, where Density sets how far the full effect reaches toward the edge (0: only the
+/// centre, the rest feathered; 1: most of the brush) but the effect always fades out at it.
+/// A brush that stopped short of 0 at its rim moved the pixels inside it and left those just
+/// outside, tearing the image along every dab's circle (#2606).
+pub fn falloff(t2: f64, density: f64) -> f64 {
+    let t2 = t2.clamp(0.0, 1.0);
+    let density = if density.is_nan() { 0.5 } else { density.clamp(0.0, 1.0) };
+    // Feathered: (1 - t²)³. Dense: (1 - t⁴)², flat in the middle. Both are 0 with zero slope at
+    // t = 1, and their slopes stay small enough that a dab every fifth of the radius never folds
+    // the image over itself.
+    let feathered = (1.0 - t2).powi(3);
+    let dense = (1.0 - t2 * t2).powi(2);
+    feathered + (dense - feathered) * density
 }
 
 fn bilinear(d: &[[f32; 2]], w: usize, h: usize, gx: f64, gy: f64) -> [f64; 2] {
@@ -1067,6 +1084,57 @@ mod tests {
     }
 
     #[test]
+    fn the_brush_fades_to_nothing_at_its_rim_at_every_density() {
+        for density in [0.0, 0.25, 0.5, 0.75, 1.0, f64::NAN, -3.0, 7.0] {
+            assert_eq!(falloff(0.0, density), 1.0, "full strength at the centre ({density})");
+            assert_eq!(falloff(1.0, density), 0.0, "nothing at the rim ({density})");
+            // Flat at the rim: the last 2 % of the radius moves at most a couple of percent.
+            assert!(falloff(0.98f64.powi(2), density) < 0.02, "{density}: {}", falloff(0.98f64.powi(2), density));
+            let mut prev = 1.0;
+            for k in 1..=100 {
+                let v = falloff(k as f64 / 100.0, density);
+                assert!(v <= prev && v >= 0.0, "{density}: not falling at t² = {k}%");
+                prev = v;
+            }
+        }
+        // Density widens the strong core: more strength at every radius, as in Photoshop.
+        for k in 1..100 {
+            let t2 = k as f64 / 100.0;
+            assert!(falloff(t2, 1.0) >= falloff(t2, 0.5) && falloff(t2, 0.5) >= falloff(t2, 0.0), "t² = {t2}");
+        }
+        assert!(falloff(0.5, 1.0) > 0.5 && falloff(0.5, 0.0) < 0.2);
+    }
+
+    /// #2606: the dab's strength used to stop at 1 - Density at its rim, so a Forward Warp moved
+    /// everything just inside the brush and nothing just outside, tearing the image along every
+    /// dab's circle (a hard-edged block at Density 0, half strength at the default 50).
+    #[test]
+    fn forward_warp_leaves_the_brush_rim_in_place() {
+        // A drag of one dab spacing (a fifth of the radius): one dab, centred where it started.
+        let (r, drag) = (20.0, 4.0);
+        for density in [0.0, 50.0, 100.0] {
+            let mut s = LiquifyStroke::new(LiquifyTool::ForwardWarp, 2.0 * r);
+            s.density = density;
+            s.points = vec![vec![48.0, 32.0], vec![48.0 + drag, 32.0]];
+            let f = LiquifyField::from_strokes(bounds(), 1.0, &[s]);
+            let mut rim = 0;
+            for j in 0..f.h {
+                for i in 0..f.w {
+                    let p = f.node_pos(i, j);
+                    let t = (p[0] - 48.0).hypot(p[1] - 32.0) / r;
+                    if (0.97..1.0).contains(&t) {
+                        let d = f.d[j * f.w + i];
+                        assert!(f64::from(d[0].hypot(d[1])) < 0.03 * drag, "density {density}: a node at {t:.3} r moved {d:?}");
+                        rim += 1;
+                    }
+                }
+            }
+            assert!(rim > 20, "{rim} rim nodes");
+            assert!(f.sample(48.0, 32.0)[0] < -0.9 * drag, "density {density}: the centre follows the brush");
+        }
+    }
+
+    #[test]
     fn no_strokes_is_identity_at_every_depth() {
         for st in [SampleType::U8, SampleType::U16, SampleType::F32] {
             let s = sample(st);
@@ -1144,7 +1212,7 @@ mod tests {
         assert!(f.max_displacement() < before * 0.2, "{} vs {before}", f.max_displacement());
         // Frozen area doesn't move.
         let mut fr = LiquifyStroke::new(LiquifyTool::Freeze, 60.0);
-        fr.density = 0.0;
+        fr.density = 100.0;
         fr.points = vec![vec![40.0, 32.0]];
         let mut g = LiquifyField::new(bounds(), 2.0);
         g.apply_stroke(&fr);

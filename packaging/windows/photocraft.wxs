@@ -31,6 +31,18 @@
         DowngradeErrorMessage="A newer version of PhotoCraft is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <!-- Windows 10 or later. The Rust standard library has needed it since 1.78: on Windows 7 and
+         8 the app fails at launch with "The procedure entry point ProcessPrng could not be located
+         in bcryptprimitives.dll" (#2310), so the installer says so instead of installing it.
+         `CurrentMajorVersionNumber` exists only from Windows 10 on, in the 32- and 64-bit
+         registry views alike; MSI's own VersionNT has reported both 603 and 1000 there.
+         `Installed` keeps repair and uninstall working on any Windows. -->
+    <Property Id="WINDOWS10ORLATER" Secure="yes">
+      <RegistrySearch Id="WindowsMajorVersion" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+          Name="CurrentMajorVersionNumber" Type="raw" />
+    </Property>
+    <Launch Condition="Installed OR WINDOWS10ORLATER" Message="!(loc.RequiresWindows10)" />
+
     <!-- MSI caches this icon using its Id as the filename. Advertised shortcuts to an
          .exe need an .exe icon identifier (ICE50), even when the source is an ICO. -->
     <Icon Id="PhotocraftIcon.exe" SourceFile="$(var.IconPath)" />

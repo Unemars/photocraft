@@ -657,6 +657,25 @@ fn smoothing_modes() {
 }
 
 #[test]
+fn smoothing_string_runs_from_the_lagging_brush_to_the_pointer() {
+    // #3479: the canvas draws the line between the brush and the pointer.
+    let cfg = Smoothing { amount: 0.8, ..Default::default() };
+    let mut s = Smoother::new(&cfg, 1.0);
+    let mut out = Vec::new();
+    assert_eq!(s.string(), None, "no stroke yet");
+    s.push(StrokePoint::new(0.0, 0.0, 1.0), &mut out);
+    assert_eq!(s.string(), None, "the first point is the brush");
+    s.push(StrokePoint::new(100.0, 0.0, 1.0), &mut out);
+    let (brush, pointer) = s.string().unwrap();
+    assert!(brush[0] > 0.0 && brush[0] < 100.0, "the brush lags: {brush:?}");
+    assert_eq!(pointer, [100.0, 0.0]);
+    let mut off = Smoother::new(&Smoothing { amount: 0.0, ..cfg }, 1.0);
+    off.push(StrokePoint::new(0.0, 0.0, 1.0), &mut out);
+    off.push(StrokePoint::new(100.0, 0.0, 1.0), &mut out);
+    assert_eq!(off.string(), None, "smoothing off: no string");
+}
+
+#[test]
 fn smoothing_pulls_by_time_not_by_how_often_the_device_reports() {
     // The pointer jumps 100 px and is held there for 32 ms, reported at 1000 Hz or about 60 Hz.
     let cfg = Smoothing { amount: 0.8, catch_up: true, catch_up_on_end: false, ..Default::default() };
@@ -1150,4 +1169,49 @@ fn half_coverage_radius_is_the_tips_50_percent_contour() {
     }
     assert_eq!(half_coverage_radius(10.5, 1.0), 10.5);
     assert!(half_coverage_radius(10.5, f32::NAN).is_finite());
+}
+
+/// A soft, low-flow stroke (the banding case) on a white `fmt` surface, and its first channel.
+fn soft_low_flow(fmt: PixelFormat) -> Surface {
+    let mut s = Surface::with_default(fmt, &[1.0, 1.0, 1.0, 1.0]);
+    let b = BrushSettings { size: 120.0, hardness: 0.0, flow: 0.05, opacity: 0.3, color: [0.0, 0.0, 0.0, 1.0], pressure_size: false, ..Default::default() };
+    render_stroke(&mut s, &b, &line(0.0, 300.0, 100.0), None, false, 1.0);
+    s
+}
+
+/// Largest error, in 8-bit levels, of `got`'s row averages against `want`'s (red channel). Along a
+/// straight horizontal stroke every pixel of a row has the same true value, so plain rounding
+/// gives the whole row one wrong level (a band) while dithering keeps the row's average true.
+fn worst_row_error(got: &Surface, want: &Surface) -> f32 {
+    let mut worst = 0.0f32;
+    for y in 30..170 {
+        let (mut g, mut w) = (0.0, 0.0);
+        for x in 100..200 {
+            g += got.rgba(x, y)[0];
+            w += want.rgba(x, y)[0];
+        }
+        worst = worst.max((g - w).abs() / 100.0 * 255.0);
+    }
+    worst
+}
+
+#[test]
+fn an_8bit_soft_stroke_is_dithered_instead_of_banded() {
+    let reference = soft_low_flow(PixelFormat::new(ColorMode::Rgb, SampleType::F32, true));
+    let eight = soft_low_flow(PixelFormat::RGBA8);
+    let err = worst_row_error(&eight, &reference);
+    assert!(err < 0.15, "row averages are {err} levels off the float render");
+}
+
+#[test]
+fn dithering_never_moves_an_exact_colour_or_an_untouched_pixel() {
+    let mut s = Surface::with_default(PixelFormat::RGBA8, &[1.0, 1.0, 1.0, 1.0]);
+    let b = BrushSettings { size: 20.0, hardness: 1.0, color: [0.2, 0.4, 0.6, 1.0], pressure_size: false, ..Default::default() };
+    render_stroke(&mut s, &b, &line(10.0, 90.0, 50.0), None, false, 1.0);
+    let q = |v: f32| (v * 255.0).round() as i32;
+    for x in 15..85 {
+        let p = s.rgba(x, 50);
+        assert_eq!((q(p[0]), q(p[1]), q(p[2])), (q(0.2), q(0.4), q(0.6)), "solid paint at x {x}: {p:?}");
+    }
+    assert_eq!(s.rgba(50, 5), [1.0, 1.0, 1.0, 1.0], "far from the stroke: untouched");
 }

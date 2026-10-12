@@ -8,7 +8,7 @@ use photocraft_psd::resources::{ImageResource, ResolutionInfo, ids, version_info
 use photocraft_psd::{
     BlendMode as PsdBlend, ColorMode as PsdMode, Compression, Header, ImageData, LayerRecord, PsdFile, Rect as PsdRect, SectionType, TaggedBlock, Version,
 };
-use photocraft_raster::Surface;
+use photocraft_raster::{Interrupt, Surface};
 
 use crate::adjust_map;
 use crate::blocks;
@@ -873,7 +873,8 @@ impl Ex {
                 return Err(format!("smart objects nest more than {MAX_NESTING} deep"));
             }
             let doc = photocraft_format::load_from_bytes(bytes).map_err(|e| format!("its contents can't be read: {e}"))?;
-            let (file, warnings) = document_to_psd_nested(&doc, &PsdExportOptions { force_psb: true, ..Default::default() }, self.smart.depth + 1);
+            let (file, warnings) =
+                document_to_psd_nested(&doc, &PsdExportOptions { force_psb: true, ..Default::default() }, self.smart.depth + 1, &Interrupt::NONE);
             let data = file.to_bytes().map_err(|e| format!("its contents can't be written: {e}"))?;
             let stem = file_name.rsplit_once('.').map_or(file_name, |(a, _)| a);
             self.warnings.extend(warnings.into_iter().map(|w| format!("smart object {stem}: {w}")));
@@ -919,7 +920,9 @@ impl Ex {
         s
     }
 
-    fn emit(&mut self, layers: &[Layer]) {
+    /// Write the records of `layers` (and their groups' children). `tick` runs after each one:
+    /// it reports progress and returns `false` to stop early (a cancelled save, #3389).
+    fn emit(&mut self, layers: &[Layer], tick: &mut dyn FnMut() -> bool) {
         for l in layers {
             let extra = self.content_blocks(l);
             match &l.content {
@@ -936,7 +939,7 @@ impl Ex {
                         ],
                         ..Default::default()
                     });
-                    self.emit(&g.children);
+                    self.emit(&g.children, tick);
                     let kind = if g.expanded { SectionType::OpenFolder } else { SectionType::ClosedFolder };
                     let lsct = TaggedBlock::section_divider(kind, Some(PsdBlend::from_key(l.blend.psd_key())), None);
                     let r = self.record(l, std::iter::once(lsct).chain(extra).collect(), None);
@@ -967,6 +970,9 @@ impl Ex {
                     let r = self.record(l, extra, sm.cache.as_ref());
                     self.records.push(r);
                 }
+            }
+            if !tick() {
+                return;
             }
         }
     }
@@ -1075,7 +1081,9 @@ fn cmyk_of(fmt: &PixelFormat) -> bool {
 
 /// The merged image's planes (colour channels, then alpha), big-endian, matted against white
 /// when `matte`; with whether any pixel needs the alpha channel and whether any is below 1.
-fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> (Vec<u8>, bool, bool) {
+/// `ctl` gets the fraction of rows done after each band; once it is cancelled the rest of the
+/// image is left blank (the caller discards it).
+fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool, ctl: &Interrupt) -> (Vec<u8>, bool, bool) {
     let sample = fmt.sample;
     let cc = fmt.mode.color_channels();
     let bps = sample.bytes();
@@ -1088,7 +1096,11 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
     let w = canvas.width() as usize;
     let space = photocraft_compose::cmyk_space(doc);
     let lab16 = fmt.mode == ColorMode::Lab && sample == SampleType::U16;
+    let rows = canvas.height().max(1) as f32;
     let _ = photocraft_compose::render_bands(doc, canvas, 0, |band| -> Result<(), ()> {
+        if ctl.cancelled() {
+            return Err(());
+        }
         // Retain alpha whenever it differs from opaque at the stored precision.
         has_alpha |= band.px.iter().any(|p| match sample {
             SampleType::U8 => q255(p[3]) < 255,
@@ -1123,6 +1135,7 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
                 planes[o..o + src.len()].copy_from_slice(src);
             }
         }
+        ctl.progress((band.rect.y1 - canvas.y0) as f32 / rows);
         Ok(())
     });
     (planes, has_alpha, translucent)
@@ -1137,8 +1150,22 @@ pub fn document_to_psd(doc: &Document) -> PsdFile {
 /// anything that could not be represented. The merged composite is rendered
 /// with `photocraft_compose::flatten`.
 pub fn document_to_psd_with(doc: &Document, opts: &PsdExportOptions) -> (PsdFile, Vec<String>) {
-    document_to_psd_nested(doc, opts, 0)
+    document_to_psd_nested(doc, opts, 0, &Interrupt::NONE)
 }
+
+/// [`document_to_psd_with`] for a background save (#3389): reports progress through `ctl` after
+/// each layer record and each band of the merged composite. Once `ctl` is cancelled it stops
+/// early and returns an **incomplete** model: callers check `ctl` and discard it.
+pub(crate) fn document_to_psd_interruptible(doc: &Document, opts: &PsdExportOptions, ctl: &Interrupt) -> (PsdFile, Vec<String>) {
+    document_to_psd_nested(doc, opts, 0, ctl)
+}
+
+/// How much of a PSD conversion the merged composite weighs, in layer records: rendering it
+/// (all layers composited) and encoding its planes cost about two full-canvas layers.
+const MERGED_WEIGHT: f32 = 2.0;
+/// The part of the merged composite's share filled once its bands are rendered and converted; the
+/// rest is compressing its planes.
+const MERGED_RENDERED: f32 = 0.8;
 
 /// Adds headroom for compressed channel streams and their per-row length tables.
 fn estimate_encoded_size(raw_bytes: u64, rows: u64, structural_bytes: u64) -> Option<u64> {
@@ -1253,7 +1280,7 @@ pub(crate) fn psd_size_exceeds_limit(doc: &Document) -> bool {
 }
 
 /// [`document_to_psd_with`] for a document embedded `depth` smart objects deep.
-fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -> (PsdFile, Vec<String>) {
+fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32, ctl: &Interrupt) -> (PsdFile, Vec<String>) {
     if doc.mode == ColorMode::Multichannel {
         return crate::multichannel_map::document_to_psd(doc, opts.force_psb);
     }
@@ -1337,15 +1364,27 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
             ex.text_index.insert(l.id, index);
         }
     }
+    // Progress: one unit per layer record, then the merged composite (#3389).
+    let records = doc.walk().len() as f32;
+    let units = records + MERGED_WEIGHT;
+    let layers_share = records / units;
+    let mut done = 0.0f32;
+    let mut tick = || {
+        done += 1.0;
+        ctl.progress(done / units);
+        !ctl.cancelled()
+    };
     let space = photocraft_compose::cmyk_space(doc);
-    photocraft_color::convert::with_cmyk_space(space.as_ref(), || ex.emit(&doc.layers));
+    photocraft_color::convert::with_cmyk_space(space.as_ref(), || ex.emit(&doc.layers, &mut tick));
 
     // Merged composite, rendered and encoded in bands (no full-size float composite). Matting
     // against white only changes pixels with alpha < 1; if some are slightly translucent but all
     // round to opaque (so no alpha channel is written), encode once more without the matte.
-    let (mut planes, has_alpha, translucent) = merged_planes(doc, &fmt, cmyk_of(&fmt), opts.merged_matte);
+    let merged_end = layers_share + (1.0 - layers_share) * MERGED_RENDERED;
+    let (mut planes, has_alpha, translucent) =
+        crate::with_span(ctl, layers_share, merged_end, |ctl| merged_planes(doc, &fmt, cmyk_of(&fmt), opts.merged_matte, ctl));
     if !has_alpha && translucent && opts.merged_matte {
-        planes = merged_planes(doc, &fmt, cmyk_of(&fmt), false).0;
+        planes = merged_planes(doc, &fmt, cmyk_of(&fmt), false, &Interrupt::cancel_only(&|| ctl.cancelled())).0;
     }
     let n = doc.size.area() as usize;
     if !has_alpha {
@@ -1381,6 +1420,7 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
     let image_data = ImageData::encode(mcomp, &planes, &header)
         .or_else(|_| ImageData::encode(Compression::Raw, &planes, &header))
         .unwrap_or(ImageData { compression: Compression::Raw, data: planes });
+    ctl.progress(1.0);
 
     // Resources.
     let mut resources = vec![
@@ -1470,7 +1510,12 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         })
         .collect();
     let previous = (!text_layers.is_empty()).then(|| preserved.iter().find(|(_, key, _)| key == b"Txt2").map(|(_, _, data)| data.to_vec())).flatten();
-    let txt2 = (!text_layers.is_empty()).then(|| photocraft_text::psd::build_txt2(&text_layers, previous.as_deref()));
+    // A fresh document of ordinary (Metrics) text has nothing to put in `Txt2`, and Photoshop never
+    // writes its empty `<< /0 << >> >>` stub — readers such as Photopea reject it (#3514). Keep the
+    // block when the file had one (round-trip its pen positions/extras) or a layer is Optical (the
+    // one mode EngineData can't carry; #1348).
+    let txt2 =
+        (previous.is_some() || photocraft_text::psd::needs_txt2(&text_layers)).then(|| photocraft_text::psd::build_txt2(&text_layers, previous.as_deref()));
     for (sig, key, data) in preserved {
         if txt2.is_some() && key == *b"Txt2" {
             continue;

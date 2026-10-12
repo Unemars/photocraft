@@ -415,6 +415,12 @@ fn marquee_steps_are_named_after_their_tool() {
     assert_eq!(last(&s).as_deref(), Some("Elliptical Marquee"));
     s.execute("select.rect", json!({"x": 0, "y": 0, "width": 20, "height": 10})).unwrap();
     assert_eq!(last(&s).as_deref(), Some("Rectangular Marquee"));
+    // #3031: the Single Row / Single Column Marquee name theirs; an unknown `line` is an error.
+    s.execute("select.rect", json!({"x": 0, "y": 3, "width": 64, "height": 1, "line": "row"})).unwrap();
+    assert_eq!(last(&s).as_deref(), Some("Single Row Marquee"));
+    s.execute("select.rect", json!({"x": 3, "y": 0, "width": 1, "height": 48, "line": "column"})).unwrap();
+    assert_eq!(last(&s).as_deref(), Some("Single Column Marquee"));
+    assert!(s.execute("select.rect", json!({"x": 0, "y": 0, "width": 1, "height": 1, "line": "diagonal"})).is_err());
 }
 
 #[test]
@@ -1160,6 +1166,35 @@ fn layer_locks_are_set_and_enforced() {
     let st = s.active().unwrap();
     let l = st.doc.layer(st.active_layer.unwrap()).unwrap();
     assert!(l.locks.position && !l.locks.pixels);
+}
+
+#[test]
+fn all_lock_blocks_painting_a_mask_but_pixels_lock_does_not() {
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width": 20, "height": 20})).unwrap();
+    s.execute("layer.new.layer", json!({})).unwrap();
+    let id = s.active().unwrap().active_layer.unwrap();
+    s.edit("mask", |doc, _| {
+        doc.layer_mut(id).unwrap().mask = Some(photocraft_doc::LayerMask::reveal_all());
+        Ok(())
+    })
+    .unwrap();
+
+    s.execute("layer.setProps", json!({"locks": {"all": true}})).unwrap();
+    let history_steps = s.active().unwrap().history.entries().len();
+    let err = s.execute("paint.stroke", json!({"points": [[5, 5]], "size": 4, "hardness": 1.0, "color": "#000000", "target": "mask"})).unwrap_err();
+    assert_eq!(err.to_string(), "Could not complete your request because the layer \"Layer 1\" is locked");
+    let state = s.active().unwrap();
+    let mask = &state.doc.layer(id).unwrap().mask.as_ref().unwrap().surface;
+    assert!(mask.pixel(5, 5)[0] > 0.99, "rejected stroke leaves the mask reveal-all");
+    assert_eq!(state.history.entries().len(), history_steps, "rejected stroke adds no Brush Tool history step");
+
+    s.execute("layer.setProps", json!({"locks": {"all": false, "pixels": true}})).unwrap();
+    s.execute("paint.stroke", json!({"points": [[5, 5]], "size": 4, "hardness": 1.0, "color": "#000000", "target": "mask"})).unwrap();
+    let mask_value = |s: &Session| s.active().unwrap().doc.layer(id).unwrap().mask.as_ref().unwrap().surface.pixel(5, 5)[0];
+    assert!(mask_value(&s) < 0.01, "pixels-only lock permits mask painting");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(mask_value(&s) > 0.99, "undo restores the mask");
 }
 
 #[test]

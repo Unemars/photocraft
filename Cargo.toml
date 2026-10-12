@@ -81,8 +81,8 @@ codegen-units = 1
 
 # The browser build (apps/photocraft-web, `data-cargo-profile` in its index.html). Hosts cap the
 # size of a single file (Cloudflare Pages/Workers: 25 MiB), and the wasm is downloaded on every
-# visit, so this profile optimizes for size: fat LTO, opt-level "z" for the UI shell, and "s" for
-# other crates except pixel processing, which keeps opt-level 3 for filters and compositing. panic
+# visit, so this profile optimizes for size: fat LTO, opt-level "z" for the UI, command, and I/O
+# shells, and "s" for other crates except pixel processing, which keeps opt-level 3. panic
 # stays the target default (wasm32-unknown-unknown aborts; AGENTS.md's `panic = "unwind"` is for
 # the native app shell). packaging/web/package.sh fails the build above 24 MiB.
 [profile.wasm-release]
@@ -98,6 +98,15 @@ opt-level = "s"
 # Keep the browser shell compact as shared panel controls grow. Pixel-processing crates below
 # retain their speed-oriented optimization level.
 [profile.wasm-release.package.photocraft-ui-egui]
+opt-level = "z"
+
+# Keep browser command dispatch, import/export glue, and the entry point compact. Native
+# builds and the speed-oriented pixel-processing overrides below retain their settings.
+[profile.wasm-release.package.photocraft-engine]
+opt-level = "z"
+[profile.wasm-release.package.photocraft-io]
+opt-level = "z"
+[profile.wasm-release.package.photocraft-web]
 opt-level = "z"
 
 [profile.wasm-release.package.photocraft-raster]

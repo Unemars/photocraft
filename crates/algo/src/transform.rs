@@ -21,6 +21,22 @@ pub struct Homography(pub [f64; 9]);
 impl Homography {
     pub const IDENTITY: Homography = Homography([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
 
+    pub fn is_identity(&self) -> bool {
+        let m = &self.0;
+        if m[8].abs() < 1e-12 {
+            return false;
+        }
+        let w = m[8];
+        ((m[0] / w) - 1.0).abs() < 1e-9
+            && ((m[4] / w) - 1.0).abs() < 1e-9
+            && (m[1] / w).abs() < 1e-9
+            && (m[2] / w).abs() < 1e-9
+            && (m[3] / w).abs() < 1e-9
+            && (m[5] / w).abs() < 1e-9
+            && (m[6] / w).abs() < 1e-9
+            && (m[7] / w).abs() < 1e-9
+    }
+
     pub fn apply(&self, x: f64, y: f64) -> (f64, f64) {
         let m = &self.0;
         let w = m[6] * x + m[7] * y + m[8];
@@ -170,7 +186,7 @@ pub fn quad_size(q: &[[f64; 2]; 4]) -> (f64, f64) {
 /// Mapping and Image Warping", 1989, §2.2.3) scaled to the rectangle. `None` when `q` isn't a
 /// [`convex_quad`] or the size isn't positive.
 pub fn quad_to_rect(q: &[[f64; 2]; 4], w: f64, h: f64) -> Option<Homography> {
-    if !convex_quad(q) || !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
+    if !(convex_quad(q) && w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
         return None;
     }
     Homography::rect_to_quad([0.0, 0.0, w, h], *q)?.inverse()
@@ -514,5 +530,13 @@ mod tests {
         assert!(o.format().alpha);
         assert_eq!(o.pixel(2, 2)[3], 0.0);
         assert_eq!(o.pixel(7, 2), vec![1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn homography_is_identity() {
+        assert!(Homography::IDENTITY.is_identity());
+        assert!(Homography([2.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 2.0]).is_identity());
+        assert!(!Homography([1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]).is_identity());
+        assert!(!Homography([1.0, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]).is_identity());
     }
 }
