@@ -833,6 +833,44 @@ mod tests {
         assert_eq!(layer_bounds(&s, b), Rect::new(170, 160, 210, 200));
     }
 
+    /// Edit › Transform › Warp on several selected layers: one mesh over the shared box bends them
+    /// all in one step; editable type among them is refused, as the pixel warp would drop it.
+    #[test]
+    fn several_selected_layers_warp_as_one() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 200, "height": 200})).unwrap();
+        let square = |s: &mut Session, r: Rect| {
+            s.execute("layer.new.layer", json!({})).unwrap();
+            s.edit("paint", |doc, active| {
+                doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap().fill_rect(r, &[1.0, 0.0, 0.0, 1.0]);
+                Ok(())
+            })
+            .unwrap();
+            s.active().unwrap().active_layer.unwrap()
+        };
+        let a = square(&mut s, Rect::new(20, 20, 40, 40));
+        let b = square(&mut s, Rect::new(120, 120, 140, 140));
+        s.execute("layer.select", json!({"layer": a.0, "mode": "add"})).unwrap();
+        let steps = s.active().unwrap().history.past_len();
+        let r = s.execute("edit.transform.warp", json!({"style": "arc", "bend": 50, "interpolation": "nearest"})).unwrap();
+        assert_eq!(r["rect"], json!([20, 20, 140, 140]), "the mesh spans both");
+        assert_eq!(r["layers"], json!([a.0, b.0]));
+        assert_ne!(layer_bounds(&s, a), Rect::new(20, 20, 40, 40), "bent: {:?}", layer_bounds(&s, a));
+        assert_ne!(layer_bounds(&s, b), Rect::new(120, 120, 140, 140), "bent: {:?}", layer_bounds(&s, b));
+        assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "one history step");
+        // An identity warp changes nothing; editable type among several refuses.
+        let r = s.execute("edit.transform.warp", json!({"style": "none"})).unwrap();
+        assert_eq!(r["changed"], json!(false));
+        s.execute("type.create", json!({"text": "Hi", "x": 50, "y": 100})).ok();
+        if let Some(t) = s.active().unwrap().active_layer.filter(|t| *t != b) {
+            s.execute("layer.select", json!({"layer": a.0, "mode": "add"})).unwrap();
+            let is_text = s.active().unwrap().doc.layer(t).is_some_and(|l| matches!(l.content, LayerContent::Text(_)));
+            if is_text {
+                assert!(s.execute("edit.transform.warp", json!({"style": "arc", "bend": 30})).is_err(), "type among several refuses");
+            }
+        }
+    }
+
     /// A layer inside a selected group goes with the group, not twice.
     #[test]
     fn a_layer_inside_a_selected_group_moves_once() {

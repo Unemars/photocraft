@@ -107,9 +107,6 @@ struct Follow {
 /// starts on a layer locked in place, by its own lock or a group's.
 pub const LOCKED: &str = "Could not complete the Free Transform command because the layer is locked.";
 
-/// Warp works on one layer: several selected layers keep the plain box.
-pub const WARP_ONE_LAYER: &str = "Warp transforms one layer at a time: select a single layer to warp it.";
-
 /// Why Edit › Transform's modes and Warp refuse while Content-Aware Scale's box is open.
 pub const CAS_ONLY_SCALES: &str = "Content-Aware Scale only scales: commit or cancel it first";
 
@@ -800,10 +797,6 @@ pub fn enter_warp(app: &mut PhotocraftApp, ctx: &egui::Context) {
     if t.warp.is_some() || t.target.is_some() {
         return;
     }
-    if t.layers.len() > 1 {
-        app.ui.status = tl!(WARP_ONE_LAYER).into();
-        return;
-    }
     if t.quad == corners(t.rect)
         && !t.selection
         && t.path.is_none()
@@ -1182,7 +1175,11 @@ pub fn commit(app: &mut PhotocraftApp) {
         if w.is_identity() && !type_layer {
             return;
         }
-        app.run("edit.transform.warp", json!({"layer": t.layer, "rect": t.rect, "warp": w, "interpolation": t.interpolation}))
+        let mut p = json!({"layer": t.layer, "rect": t.rect, "warp": w, "interpolation": t.interpolation});
+        if t.layers.len() > 1 {
+            p["layers"] = json!(t.layers);
+        }
+        app.run("edit.transform.warp", p)
     } else {
         if t.quad == corners(t.rect) {
             return; // untouched: nothing to do and no history step; a ⌥⌘T copy or a place stays
@@ -4814,10 +4811,11 @@ mod tests {
         let pv = app.transform_preview.as_ref().unwrap();
         assert!(pv.doc.layer(first).is_some_and(|l| !l.visible) && pv.doc.layer(second).is_some_and(|l| !l.visible), "both are lifted from under the box");
         assert_eq!(pv.opacity, 1.0);
-        // Warp works on one layer: the box stays plain.
+        // Warp takes the several layers too: the mesh follows the shared box.
         enter_warp(&mut app, &ctx);
+        assert!(app.ui.transform.as_ref().unwrap().warp.as_ref().is_some_and(|w| w.bounds == [10.0, 10.0, 80.0, 80.0]), "one mesh over both");
+        leave_warp(&mut app);
         assert!(app.ui.transform.as_ref().unwrap().warp.is_none());
-        assert_eq!(app.ui.status, WARP_ONE_LAYER);
         if let Some(t) = app.ui.transform.as_mut() {
             t.quad = t.quad.map(|p| [p[0] + 5.0, p[1] + 7.0]);
         }
@@ -4828,6 +4826,39 @@ mod tests {
         assert_eq!(bounds(&app, second), photocraft_geom::Rect::new(65, 67, 85, 87));
         assert_eq!(app.session.active().unwrap().history.past_len(), steps + 1, "one history step");
         assert_eq!(app.session.active().unwrap().selected_layers(), vec![first, second], "the selection stays");
+    }
+
+    /// Edit › Transform › Warp on several selected layers bends them all with one mesh over the
+    /// shared box, in one history step.
+    #[test]
+    fn several_selected_layers_warp_as_one() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_square(100, photocraft_geom::Rect::new(10, 10, 30, 30));
+        let first = app.session.active().unwrap().active_layer.unwrap();
+        app.session.execute("layer.new.layer", json!({})).unwrap();
+        let second = app.session.active().unwrap().active_layer.unwrap();
+        app.session
+            .edit("paint", |doc, a| {
+                doc.layer_mut(a.unwrap()).unwrap().surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(60, 60, 80, 80), &[0.0, 0.0, 1.0, 1.0]);
+                Ok(())
+            })
+            .unwrap();
+        app.session.execute("layer.select", json!({"layer": first.0, "mode": "add"})).unwrap();
+        let bounds = |app: &PhotocraftApp, id: LayerId| app.session.active().unwrap().doc.layer(id).unwrap().surface().unwrap().content_bounds();
+        begin_warp(&mut app, &ctx).unwrap();
+        let t = app.ui.transform.as_ref().expect("one session");
+        assert_eq!(t.moving(), vec![first, second]);
+        assert!(t.warp.is_some());
+        if let Some(t) = app.ui.transform.as_mut() {
+            t.warp = Some(photocraft_geom::warp::Warp::preset(photocraft_geom::warp::WarpStyle::Arc, 50.0, t.rect));
+        }
+        let steps = app.session.active().unwrap().history.past_len();
+        commit(&mut app);
+        assert!(app.ui.transform.is_none(), "{}", app.ui.status);
+        let (a, b) = (bounds(&app, first), bounds(&app, second));
+        assert_ne!(a, photocraft_geom::Rect::new(10, 10, 30, 30), "the first square bent: {a:?}");
+        assert_ne!(b, photocraft_geom::Rect::new(60, 60, 80, 80), "the second square bent: {b:?}");
+        assert_eq!(app.session.active().unwrap().history.past_len(), steps + 1, "one history step");
     }
 
     /// #2439: a layer under others keeps its place in the stack while the box is open. The
