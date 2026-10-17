@@ -94,17 +94,21 @@ pub struct TransformPreview {
 }
 
 /// What [`follow_edits`] needs to rebuild the preview document.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Follow {
     /// The document revision `doc` was built from.
     revision: u64,
-    /// The moving layer is hidden in `doc` (nothing was lifted out of it).
-    hidden: bool,
+    /// The moving layers whose selected pixels were lifted out into the moving texels; the other
+    /// moving layers are hidden in `doc`.
+    lifted: Vec<LayerId>,
 }
 
 /// Photoshop's alert when Free Transform (⌘T, Edit › Transform, the Move tool's transform controls)
 /// starts on a layer locked in place, by its own lock or a group's.
 pub const LOCKED: &str = "Could not complete the Free Transform command because the layer is locked.";
+
+/// Warp works on one layer: several selected layers keep the plain box.
+pub const WARP_ONE_LAYER: &str = "Warp transforms one layer at a time: select a single layer to warp it.";
 
 /// Why Edit › Transform's modes and Warp refuse while Content-Aware Scale's box is open.
 pub const CAS_ONLY_SCALES: &str = "Content-Aware Scale only scales: commit or cancel it first";
@@ -204,6 +208,12 @@ pub fn begin(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String>
         return begin_lone(app, ctx, doc, surf, target);
     }
     let id = st.active_layer.ok_or("no active layer")?;
+    // Several selected layers transform as one, as in Photoshop (a layer inside a selected group
+    // goes with the group).
+    let moving = photocraft_engine::transform_cmds::transform_layers(st, &json!({}), None).map_err(|e| e.to_string())?;
+    if moving.len() > 1 {
+        return begin_several(app, ctx, doc, revision, id, moving);
+    }
     let layer = doc.layer(id).ok_or("no layer")?;
     if photocraft_engine::transform_cmds::locked_for_transform(&doc, id) {
         // Photoshop refuses before the box opens rather than when it is committed (#2585).
@@ -237,7 +247,7 @@ pub fn begin(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String>
     // egui reports the renderer's limit in the app; offscreen harnesses only through the device.
     let max_side = ctx.input(|i| i.max_texture_side).max(app.gpu.as_ref().map_or(1, |g| g.max_texture_side()));
     // The layers covering the moving pixels draw over them instead of under them.
-    let above = Above::new(ctx, format!("transform-{session}-above"), &doc, id, max_side);
+    let above = Above::new(ctx, format!("transform-{session}-above"), &doc, &[id], max_side);
     above.hide_in(&mut pd.layers);
     // A style is drawn again from the pixels as the box moves them, so they are read without it.
     // Not for the selected part of a layer: its style belongs to that part and the rest together.
@@ -251,7 +261,7 @@ pub fn begin(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String>
         opacity: layer.opacity * layer.fill_opacity,
         above: Some(above),
         styled: styled.then(|| crate::transform_fx::StyledPreview::new(format!("transform-{session}-styled"))),
-        follow: Some(Follow { revision, hidden: lifted.is_none() }),
+        follow: Some(Follow { revision, lifted: lifted.is_some().then_some(id).into_iter().collect() }),
         committing: None,
         gesture: None,
         warp_drag: None,
@@ -278,10 +288,121 @@ pub fn begin(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String>
         made: None,
         mode: Default::default(),
         content_aware: None,
+        layers: Vec::new(),
         skew_v: 0.0,
     });
     start_steps(app);
     Ok(())
+}
+
+/// Free Transform on several selected layers (`moving`, the active one `active` among them):
+/// one box around all of them, and the same transform for each, as in Photoshop. The preview
+/// shows the moving layers flattened together over the box; a layer locked in place refuses
+/// the whole command, as it does for one layer.
+fn begin_several(app: &mut PhotocraftApp, ctx: &egui::Context, doc: Arc<Document>, revision: u64, active: LayerId, moving: Vec<LayerId>) -> Result<(), String> {
+    use photocraft_engine::transform_cmds as tc;
+    if moving.iter().any(|id| tc::locked_for_transform(&doc, *id)) {
+        app.ui.open_dialog(crate::state::DialogKind::Error, json!({"message": tl!(LOCKED)}).as_object().cloned().unwrap_or_default());
+        return Err(LOCKED.into());
+    }
+    // An adjustment layer without a mask has nothing to move; the rest share the box.
+    let moving: Vec<LayerId> =
+        moving.into_iter().filter(|id| doc.layer(*id).is_some_and(|l| !(matches!(l.content, LayerContent::Adjustment(_)) && l.mask.is_none()))).collect();
+    let b = moving
+        .iter()
+        .filter_map(|id| doc.layer(*id))
+        .map(|l| tc::transform_frame(&doc, l))
+        .filter(|b| !b.is_empty())
+        .fold(photocraft_geom::Rect::EMPTY, |a, b| a.union(&b));
+    if b.is_empty() {
+        return Err("Could not transform: the layers are empty".into());
+    }
+    crate::type_tool::commit(app);
+    let rect = [b.x0 as f64, b.y0 as f64, b.x1 as f64, b.y1 as f64];
+    let session = app.ui.alloc_id();
+    // Under the box: the moving pixels removed from every layer (hidden, or the selection lifted
+    // out of a pixel layer). The moving texels: the moving layers alone, flattened over the box,
+    // each with its own opacity and style, so the box shows them as they are stacked.
+    let mut pd = (*doc).clone();
+    let mut solo = (*doc).clone();
+    let mut lifted = Vec::new();
+    for id in &moving {
+        let Some(layer) = doc.layer(*id) else { continue };
+        if let Some(sel) = doc.selection.as_ref().filter(|_| !tc::moves_whole(layer) && layer.surface().is_some()) {
+            let Some(surf) = pd.layer_mut(*id).and_then(|l| l.surface_mut()) else { continue };
+            let (part, rest) = tc::split_selected(surf, sel).map_err(|e| e.to_string())?;
+            *surf = rest;
+            if let Some(s) = solo.layer_mut(*id).and_then(|l| l.surface_mut()) {
+                *s = part;
+            }
+            lifted.push(*id);
+        } else if let Some(l) = pd.layer_mut(*id) {
+            l.visible = false;
+        }
+    }
+    show_only(&mut solo.layers, &moving);
+    unclip(&mut solo.layers, &moving);
+    let max_side = ctx.input(|i| i.max_texture_side).max(app.gpu.as_ref().map_or(1, |g| g.max_texture_side()));
+    let above = Above::new(ctx, format!("transform-{session}-above"), &doc, &moving, max_side);
+    above.hide_in(&mut pd.layers);
+    let buf = photocraft_compose::render(&solo, b);
+    let mut rendered = photocraft_raster::Surface::new(photocraft_color::PixelFormat::RGBA8);
+    let flat: Vec<f32> = buf.px.iter().flat_map(|p| *p).collect();
+    rendered.write_region(b, &flat);
+    let (image, uv) = crate::transform_tex::read_surface(&rendered, None, b, max_side);
+    let texture = crate::transform_tex::PreviewTextures::new(ctx, format!("transform-{session}"), image, uv);
+    app.transform_preview = Some(TransformPreview {
+        session,
+        doc: Arc::new(pd),
+        texture,
+        opacity: 1.0,
+        above: Some(above),
+        styled: None,
+        follow: Some(Follow { revision, lifted }),
+        committing: None,
+        gesture: None,
+        warp_drag: None,
+        split_tool: None,
+        split_pointer: None,
+        split_placing: false,
+        split_quick: false,
+        steps: Steps::default(),
+        tool: app.ui.tool,
+        path: None,
+        content_aware: None,
+    });
+    app.ui.transform = Some(TransformSession {
+        session,
+        layer: active.0,
+        layers: moving.iter().map(|l| l.0).collect(),
+        rect,
+        quad: corners(rect),
+        pivot: [(rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0],
+        interpolation: "bicubic".into(),
+        warp: None,
+        selection: false,
+        target: None,
+        path: None,
+        made: None,
+        mode: Default::default(),
+        content_aware: None,
+        skew_v: 0.0,
+    });
+    start_steps(app);
+    Ok(())
+}
+
+/// Unclip the `keep` layers and the groups holding them: their clipping base may be hidden
+/// in a solo render, which would clip them away entirely (#5239).
+fn unclip(layers: &mut [photocraft_doc::Layer], keep: &[LayerId]) {
+    for l in layers.iter_mut() {
+        if keep.iter().any(|k| contains(l, *k)) {
+            l.clipped = false;
+            if let LayerContent::Group(g) = &mut l.content {
+                unclip(&mut g.children, keep);
+            }
+        }
+    }
 }
 
 /// Free Transform on a copy (⌥⌘T, no menu item): duplicates the active layer (with a selection,
@@ -341,7 +462,7 @@ pub(crate) fn begin_content_aware(
         s.prune();
     }
     let max_side = ctx.input(|i| i.max_texture_side).max(app.gpu.as_ref().map_or(1, |g| g.max_texture_side()));
-    let above = Above::new(ctx, format!("transform-{session}-above"), &doc, id, max_side);
+    let above = Above::new(ctx, format!("transform-{session}-above"), &doc, &[id], max_side);
     above.hide_in(&mut pd.layers);
     let (image, uv) = crate::transform_tex::read_surface(surf, None, region, max_side);
     let texture = crate::transform_tex::PreviewTextures::new(ctx, format!("transform-{session}"), image, uv);
@@ -351,7 +472,7 @@ pub(crate) fn begin_content_aware(
         texture,
         opacity: layer.opacity * layer.fill_opacity,
         above: Some(above),
-        follow: Some(Follow { revision, hidden: false }),
+        follow: Some(Follow { revision, lifted: vec![id] }),
         committing: None,
         gesture: None,
         warp_drag: None,
@@ -379,6 +500,7 @@ pub(crate) fn begin_content_aware(
         made: None,
         mode: Default::default(),
         content_aware: Some(Default::default()),
+        layers: Vec::new(),
         skew_v: 0.0,
     });
     start_steps(app);
@@ -500,6 +622,7 @@ fn begin_lone(
         made: None,
         mode: Default::default(),
         content_aware: None,
+        layers: Vec::new(),
         skew_v: 0.0,
     });
     start_steps(app);
@@ -553,6 +676,7 @@ fn begin_path(app: &mut PhotocraftApp, ctx: &egui::Context, params: serde_json::
         made: None,
         mode: Default::default(),
         content_aware: None,
+        layers: Vec::new(),
         skew_v: 0.0,
     });
     start_steps(app);
@@ -638,6 +762,7 @@ pub fn begin_selection(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(
         made: None,
         mode: Default::default(),
         content_aware: None,
+        layers: Vec::new(),
         skew_v: 0.0,
     });
     start_steps(app);
@@ -675,6 +800,10 @@ pub fn enter_warp(app: &mut PhotocraftApp, ctx: &egui::Context) {
     if t.warp.is_some() || t.target.is_some() {
         return;
     }
+    if t.layers.len() > 1 {
+        app.ui.status = tl!(WARP_ONE_LAYER).into();
+        return;
+    }
     if t.quad == corners(t.rect)
         && !t.selection
         && t.path.is_none()
@@ -697,7 +826,7 @@ pub fn enter_warp(app: &mut PhotocraftApp, ctx: &egui::Context) {
 /// the selection). Its Warp is Warp Text: only the styles, and the type stays editable (#3004).
 pub fn warps_type(app: &PhotocraftApp) -> bool {
     let Some(t) = &app.ui.transform else { return false };
-    if t.selection || t.target.is_some() || t.path.is_some() {
+    if t.selection || t.target.is_some() || t.path.is_some() || t.layers.len() > 1 {
         return false;
     }
     app.session.active().and_then(|st| st.doc.layer(LayerId(t.layer))).is_some_and(|l| matches!(l.content, LayerContent::Text(_)))
@@ -852,16 +981,16 @@ struct Above {
 }
 
 impl Above {
-    fn new(ctx: &egui::Context, name: String, doc: &Document, id: LayerId, max_side: usize) -> Self {
+    fn new(ctx: &egui::Context, name: String, doc: &Document, ids: &[LayerId], max_side: usize) -> Self {
         let mut a = Self { ctx: ctx.clone(), name, max_side, ids: Vec::new(), shown: None };
-        a.rebuild(doc, id);
+        a.rebuild(doc, ids);
         a
     }
 
-    /// Composite what covers layer `id` of `doc` (the live document) again.
-    fn rebuild(&mut self, doc: &Document, id: LayerId) {
+    /// Composite what covers the moving layers `ids` of `doc` (the live document) again.
+    fn rebuild(&mut self, doc: &Document, ids: &[LayerId]) {
         self.ids.clear();
-        covering(&doc.layers, id, &mut self.ids);
+        covering(&doc.layers, ids, &mut self.ids);
         let mut up = doc.clone();
         show_only(&mut up.layers, &self.ids);
         let canvas = up.bounds();
@@ -942,12 +1071,13 @@ fn plain(l: &photocraft_doc::Layer) -> bool {
         }
 }
 
-/// The layers over `id` in `layers` (bottom to top, groups holding `id` searched too) that cover
-/// it in the preview: from the top down, while they are [`plain`]. The first layer that isn't
-/// stops the search, so it and everything under it stay in the document under the box as before
-/// (an adjustment there keeps applying to the layers under it). A clipping group goes as a whole,
-/// and the layers clipped to `id` (or to the group holding it) stay with it.
-fn covering(layers: &[photocraft_doc::Layer], id: LayerId, out: &mut Vec<LayerId>) {
+/// The layers over the moving `ids` in `layers` (bottom to top, groups holding them searched too)
+/// that cover them in the preview: from the top down, while they are [`plain`]. The first layer
+/// that isn't stops the search, so it and everything under it stay in the document under the box
+/// as before (an adjustment there keeps applying to the layers under it). A clipping group goes
+/// as a whole, and the layers clipped to a moving layer (or to the group holding it) stay with it.
+/// The search stops at the topmost moving layer: the others are under it.
+fn covering(layers: &[photocraft_doc::Layer], ids: &[LayerId], out: &mut Vec<LayerId>) {
     let mut end = layers.len();
     while end > 0 {
         // The clipping group ending at `end`: its base and the layers clipped to it.
@@ -956,14 +1086,16 @@ fn covering(layers: &[photocraft_doc::Layer], id: LayerId, out: &mut Vec<LayerId
             start -= 1;
         }
         let unit = layers.get(start..end).unwrap_or_default();
-        if unit.iter().any(|l| contains(l, id)) {
-            // A group holding `id` with nothing clipped to it: go on inside it.
+        if unit.iter().any(|l| ids.iter().any(|id| contains(l, *id))) {
+            // A group holding moving layers, and nothing else moving, with nothing clipped to
+            // it: go on inside it.
             if let [g] = unit
-                && g.id != id
+                && !ids.contains(&g.id)
                 && let LayerContent::Group(group) = &g.content
                 && matches!(g.blend, photocraft_color::BlendMode::Normal | photocraft_color::BlendMode::PassThrough)
+                && ids.iter().all(|id| contains(g, *id))
             {
-                covering(&group.children, id, out);
+                covering(&group.children, ids, out);
             }
             return;
         }
@@ -1056,6 +1188,9 @@ pub fn commit(app: &mut PhotocraftApp) {
             return; // untouched: nothing to do and no history step; a ⌥⌘T copy or a place stays
         }
         let mut p = json!({"layer": t.layer, "rect": t.rect, "quad": t.quad, "interpolation": t.interpolation});
+        if t.layers.len() > 1 {
+            p["layers"] = json!(t.layers);
+        }
         if let Some(target) = &t.target {
             p["target"] = target.clone();
         }
@@ -1144,7 +1279,7 @@ pub fn end_if_left(app: &mut PhotocraftApp) {
     if editing_placed_smart_object {
         app.ui.transform = None;
         app.transform_preview = None;
-    } else if switched_document || st.doc.layer(layer).is_none() {
+    } else if switched_document || st.doc.layer(layer).is_none() || t.moving().iter().any(|id| st.doc.layer(*id).is_none()) {
         cancel(app);
     } else if app.transform_preview.as_ref().is_some_and(|pv| pv.tool != app.ui.tool)
         || (!selection && st.active_layer.is_some_and(|active| active.0 != layer.0))
@@ -1167,17 +1302,28 @@ pub fn follow_edits(app: &mut PhotocraftApp) {
     let Some(follow) = pv.follow.as_mut() else { return };
     let Some(st) = app.session.active().filter(|st| st.doc.id == pv.doc.id && st.revision != follow.revision) else { return };
     let id = LayerId(t.layer);
-    let (Some(live), Some(moving)) = (st.doc.layer(id), pv.doc.layer(id)) else { return };
+    let ids = t.moving();
+    let (Some(live), Some(_)) = (st.doc.layer(id), pv.doc.layer(id)) else { return };
     let mut pd = (*st.doc).clone();
-    if let Some(l) = pd.layer_mut(id) {
-        l.content = moving.content.clone();
-        l.visible = l.visible && !follow.hidden;
+    for id in &ids {
+        let Some(moving) = pv.doc.layer(*id) else { continue };
+        if let Some(l) = pd.layer_mut(*id) {
+            l.content = moving.content.clone();
+            l.visible = l.visible && follow.lifted.contains(id);
+        }
     }
     if let Some(a) = pv.above.as_mut() {
-        a.rebuild(&st.doc, id);
+        a.rebuild(&st.doc, &ids);
         a.hide_in(&mut pd.layers);
     }
-    pv.opacity = if live.visible { live.opacity * live.fill_opacity } else { 0.0 };
+    // Several layers flatten with their own opacities into the moving texels.
+    pv.opacity = if ids.len() > 1 {
+        1.0
+    } else if live.visible {
+        live.opacity * live.fill_opacity
+    } else {
+        0.0
+    };
     follow.revision = st.revision;
     pv.doc = Arc::new(pd);
 }
@@ -1258,6 +1404,7 @@ fn moves_type(app: &PhotocraftApp, t: &TransformSession) -> bool {
     !t.selection
         && t.target.is_none()
         && t.path.is_none()
+        && t.layers.len() <= 1
         && app.session.active().and_then(|st| st.doc.layer(LayerId(t.layer))).is_some_and(|l| matches!(l.content, LayerContent::Text(_)))
 }
 
@@ -1501,10 +1648,11 @@ pub(crate) fn corner_distorts(app: &PhotocraftApp, index: usize, mods: egui::Mod
 /// Distort and Perspective in `enable_rules::disabled`, for the box's own layer. A box on a path,
 /// on the selection outline or on a lone mask or channel moves no type.
 fn distort_refused(app: &PhotocraftApp, t: &TransformSession) -> bool {
+    // Several layers: editable type among them refuses as it does alone.
     t.path.is_none()
         && !t.selection
         && t.target.is_none()
-        && app.session.active().and_then(|st| st.doc.layer(LayerId(t.layer))).is_some_and(|l| matches!(l.content, LayerContent::Text(_)))
+        && app.session.active().is_some_and(|st| t.moving().iter().any(|id| st.doc.layer(*id).is_some_and(|l| matches!(l.content, LayerContent::Text(_)))))
 }
 
 /// Where Distort and Perspective are refused ([`distort_refused`]), ⌘-drag and ⌘⌥⇧-drag of a
@@ -3128,6 +3276,7 @@ mod tests {
             made: None,
             mode: Default::default(),
             content_aware: None,
+            layers: Vec::new(),
             skew_v: 0.0,
         }
     }
@@ -4639,6 +4788,48 @@ mod tests {
         app
     }
 
+    /// Several selected layers transform as one, as in Photoshop: one box around all of them,
+    /// and OK moves them all in one history step; the Background's position lock never counts.
+    #[test]
+    fn several_selected_layers_transform_as_one() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_square(100, photocraft_geom::Rect::new(10, 10, 30, 30));
+        let first = app.session.active().unwrap().active_layer.unwrap();
+        app.session.execute("layer.new.layer", json!({})).unwrap();
+        let second = app.session.active().unwrap().active_layer.unwrap();
+        app.session
+            .edit("paint", |doc, a| {
+                doc.layer_mut(a.unwrap()).unwrap().surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(60, 60, 80, 80), &[0.0, 0.0, 1.0, 1.0]);
+                Ok(())
+            })
+            .unwrap();
+        app.session.execute("layer.select", json!({"layer": first.0, "mode": "add"})).unwrap();
+        let bounds = |app: &PhotocraftApp, id: LayerId| app.session.active().unwrap().doc.layer(id).unwrap().surface().unwrap().content_bounds();
+        begin(&mut app, &ctx).unwrap();
+        let t = app.ui.transform.as_ref().expect("one session");
+        assert_eq!(t.rect, [10.0, 10.0, 80.0, 80.0], "one box around both layers");
+        assert_eq!(t.moving(), vec![first, second]);
+        let active = app.session.active().unwrap().active_layer.unwrap();
+        assert_eq!((t.layer, active), (first.0, first), "the session's layer is the active one (⇧-click made it the clicked layer)");
+        let pv = app.transform_preview.as_ref().unwrap();
+        assert!(pv.doc.layer(first).is_some_and(|l| !l.visible) && pv.doc.layer(second).is_some_and(|l| !l.visible), "both are lifted from under the box");
+        assert_eq!(pv.opacity, 1.0);
+        // Warp works on one layer: the box stays plain.
+        enter_warp(&mut app, &ctx);
+        assert!(app.ui.transform.as_ref().unwrap().warp.is_none());
+        assert_eq!(app.ui.status, WARP_ONE_LAYER);
+        if let Some(t) = app.ui.transform.as_mut() {
+            t.quad = t.quad.map(|p| [p[0] + 5.0, p[1] + 7.0]);
+        }
+        let steps = app.session.active().unwrap().history.past_len();
+        commit(&mut app);
+        assert!(app.ui.transform.is_none() && app.transform_preview.is_none(), "{}", app.ui.status);
+        assert_eq!(bounds(&app, first), photocraft_geom::Rect::new(15, 17, 35, 37));
+        assert_eq!(bounds(&app, second), photocraft_geom::Rect::new(65, 67, 85, 87));
+        assert_eq!(app.session.active().unwrap().history.past_len(), steps + 1, "one history step");
+        assert_eq!(app.session.active().unwrap().selected_layers(), vec![first, second], "the selection stays");
+    }
+
     /// #2439: a layer under others keeps its place in the stack while the box is open. The
     /// canvas under the box shows only the layers below it; the ones over it are composited on
     /// their own and drawn over the moving pixels.
@@ -4682,7 +4873,7 @@ mod tests {
         let px = |name: &str| Layer::raster(name, photocraft_color::PixelFormat::RGBA8);
         let covers = |layers: &[Layer], id: LayerId| {
             let mut out = Vec::new();
-            covering(layers, id, &mut out);
+            covering(layers, &[id], &mut out);
             out
         };
         // In a group: the group's layers over it, then the ones over the group; never the layers

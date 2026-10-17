@@ -257,6 +257,36 @@ pub fn locked_for_transform(doc: &Document, id: LayerId) -> bool {
     false
 }
 
+/// The layers `edit.transform` moves together: the call's `layers`, else its `layer` (`explicit`),
+/// else the document's selected layers, so several selected layers transform as one, as in
+/// Photoshop. A layer inside a selected group is left out: the group moves it.
+pub fn transform_layers(st: &crate::DocState, p: &Value, explicit: Option<LayerId>) -> Result<Vec<LayerId>> {
+    let ids: Vec<LayerId> = match p.get("layers").and_then(Value::as_array) {
+        Some(a) => a.iter().map(|v| v.as_u64().map(LayerId).ok_or_else(|| bad("`layers` must be layer ids"))).collect::<Result<_>>()?,
+        None => match explicit {
+            Some(id) => vec![id],
+            None => st.selected_layers(),
+        },
+    };
+    let doc = &st.doc;
+    for id in &ids {
+        if doc.layer(*id).is_none() {
+            return Err(EngineError::NoLayer(*id));
+        }
+    }
+    let inside_another = |id: LayerId| {
+        let Some(path) = doc.path_of(id) else { return false };
+        (1..path.len()).any(|k| doc.layer_at(&path[..k]).is_some_and(|g| ids.contains(&g.id)))
+    };
+    let mut out: Vec<LayerId> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        if !out.contains(id) && !inside_another(*id) {
+            out.push(*id);
+        }
+    }
+    Ok(out)
+}
+
 /// The largest result (px) a single Free Transform warp may build: 2³⁰, the bound Puppet Warp uses
 /// too ([`photocraft_algo::puppet::MAX_WARP_PIXELS`]). Only the size of the result counts, not
 /// where it lands, so moving a layer far off the canvas stays allowed. A scale past it is refused
@@ -583,11 +613,19 @@ fn with_panel_target(s: &Session, p: &Value) -> Value {
 fn transform(s: &mut Session, p: &Value) -> Result<Value> {
     let p = &with_panel_target(s, p);
     let st = s.active().ok_or(EngineError::NoDocument)?;
-    let id = crate::commands::explicit_layer(s, p)?.or(st.active_layer);
+    let explicit = crate::commands::explicit_layer(s, p)?;
+    let id = explicit.or(st.active_layer);
     let lone = lone_target(&st.doc, id, p)?;
-    let id = match (id, lone.is_some() && crate::channel_cmds::is_channel_target(p)) {
-        (_, true) => None,
-        (Some(id), false) => Some(id),
+    // The layers that move: one, or several selected ones as one (`transform_layers`).
+    let (id, ids) = match (id, lone.is_some() && crate::channel_cmds::is_channel_target(p)) {
+        (_, true) => (None, Vec::new()),
+        (Some(id), false) => {
+            let ids = transform_layers(st, p, explicit)?;
+            if ids.is_empty() {
+                return Err(EngineError::Other("no active layer".into()));
+            }
+            (Some(id), ids)
+        }
         (None, false) => return Err(EngineError::Other("no active layer".into())),
     };
     let rect = match p.get("rect").and_then(Value::as_array) {
@@ -598,7 +636,8 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         _ => {
             let b = match (lone, id) {
                 (Some(surf), _) => target_bounds(&st.doc, surf),
-                (None, Some(id)) => transform_bounds(&st.doc, st.doc.layer(id).ok_or(EngineError::NoLayer(id))?),
+                // Several layers: one frame around all of them.
+                (None, Some(_)) => ids.iter().filter_map(|id| st.doc.layer(*id)).map(|l| transform_bounds(&st.doc, l)).fold(Rect::EMPTY, |a, b| a.union(&b)),
                 (None, None) => Rect::EMPTY,
             };
             if b.is_empty() {
@@ -630,21 +669,24 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
     let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bicubic"));
     let lone = lone.is_some();
     let p = p.clone();
+    let moved: Vec<u64> = ids.iter().map(|l| l.0).collect();
     // A background job when started with `Session::start` (#1015): the warp of a large layer runs
     // on a worker with progress, and can be cancelled.
     crate::jobs::edit_job(
         s,
         "Free Transform",
-        move |doc, _, ctx| ctx.stage(0.0, 1.0, "Transforming", |ctl| transform_doc(doc, id, &p, lone, &h, affine, interp, ctl)),
-        move |()| json!({"rect": rect}),
+        move |doc, _, ctx| ctx.stage(0.0, 1.0, "Transforming", |ctl| transform_doc(doc, id, &ids, &p, lone, &h, affine, interp, ctl)),
+        move |()| json!({"rect": rect, "layers": moved}),
     )
 }
 
-/// The edit of [`transform`]: the layer (or a lone mask or channel) and the selection outline.
+/// The edit of [`transform`]: the layers `ids` (or a lone mask or channel) and the selection
+/// outline. Several layers take the same map, as one.
 #[allow(clippy::too_many_arguments)]
 fn transform_doc(
     doc: &mut Document,
     id: Option<LayerId>,
+    ids: &[LayerId],
     p: &Value,
     lone: bool,
     h: &Homography,
@@ -673,18 +715,28 @@ fn transform_doc(
         }
         return Ok(());
     }
-    let id = id.ok_or_else(|| EngineError::Other("no active layer".into()))?;
-    let is_group = doc.layer(id).is_some_and(Layer::is_group);
-    let group = group_locks(doc, id);
-    // Photoshop turns the Background into a normal layer before transforming it.
-    crate::extra_cmds::background_to_layer(doc, id);
-    let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
-    transform_layer_with(if is_group { None } else { sel.as_ref() }, group, l, h, affine, interp, ctl)?;
+    id.ok_or_else(|| EngineError::Other("no active layer".into()))?;
+    let layer_sel = |doc: &Document, id: LayerId| if doc.layer(id).is_some_and(Layer::is_group) { None } else { sel.clone() };
+    // Every layer is priced before any is built, so a refusal changes nothing (#3773).
+    for &id in ids {
+        let l = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
+        check_layer_budget(layer_sel(doc, id).as_ref(), l, h)?;
+    }
+    for &id in ids {
+        let doc_sel = layer_sel(doc, id);
+        let group = group_locks(doc, id);
+        // Photoshop turns the Background into a normal layer before transforming it.
+        crate::extra_cmds::background_to_layer(doc, id);
+        let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+        transform_layer_with(doc_sel.as_ref(), group, l, h, affine, interp, ctl)?;
+    }
     if !h.is_identity() {
         // Type layers re-render from their new transform.
         let snapshot = doc.clone();
-        if let Some(l) = doc.layer_mut(id) {
-            refresh_text(&snapshot, l);
+        for &id in ids {
+            if let Some(l) = doc.layer_mut(id) {
+                refresh_text(&snapshot, l);
+            }
         }
         // The selection outline moves with the pixels.
         if let Some(sel) = &doc.selection {
@@ -700,7 +752,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Free Transform",
         menu: &[],
         shortcut: None,
-        params: r##"{"layer":id?,"rect":[x0,y0,x1,y1]? (source frame; default = layer content ∩ selection),"quad":[[x,y]×4]? (where the frame's corners go, clockwise from top-left),"matrix":[a,b,c,d,e,f]? (affine alternative),"scaleX":%?,"scaleY":%?,"rotate":deg?,"dx":px?,"dy":px? (relative alternative: scale and rotate about the frame's centre, then move, as a Photoshop action records a Free Transform),"interpolation":"bicubic|bilinear|nearest"="bicubic","target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target (an unlinked mask, an alpha channel or the Quick Mask transforms alone; a linked mask moves with its layer)}"##,
+        params: r##"{"layer":id?,"layers":[id,…]? (several layers move as one, as Photoshop transforms selected layers together; default = the selected layers),"rect":[x0,y0,x1,y1]? (source frame; default = layer content ∩ selection, the union over several layers),"quad":[[x,y]×4]? (where the frame's corners go, clockwise from top-left),"matrix":[a,b,c,d,e,f]? (affine alternative),"scaleX":%?,"scaleY":%?,"rotate":deg?,"dx":px?,"dy":px? (relative alternative: scale and rotate about the frame's centre, then move, as a Photoshop action records a Free Transform),"interpolation":"bicubic|bilinear|nearest"="bicubic","target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target (an unlinked mask, an alpha channel or the Quick Mask transforms alone; a linked mask moves with its layer)}"##,
         enabled: has_layer,
         journal: true,
         run: transform,
@@ -731,6 +783,76 @@ mod tests {
     fn active_bounds(s: &Session) -> Rect {
         let st = s.active().unwrap();
         st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap().content_bounds()
+    }
+
+    fn layer_bounds(s: &Session, id: LayerId) -> Rect {
+        s.active().unwrap().doc.layer(id).unwrap().surface().unwrap().content_bounds()
+    }
+
+    /// Several selected layers transform as one, as in Photoshop: one frame around all of them,
+    /// the same map for each, one history step. An explicit `layer` still moves that layer alone,
+    /// and a layer locked in place among them refuses the whole command.
+    #[test]
+    fn several_selected_layers_transform_as_one() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 200, "height": 200})).unwrap();
+        let square = |s: &mut Session, r: Rect| {
+            s.execute("layer.new.layer", json!({})).unwrap();
+            s.edit("paint", |doc, active| {
+                doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap().fill_rect(r, &[1.0, 0.0, 0.0, 1.0]);
+                Ok(())
+            })
+            .unwrap();
+            s.active().unwrap().active_layer.unwrap()
+        };
+        let a = square(&mut s, Rect::new(20, 20, 40, 40));
+        let b = square(&mut s, Rect::new(120, 120, 140, 140));
+        s.execute("layer.select", json!({"layer": a.0, "mode": "add"})).unwrap();
+        assert_eq!(s.active().unwrap().selected_layers(), vec![a, b]);
+        let steps = s.active().unwrap().history.past_len();
+        // 200 % about the centre of the frame around both squares, (80, 80).
+        let r = s.execute("edit.transform", json!({"scaleX": 200, "scaleY": 200, "interpolation": "nearest"})).unwrap();
+        assert_eq!(r["rect"], json!([20.0, 20.0, 140.0, 140.0]), "one frame around both");
+        assert_eq!(r["layers"], json!([a.0, b.0]));
+        assert_eq!(layer_bounds(&s, a), Rect::new(-40, -40, 0, 0), "scaled about the shared centre, not its own");
+        assert_eq!(layer_bounds(&s, b), Rect::new(160, 160, 200, 200));
+        assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "one history step");
+        assert_eq!(s.active().unwrap().selected_layers(), vec![a, b], "the selection stays");
+        // An explicit `layer` moves that layer alone.
+        s.execute("edit.transform", json!({"layer": b.0, "dx": 10, "interpolation": "nearest"})).unwrap();
+        assert_eq!((layer_bounds(&s, a), layer_bounds(&s, b)), (Rect::new(-40, -40, 0, 0), Rect::new(170, 160, 210, 200)));
+        // A layer locked in place among the selected ones refuses the whole command.
+        s.edit("lock", |doc, _| {
+            doc.layer_mut(a).unwrap().locks.position = true;
+            Ok(())
+        })
+        .unwrap();
+        let before = s.active().unwrap().revision;
+        assert!(s.execute("edit.transform", json!({"dx": 10})).is_err());
+        assert_eq!(s.active().unwrap().revision, before, "nothing moved");
+        assert_eq!(layer_bounds(&s, b), Rect::new(170, 160, 210, 200));
+    }
+
+    /// A layer inside a selected group goes with the group, not twice.
+    #[test]
+    fn a_layer_inside_a_selected_group_moves_once() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 200, "height": 200})).unwrap();
+        s.execute("layer.new.layer", json!({})).unwrap();
+        let inner = s.active().unwrap().active_layer.unwrap();
+        s.edit("paint", |doc, active| {
+            doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap().fill_rect(Rect::new(20, 20, 40, 40), &[1.0, 0.0, 0.0, 1.0]);
+            Ok(())
+        })
+        .unwrap();
+        let group = LayerId(s.execute("layer.new.group", json!({})).unwrap()["layer"].as_u64().unwrap());
+        s.execute("layer.moveTo", json!({"layer": inner.0, "target": group.0, "position": "into"})).unwrap();
+        s.execute("layer.select", json!({"layer": group.0})).unwrap();
+        s.execute("layer.select", json!({"layer": inner.0, "mode": "add"})).unwrap();
+        let st = s.active().unwrap();
+        assert_eq!(transform_layers(st, &json!({}), None).unwrap(), vec![group], "the group alone");
+        s.execute("edit.transform", json!({"dx": 10, "interpolation": "nearest"})).unwrap();
+        assert_eq!(layer_bounds(&s, inner), Rect::new(30, 20, 50, 40), "moved once");
     }
 
     // ---- Pixel budget (#3773). Tests run with a 2²⁰ px budget, so nothing here comes near the real one. ----

@@ -901,6 +901,11 @@ impl TransformMode {
 pub struct TransformSession {
     pub session: u64,
     pub layer: u64,
+    /// Every layer the box moves when several selected layers transform as one, as in Photoshop
+    /// (`layer` is the active one among them). Empty for a session on one layer, a lone mask or
+    /// channel, a path or the selection.
+    #[serde(default)]
+    pub layers: Vec<u64>,
     pub rect: [f64; 4],
     /// Corners clockwise from top-left (document px).
     pub quad: [[f64; 2]; 4],
@@ -936,6 +941,13 @@ pub struct TransformSession {
     /// skew and rotation with any vertical skew, so the bar keeps showing the typed one.
     #[serde(default)]
     pub skew_v: f64,
+}
+
+impl TransformSession {
+    /// The layers the box moves: `layers`, else just `layer`.
+    pub fn moving(&self) -> Vec<photocraft_doc::LayerId> {
+        if self.layers.is_empty() { vec![photocraft_doc::LayerId(self.layer)] } else { self.layers.iter().map(|l| photocraft_doc::LayerId(*l)).collect() }
+    }
 }
 
 /// Content-Aware Scale's options bar: Amount, Protect and Protect Skin Tones.
