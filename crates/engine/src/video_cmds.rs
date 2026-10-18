@@ -365,7 +365,9 @@ fn reload_frame(s: &mut Session, _p: &Value) -> Result<Value> {
     let photocraft_doc::VideoSource::File { path } = src else {
         return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "this layer has no file source to reload".into() });
     };
-    let frames = load_frames(&path, fmt)?.frames;
+    // The footage path is stored in the document.
+    let file = crate::doc_path::resolve(&path).map_err(|why| crate::doc_path::refusal("the footage", &path, why))?;
+    let frames = load_frames(&file.to_string_lossy(), fmt)?.frames;
     edit_video(s, "Reload Frame", move |v, _| {
         v.original_frames = Some(frames.clone());
         v.frames = frames;
@@ -424,7 +426,9 @@ pub fn render_video_with(
     if frames > crate::timeline_cmds::MAX_DURATION {
         return Err(EngineError::Other(format!("the timeline is {frames} frames; Render Video is limited to {} frames", crate::timeline_cmds::MAX_DURATION)));
     }
-    let fps = base.timeline.as_ref().map_or(30.0, |t| t.fps).max(1.0);
+    // Only the GIF delay reads the rate (frames come from the duration); rates under 1 fps are
+    // valid timelines, so only an unusable loaded rate falls back to 30.
+    let fps = base.timeline.as_ref().map(|t| t.fps).filter(|f| f.is_finite() && *f > 0.0).unwrap_or(30.0);
     let stem = base.name.rsplit_once('.').map_or(base.name.as_str(), |(a, _)| a).to_string();
     let fmt = base.pixel_format();
     let bounds = base.bounds();
