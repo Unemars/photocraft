@@ -3794,8 +3794,17 @@ fn field_chips(app: &mut PhotocraftApp, ui: &mut egui::Ui, chips: Rect) {
 }
 
 /// Where the dock tells the Color field how tall its group body is.
-pub(crate) fn color_field_fill_id() -> egui::Id {
+fn color_field_fill_id() -> egui::Id {
     egui::Id::new("color-field-fill-height")
+}
+
+/// The pro Color field stretches to its dock group's height instead of a fixed 120 pt: a dock
+/// calls this with the group body's `ui` before drawing the tab.
+pub(crate) fn offer_color_field_fill(ui: &egui::Ui, pro: bool, group: crate::dock::Group, tab: usize) {
+    if pro && group == crate::dock::Group::Color && tab == 0 {
+        let inner = ui.available_height().max(0.0);
+        ui.data_mut(|d| d.insert_temp(color_field_fill_id(), inner));
+    }
 }
 
 /// Height of the Color field: the group body's height (when docked) less the hex/RGB readout,

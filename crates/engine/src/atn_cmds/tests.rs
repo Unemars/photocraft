@@ -585,6 +585,33 @@ fn save_writes_the_file_and_the_set_of_the_selected_action() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// #7290: saving over an existing ATN must replace it atomically (a temporary file renamed over
+/// it), never truncate and rewrite it in place, so a write that fails partway (a full disk)
+/// leaves the previously valid file readable. A handle opened on the old file still sees the old
+/// bytes after an atomic replacement; an in-place rewrite changes them under it.
+#[cfg(unix)]
+#[test]
+fn save_over_an_existing_file_never_rewrites_it_in_place() {
+    use std::io::Read;
+    let mut s = Session::new();
+    s.actions.list.push(Action::new("Owned", vec![("select.all".into(), json!({}))]));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Owned.atn");
+    let p = path.to_string_lossy().to_string();
+    s.execute("actions.save", json!({"path": p})).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let mut old = std::fs::File::open(&path).unwrap();
+    s.actions.list.push(Action::new("Second", vec![("select.all".into(), json!({}))]));
+    s.execute("actions.save", json!({"path": p})).unwrap();
+    let mut seen = Vec::new();
+    old.read_to_end(&mut seen).unwrap();
+    assert_eq!(seen, before, "the existing ATN was rewritten in place");
+    let after = atn::parse(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(after.actions.len(), 2);
+    let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("Owned.atn")], "no temporary file is left behind");
+}
+
 #[test]
 fn layer_param_accepts_a_name() {
     let mut s = Session::new();
@@ -622,7 +649,7 @@ fn remaining_events_import_in_their_photoshop_shapes() {
     let moved = desc("null")
         .with("null", target_ref("Lyr "))
         .with("FTcs", enm("QCSt", "Qcsa"))
-        .with("Ofst", D::Descriptor(desc("Ofst").with("Hrzn", px(-57.4)).with("Vrtc", px(12.0))))
+        .with("Ofst", D::Descriptor(desc("Ofst").with("Hrzn", px(-57.0)).with("Vrtc", px(12.0))))
         .with("Intr", enm("Intp", "Bcbc"));
     let scaled = desc("null")
         .with("null", target_ref("Lyr "))
@@ -1004,4 +1031,40 @@ fn remove_white_clears_the_targeted_layer_not_the_converted_background() {
     let bottom = st.doc.layers.first().unwrap();
     assert!(!st.doc.is_background(bottom.id), "the Background became a normal layer");
     assert!(bottom.surface().unwrap().sample_channel(2, 2, 1) > 0.99, "and kept its pixels");
+}
+
+/// Photoshop's Close has no document target: a Close of a specific document must not be
+/// exported as a plain Close, which would close the active document on playback.
+#[test]
+fn close_with_document_target_is_not_exported_as_plain_close() {
+    let targeted = Action { name: "Probe".into(), steps: vec![("file.close".into(), json!({"document": 0}))], ..Default::default() };
+    assert!(export("Audit4", &[&targeted], &[], false).is_err());
+    let (_, skipped) = export("Audit4", &[&targeted], &[], true).unwrap();
+    assert_eq!(skipped, vec![Skipped { action: "Probe".into(), step: 0, id: "file.close".into() }]);
+    let plain = Action { name: "Plain".into(), steps: vec![("file.close".into(), json!({}))], ..Default::default() };
+    let (bytes, skipped) = export("Audit4", &[&plain], &[], false).unwrap();
+    assert!(skipped.is_empty());
+    let imported = import(&bytes).unwrap();
+    assert_eq!(imported.actions[0].steps, vec![("file.close".to_string(), json!({}))]);
+}
+
+/// A translation-only Free Transform with a fractional offset must not collapse into an
+/// integer `layer.translate`: the sub-pixel placement and interpolation have to survive.
+#[test]
+fn fractional_translation_only_transform_keeps_offset_and_interpolation() {
+    let params = json!({"dx": 0.5, "dy": 0, "interpolation": "bilinear"});
+    let d = transform_to("edit.transform", &params).unwrap();
+    let file = AtnFile {
+        name: UnicodeString::new_nul("Frac"),
+        expanded: false,
+        actions: vec![AtnAction { name: UnicodeString::new_nul("A"), items: vec![item("transform", "Transform", Some(d))], ..Default::default() }],
+        warnings: vec![],
+    };
+    let imp = import(&atn::write(&file).unwrap()).unwrap();
+    assert!(imp.unsupported.is_empty());
+    let steps = &imp.actions[0].steps;
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].0, "edit.transform");
+    assert_eq!(steps[0].1.get("dx").and_then(Value::as_f64), Some(0.5));
+    assert_eq!(steps[0].1.get("interpolation"), Some(&json!("bilinear")));
 }

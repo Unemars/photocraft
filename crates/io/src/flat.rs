@@ -241,6 +241,11 @@ pub(crate) fn image_to_document(name: &str, img: &Image) -> Result<ImportResult,
         doc.resolution_dpi = x;
         warnings.extend(crate::unequal_resolution_warning(f64::from(x), f64::from(y)));
     }
+    // Guides in the Photoshop resources a JPEG (APP13) or TIFF carries: resource 1032.
+    let guides = img.meta.photoshop_resources.as_deref().and_then(|r| photocraft_psd::tiff::resources_from_bytes(r).ok());
+    if let Some(g) = guides.as_ref().and_then(|(res, _)| res.iter().find(|r| r.id == 1032)) {
+        crate::psd_import::parse_guides(&g.data, &mut doc);
+    }
     Ok(ImportResult { document: doc, warnings, source_read_only: false, preview_only: false })
 }
 

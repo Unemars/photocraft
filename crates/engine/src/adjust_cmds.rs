@@ -347,7 +347,7 @@ fn shadows_highlights_params(p: &Value) -> ShadowsHighlights {
 
 fn replace_color(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "image.adjustments.replaceColor";
-    let c = crate::commands::color_param(p, "color", s.tools.foreground);
+    let c = crate::commands::color_param(CMD, p, "color", s.tools.foreground)?;
     let fuzz = num(p, "fuzziness", 40.0).clamp(0.0, 200.0);
     let (h, sat, l) = (num(p, "hue", 0.0).clamp(-180.0, 180.0), num(p, "saturation", 0.0).clamp(-100.0, 100.0), num(p, "lightness", 0.0).clamp(-100.0, 100.0));
     // Localized Color Clusters, as in Select › Color Range: the colour only matches within Range

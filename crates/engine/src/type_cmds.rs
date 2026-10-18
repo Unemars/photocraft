@@ -34,14 +34,14 @@ fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
 }
 
 fn f32p(p: &Value, k: &str) -> Option<f32> {
-    p.get(k).and_then(Value::as_f64).map(|v| v as f32)
+    p.get(k).and_then(Value::as_f64).map(|v| v as f32).filter(|v| v.is_finite())
 }
 
 fn color(v: &Value) -> Option<Color> {
     match v {
         Value::Array(a) if a.len() >= 3 => {
             let c: Vec<f32> = a.iter().map(|x| x.as_f64().unwrap_or(0.0) as f32).collect();
-            Some(Color::rgba(c[0], c[1], c[2], c.get(3).copied().unwrap_or(1.0)))
+            c.iter().take(4).all(|v| v.is_finite()).then(|| Color::rgba(c[0], c[1], c[2], c.get(3).copied().unwrap_or(1.0)))
         }
         Value::String(s) => {
             let s = s.trim_start_matches('#');
@@ -770,6 +770,7 @@ fn info(s: &Session, p: &Value) -> Result<Value> {
 /// paragraph `box`, `orientation`, character and paragraph keys, starting from the default type
 /// styles in the foreground colour. Shared with the Type Mask tools' `type.createSelection`.
 pub(crate) fn new_text_layer(s: &Session, p: &Value, cmd: &str) -> Result<TextLayer> {
+    crate::commands::check_f32_values(cmd, p)?;
     let orientation = match p.get("orientation") {
         None => Orientation::Horizontal,
         Some(Value::String(value)) if value == "horizontal" => Orientation::Horizontal,

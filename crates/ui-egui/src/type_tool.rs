@@ -1099,12 +1099,17 @@ pub fn draw_overlay(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewX
         if ed.dragging || (elapsed * 1000.0 / 530.0) as i64 % 2 == 0 {
             let (x, top, bot) = l.caret(a);
             let (x, top, bot) = if l.lines.is_empty() { (0.0, -(12.0 * l.px_per_pt.max(1.0)), 3.0) } else { (x, top, bot) };
-            let c = if crate::theme::Tokens::get(painter.ctx()).pro { Color32::WHITE } else { Color32::BLACK };
-            painter.line_segment([scr(x, top), scr(x, bot)], Stroke::new(1.5, c));
-            painter.line_segment([scr(x, top), scr(x, bot)], Stroke::new(0.75, Color32::BLACK));
+            for stroke in CARET_STROKES {
+                painter.line_segment([scr(x, top), scr(x, bot)], stroke);
+            }
         }
     }
 }
+
+/// The text caret, drawn in order: a white halo, then a solid black line inside it, so it reads on
+/// any background (#6085). The black line used to be a 0.75 pt hairline inside a white one, which
+/// on a white background left only a faint grey line.
+const CARET_STROKES: [Stroke; 2] = [Stroke { width: 3.0, color: Color32::WHITE }, Stroke { width: 1.0, color: Color32::BLACK }];
 
 /// The Type Mask tools while typing: Quick Mask's colour over the canvas with the glyphs clear,
 /// as Photoshop shows the selection-to-be. The glyphs come from the hidden working layer's pixels.
@@ -2144,6 +2149,8 @@ fn type_sections(app: &mut PhotocraftApp, ui: &mut egui::Ui, character: bool, pa
     use crate::props_layout::{COL_GAP, LABEL_GAP, LABEL_W, field_width, section};
     use crate::theme::ROW_GAP;
     let Some((c, para)) = styles_at(app) else { return };
+    // Preferences ▸ Units & Rulers ▸ Type, as in the options bar: the model keeps points.
+    let (u, unit) = type_unit(app);
     let t = crate::theme::Tokens::get(ui.ctx());
     // Row helper: `ui.horizontal` with the column gap, then the shared row gap.
     let row = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
@@ -2181,13 +2188,13 @@ fn type_sections(app: &mut PhotocraftApp, ui: &mut egui::Ui, character: bool, pa
             let k = shown_scale(app);
             // Hover tips stay English until wired through `tl!` in a multi-locale change
             // (`every_tl_literal_is_translated` requires every complete catalog).
-            if let Some(v) = num_field(ui, "tT", "Font size", c.size_pt * k, 0.1..=1296.0, "pt", w) {
-                app.ui.tool_options.type_size = v;
-                apply(app, ui.ctx(), json!({"size": v, "metricsAsShown": true}));
+            if let Some(v) = num_field(ui, "tT", "Font size", c.size_pt * k * u, 0.1 * u..=1296.0 * u, unit, w) {
+                app.ui.tool_options.type_size = v / u;
+                apply(app, ui.ctx(), json!({"size": v / u, "metricsAsShown": true}));
             }
             let lead = c.leading_pt.unwrap_or(c.size_pt * para.auto_leading.max(0.01)) * k;
-            if let Some(v) = num_field(ui, "A↕", "Leading (set to the font size × auto-leading when Auto)", lead, 0.1..=5000.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"leading": v, "metricsAsShown": true}));
+            if let Some(v) = num_field(ui, "A↕", "Leading (set to the font size × auto-leading when Auto)", lead * u, 0.1 * u..=5000.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"leading": v / u, "metricsAsShown": true}));
             }
         });
         row(ui, &mut |ui| {
@@ -2212,8 +2219,8 @@ fn type_sections(app: &mut PhotocraftApp, ui: &mut egui::Ui, character: bool, pa
             }
         });
         row(ui, &mut |ui| {
-            if let Some(v) = num_field(ui, "Aª", "Baseline shift", c.baseline_shift_pt, -1296.0..=1296.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"baselineShift": v}));
+            if let Some(v) = num_field(ui, "Aª", "Baseline shift", c.baseline_shift_pt * u, -1296.0 * u..=1296.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"baselineShift": v / u}));
             }
             // Colour: label + a swatch filling the rest of the second column.
             ui.horizontal(|ui| {
@@ -2320,24 +2327,24 @@ fn type_sections(app: &mut PhotocraftApp, ui: &mut egui::Ui, character: bool, pa
         });
         ui.add_space(ROW_GAP);
         row(ui, &mut |ui| {
-            if let Some(v) = num_field(ui, "→|", "Indent left margin", para.start_indent_pt, -1296.0..=1296.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"startIndent": v}));
+            if let Some(v) = num_field(ui, "→|", "Indent left margin", para.start_indent_pt * u, -1296.0 * u..=1296.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"startIndent": v / u}));
             }
-            if let Some(v) = num_field(ui, "|←", "Indent right margin", para.end_indent_pt, -1296.0..=1296.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"endIndent": v}));
-            }
-        });
-        row(ui, &mut |ui| {
-            if let Some(v) = num_field(ui, "¶→", "Indent first line", para.first_line_indent_pt, -1296.0..=1296.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"firstLineIndent": v}));
+            if let Some(v) = num_field(ui, "|←", "Indent right margin", para.end_indent_pt * u, -1296.0 * u..=1296.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"endIndent": v / u}));
             }
         });
         row(ui, &mut |ui| {
-            if let Some(v) = num_field(ui, "↑¶", "Add space before paragraph", para.space_before_pt, 0.0..=1296.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"spaceBefore": v}));
+            if let Some(v) = num_field(ui, "¶→", "Indent first line", para.first_line_indent_pt * u, -1296.0 * u..=1296.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"firstLineIndent": v / u}));
             }
-            if let Some(v) = num_field(ui, "¶↓", "Add space after paragraph", para.space_after_pt, 0.0..=1296.0, "pt", w) {
-                apply(app, ui.ctx(), json!({"spaceAfter": v}));
+        });
+        row(ui, &mut |ui| {
+            if let Some(v) = num_field(ui, "↑¶", "Add space before paragraph", para.space_before_pt * u, 0.0 * u..=1296.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"spaceBefore": v / u}));
+            }
+            if let Some(v) = num_field(ui, "¶↓", "Add space after paragraph", para.space_after_pt * u, 0.0 * u..=1296.0 * u, unit, w) {
+                apply(app, ui.ctx(), json!({"spaceAfter": v / u}));
             }
         });
         let mut hy = para.hyphenate;
@@ -2730,7 +2737,7 @@ mod tests {
                 draw_overlay(app, &painter, &xf);
             });
             out.textures_delta.clear();
-            out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::LineSegment { stroke, .. } if (stroke.width - 1.5).abs() < 1e-4))
+            out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::LineSegment { stroke, .. } if CARET_STROKES.contains(stroke)))
         };
 
         // Before resetting, the caret is in the off phase at t = 10.5 s (10500 / 530 = 19, odd phase)

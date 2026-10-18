@@ -618,7 +618,10 @@ pub fn handle(app: &mut PhotocraftApp, ctx: &egui::Context) {
             return;
         }
     }
-    if !app.ui.polygon.is_empty() || app.ui.crop_rect.is_some() {
+    // An open options bar popup (the Crop Ratio list, the overlay and gear menus) takes the keys
+    // first: Esc closes it, and neither key reaches the crop beneath (#7386). Its id is kept in
+    // memory from the last frame; `ctx.any_popup_open` only sees this frame's, drawn later.
+    if (!app.ui.polygon.is_empty() || app.ui.crop_rect.is_some()) && !egui::Popup::is_any_open(ctx) {
         if pressed(Key::Enter) {
             if !app.ui.polygon.is_empty() {
                 crate::canvas::commit_polygon(app);
@@ -627,7 +630,10 @@ pub fn handle(app: &mut PhotocraftApp, ctx: &egui::Context) {
             }
             return;
         }
-        if pressed(Key::Escape) {
+        // In a full screen mode, the Crop tool's untouched default frame (Straighten off) has nothing to cancel: cancelling only
+        // makes the next one, so Esc goes on to leave full screen (#7315).
+        let untouched = app.ui.view.screen_mode != "standard" && app.ui.polygon.is_empty() && app.crop.default_frame && !crate::crop_straighten::mode(app);
+        if !untouched && pressed(Key::Escape) {
             app.ui.polygon.clear();
             app.ui.polygon_mode.clear();
             crate::crop_ui::cancel(app);

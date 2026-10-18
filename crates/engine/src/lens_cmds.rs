@@ -62,7 +62,7 @@ pub fn lens_params(cmd: &str, p: &Value, frame: Rect, info: Option<&exif::Camera
         "edgeExtension" | "extension" => EdgeMode::Extension,
         "black" => EdgeMode::Color([0.0, 0.0, 0.0, 1.0]),
         "white" => EdgeMode::Color([1.0, 1.0, 1.0, 1.0]),
-        "background" | "color" => EdgeMode::Color(crate::commands::color_param(p, "edgeColor", [0.0, 0.0, 0.0, 1.0])),
+        "background" | "color" => EdgeMode::Color(crate::commands::color_param(cmd, p, "edgeColor", [0.0, 0.0, 0.0, 1.0])?),
         other => return Err(bad(cmd, format!("unknown edge `{other}` (transparency|edgeExtension|black|white|color)"))),
     };
     let focal = num(p, "focalLength", 0.0);
