@@ -2319,6 +2319,34 @@ navigator	Zoom	Nagyítás mértéke
 	Replace Color	Színcsere
 	Reset to defaults	Alapértékek visszaállítása
 	Restore All	Összes visszaállítása
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Arcfelismerő képlékenyítés
+	Face Tool	Arc
+	Select Face	Arc kiválasztása
+	Face {n}	{n}. arc
+	No face found	Nem található arc
+	Face mesh model not found	Az archáló-modell nem található
+	Link the eyes	Szemek összekapcsolása
+	Eyes	Szemek
+	Nose	Orr
+	Mouth	Száj
+	Face Shape	Arcforma
+	Eye Size	Szemméret
+	Eye Height	Szemmagasság
+	Eye Width	Szemszélesség
+	Eye Tilt	Szemdőlés
+	Eye Distance	Szemtávolság
+	Nose Height	Orrmagasság
+	Nose Width	Orrszélesség
+	Smile	Mosoly
+	Upper Lip	Felső ajak
+	Lower Lip	Alsó ajak
+	Mouth Width	Szájszélesség
+	Mouth Height	Szájmagasság
+	Forehead	Homlok
+	Chin Height	Állmagasság
+	Jawline	Állkapocsvonal
+	Face Width	Arcszélesség
 	Resume	Folytatás
 	Reticulation	Retikuláció
 	RGB	RGB

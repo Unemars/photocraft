@@ -473,3 +473,90 @@ fn unlocked_or_position_locked_smart_objects_take_distortions() {
         }
     }
 }
+
+/// Face-Aware Liquify (#3603): a face given by its five landmarks takes the sliders in one history
+/// step, changes only around the face, echoes the geometry it used, replays the same as a smart
+/// filter, and refuses bad faces; a face to detect that isn't there is an error.
+#[test]
+fn face_aware_liquify_warps_a_given_face_and_replays_as_a_smart_filter() {
+    // A 300 × 300 textured layer with a face frame: eyes 80 px apart.
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width": 300, "height": 300, "depth": 8})).unwrap();
+    s.execute("layer.new.layer", json!({})).unwrap();
+    s.edit("paint", |doc, active| {
+        let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();
+        for y in 0..300 {
+            for x in 0..300 {
+                let v = ((x / 4 + y / 4) % 2) as f32 * 0.6 + 0.2;
+                surf.write_pixel(x, y, &[v, 0.5, 1.0 - v, 1.0]);
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    let face = json!([[110.0, 120.0], [190.0, 120.0], [150.0, 160.0], [125.0, 195.0], [175.0, 195.0]]);
+    let before = active_surface(&s);
+    let hist = s.active().unwrap().history.past_len();
+    // Neutral sliders change nothing.
+    let r = s.execute(LIQUIFY, json!({"faces": [{"landmarks": face}]})).unwrap();
+    assert_eq!(r["changed"], false);
+    assert_eq!(r["faces"][0]["landmarks"], face, "the geometry used is echoed");
+    let r = s.execute(LIQUIFY, json!({"faces": [{"landmarks": face, "eyeSize": 100, "smile": [50, 50]}]}));
+    assert!(r.is_err(), "smile is not a per-eye slider");
+    let r = s.execute(LIQUIFY, json!({"faces": [{"landmarks": face, "eyeSize": 100, "eyeDistance": -60}]})).unwrap();
+    assert_eq!(r["changed"], true);
+    assert_eq!(s.active().unwrap().history.past_len(), hist + 1, "one history step");
+    assert_eq!(r["faces"][0]["eyeSize"], json!(100.0));
+    assert_eq!(r["faces"][0]["eyeDistance"], json!(-60.0));
+    assert!(r["maxDisplacement"].as_f64().unwrap() > 3.0);
+    let after = active_surface(&s);
+    assert!(worst(&before, &after, Rect::new(90, 100, 130, 140)) > 0.2, "the image-left eye changed");
+    assert_eq!(worst(&before, &after, Rect::new(0, 0, 300, 20)), 0.0, "the top of the image is untouched");
+    assert_eq!(worst(&before, &after, Rect::new(0, 280, 300, 300)), 0.0, "the bottom too");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(active_surface(&s), before, "undo restores the layer");
+    // The same on a smart object: the stored params carry the geometry and replay to the same pixels.
+    s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
+    let r = s.execute(LIQUIFY, json!({"faces": [{"landmarks": face, "eyeSize": 100, "eyeDistance": -60}]})).unwrap();
+    assert_eq!(r["changed"], true);
+    let sm = smart(&s);
+    let stored = &sm.smart_filters[0].params;
+    assert_eq!(stored["faces"][0]["landmarks"], face, "the smart filter stores the geometry");
+    assert_eq!(stored["faces"][0]["eyeSize"], json!(100.0));
+    let rendered = active_surface(&s);
+    assert!(worst(&after, &rendered, Rect::new(0, 0, 300, 300)) < 0.02, "the smart filter renders the same pixels");
+    // Bad faces are refused.
+    for bad in [
+        json!({"faces": "no"}),
+        json!({"faces": [{"landmarks": [[1, 1], [2, 2]]}]}),
+        json!({"faces": [{"landmarks": face, "nose": 5}]}),
+        json!({"faces": [{"landmarks": face, "smile": 200}]}),
+        json!({"faces": [{"mesh": [[1, 1]]}]}),
+        json!({"faces": [{"landmarks": [[1, 1], [1, 1], [1, 2], [0, 3], [2, 3]], "smile": 10}]}),
+        json!({"faces": [{"face": "first"}]}),
+    ] {
+        assert!(s.execute(LIQUIFY, bad.clone()).is_err(), "{bad}");
+    }
+    // A face to detect on a checkerboard: there is none.
+    let e = s.execute(LIQUIFY, json!({"faces": [{"smile": 50}]})).unwrap_err().to_string();
+    assert!(e.contains("no face 0") || e.contains("isn't available"), "{e}");
+}
+
+#[test]
+fn face_slider_json_round_trips_and_bad_values_are_refused() {
+    let v = json!({"face": 0, "eyeSize": [20, -30], "smile": 50, "faceWidth": -100});
+    let s = sliders_from_json(&v).unwrap();
+    assert_eq!((s.eye_size, s.smile, s.face_width), ([20.0, -30.0], 50.0, -100.0));
+    assert_eq!(sliders_from_json(&Value::Object(sliders_to_json(&s))).unwrap(), s);
+    assert_eq!(sliders_to_json(&s)["eyeSize"], json!([20.0, -30.0]));
+    let mut t = s;
+    t.set("eyeSize", 20.0, None);
+    assert_eq!(sliders_to_json(&t)["eyeSize"], json!(20.0), "equal eyes as one number");
+    assert!(sliders_from_json(&json!({"nose": 1})).is_err());
+    assert!(sliders_from_json(&json!({"smile": 101})).is_err());
+    assert!(sliders_from_json(&json!({"smile": [1, 2]})).is_err(), "not a per-eye slider");
+    assert!(sliders_from_json(&json!({"eyeTilt": [1, 2, 3]})).is_err());
+    assert!(sliders_from_json(&json!(5)).is_err());
+    assert!(FaceSliders::default().is_neutral() && !s.is_neutral());
+    assert!(!FaceSliders::default().set("nope", 1.0, None));
+}

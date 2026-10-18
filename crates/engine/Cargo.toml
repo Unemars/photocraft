@@ -10,6 +10,10 @@ workspace = true
 [features]
 # Real-file corpus tests (opt-in; `cargo xtask test-corpus`). Fail when the corpus is missing.
 corpus = []
+# The 478-point face mesh (MediaPipe's landmark model on tract) for Face-Aware Liquify: without
+# it faces are the detector's box and five landmarks. Desktop builds only (the browser build has
+# no face detector either).
+face-mesh = ["dep:photocraft-face"]
 
 [dependencies]
 photocraft-geom = { workspace = true }
@@ -25,6 +29,7 @@ thiserror = { workspace = true }
 rayon = { workspace = true }
 photocraft-paint = { workspace = true }
 photocraft-algo = { workspace = true }
+photocraft-face = { workspace = true, optional = true }
 photocraft-text = { workspace = true }
 photocraft-vector = { workspace = true }
 photocraft-io = { workspace = true }

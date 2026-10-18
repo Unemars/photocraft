@@ -1,0 +1,19 @@
+[package]
+name = "photocraft-face"
+description = "The 478-point face mesh (MediaPipe's face landmark model as ONNX, run on tract) for PhotoCraft's face-aware tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Pure Rust ONNX inference: no C or C++ runtime, nothing to install.
+tract-onnx = { version = "0.23", default-features = false }
+
+# tract's random-number crates need a source of randomness in the browser; inference never draws
+# on it, but without a backend getrandom does not compile for wasm32-unknown-unknown (the layer
+# check builds every L0-L5 crate for wasm; the face mesh itself is never on in the web build).
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom-wasm = { package = "getrandom", version = "0.4", features = ["wasm_js"] }

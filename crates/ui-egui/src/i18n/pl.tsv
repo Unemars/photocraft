@@ -1435,6 +1435,34 @@
 	Resolution	Rozdzielczość
 	Resolution:	Rozdzielczość:
 	Restore All	Przywróć wszystko
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Skraplanie z rozpoznawaniem twarzy
+	Face Tool	Narzędzie Twarz
+	Select Face	Wybierz twarz
+	Face {n}	Twarz {n}
+	No face found	Nie znaleziono twarzy
+	Face mesh model not found	Nie znaleziono modelu siatki twarzy
+	Link the eyes	Połącz oczy
+	Eyes	Oczy
+	Nose	Nos
+	Mouth	Usta
+	Face Shape	Kształt twarzy
+	Eye Size	Rozmiar oczu
+	Eye Height	Wysokość oczu
+	Eye Width	Szerokość oczu
+	Eye Tilt	Nachylenie oczu
+	Eye Distance	Odległość między oczami
+	Nose Height	Wysokość nosa
+	Nose Width	Szerokość nosa
+	Smile	Uśmiech
+	Upper Lip	Górna warga
+	Lower Lip	Dolna warga
+	Mouth Width	Szerokość ust
+	Mouth Height	Wysokość ust
+	Forehead	Czoło
+	Chin Height	Wysokość podbródka
+	Jawline	Linia żuchwy
+	Face Width	Szerokość twarzy
 	Restore Defaults	Przywróć domyślne
 	Restrictive (Web)	Ograniczona (Internet)
 	Right align text	Wyrównaj tekst do prawej

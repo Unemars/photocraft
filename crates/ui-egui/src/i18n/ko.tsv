@@ -1411,6 +1411,34 @@
 	Resolution	해상도
 	Resolution:	해상도:
 	Restore All	모두 복원
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	얼굴 인식 픽셀 유동화
+	Face Tool	얼굴 도구
+	Select Face	얼굴 선택
+	Face {n}	얼굴 {n}
+	No face found	얼굴을 찾을 수 없음
+	Face mesh model not found	얼굴 메시 모델을 찾을 수 없음
+	Link the eyes	눈 연결
+	Eyes	눈
+	Nose	코
+	Mouth	입
+	Face Shape	얼굴 모양
+	Eye Size	눈 크기
+	Eye Height	눈 높이
+	Eye Width	눈 너비
+	Eye Tilt	눈 기울기
+	Eye Distance	눈 간격
+	Nose Height	코 높이
+	Nose Width	코 너비
+	Smile	웃음
+	Upper Lip	윗입술
+	Lower Lip	아랫입술
+	Mouth Width	입 너비
+	Mouth Height	입 높이
+	Forehead	이마
+	Chin Height	턱 높이
+	Jawline	턱선
+	Face Width	얼굴 너비
 	Restore Defaults	기본값 복원
 	Restrictive (Web)	제한됨(웹)
 	Right align text	텍스트 오른쪽 정렬

@@ -4160,6 +4160,35 @@ document	Orientation	Orijentacija
 	Reconstruct All	Rekonstruiši sve
 	Mask None	Bez maske
 
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Tečno izobličavanje sa prepoznavanjem lica
+	Face Tool	Alatka lice
+	Select Face	Izaberi lice
+	Face {n}	Lice {n}
+	No face found	Lice nije pronađeno
+	Face mesh model not found	Model mreže lica nije pronađen
+	Link the eyes	Poveži oči
+	Eyes	Oči
+	Nose	Nos
+	Mouth	Usta
+	Face Shape	Oblik lica
+	Eye Size	Veličina očiju
+	Eye Height	Visina očiju
+	Eye Width	Širina očiju
+	Eye Tilt	Nagib očiju
+	Eye Distance	Razmak između očiju
+	Nose Height	Visina nosa
+	Nose Width	Širina nosa
+	Smile	Osmeh
+	Upper Lip	Gornja usna
+	Lower Lip	Donja usna
+	Mouth Width	Širina usta
+	Mouth Height	Visina usta
+	Forehead	Čelo
+	Chin Height	Visina brade
+	Jawline	Linija vilice
+	Face Width	Širina lica
+
 # Contextual labels
 colorRange	Invert	Invertuj
 layers	Fill	Popuna

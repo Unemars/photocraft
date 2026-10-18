@@ -1852,6 +1852,34 @@ document	Orientation	Hướng trang
 	Reconstruct All	Khôi phục tất cả
 	Mask None	Bỏ mặt nạ
 	Invert Mask	Đảo mặt nạ
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Hóa lỏng nhận diện khuôn mặt
+	Face Tool	Công cụ Khuôn mặt
+	Select Face	Chọn khuôn mặt
+	Face {n}	Khuôn mặt {n}
+	No face found	Không tìm thấy khuôn mặt
+	Face mesh model not found	Không tìm thấy mô hình lưới khuôn mặt
+	Link the eyes	Liên kết hai mắt
+	Eyes	Mắt
+	Nose	Mũi
+	Mouth	Miệng
+	Face Shape	Hình dạng khuôn mặt
+	Eye Size	Kích thước mắt
+	Eye Height	Chiều cao mắt
+	Eye Width	Chiều rộng mắt
+	Eye Tilt	Độ nghiêng mắt
+	Eye Distance	Khoảng cách mắt
+	Nose Height	Chiều cao mũi
+	Nose Width	Chiều rộng mũi
+	Smile	Nụ cười
+	Upper Lip	Môi trên
+	Lower Lip	Môi dưới
+	Mouth Width	Chiều rộng miệng
+	Mouth Height	Chiều cao miệng
+	Forehead	Trán
+	Chin Height	Chiều cao cằm
+	Jawline	Đường viền hàm
+	Face Width	Chiều rộng khuôn mặt
 	Perspective Warp is not active	Biến dạng phối cảnh chưa hoạt động
 	Perspective Warp: draw planes along the image's perspective, then switch to Warp	Biến dạng phối cảnh: vẽ mặt phẳng theo phối cảnh ảnh, rồi chuyển sang Biến dạng
 	Straighten	Chỉnh thẳng

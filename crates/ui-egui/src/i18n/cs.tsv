@@ -1452,6 +1452,34 @@
 	Resolution	Rozlišení
 	Resolution:	Rozlišení:
 	Restore All	Obnovit vše
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Zkapalnit s rozpoznáním obličeje
+	Face Tool	Nástroj obličej
+	Select Face	Vybrat obličej
+	Face {n}	Obličej {n}
+	No face found	Nebyl nalezen žádný obličej
+	Face mesh model not found	Model sítě obličeje nebyl nalezen
+	Link the eyes	Propojit oči
+	Eyes	Oči
+	Nose	Nos
+	Mouth	Ústa
+	Face Shape	Tvar obličeje
+	Eye Size	Velikost očí
+	Eye Height	Výška očí
+	Eye Width	Šířka očí
+	Eye Tilt	Sklon očí
+	Eye Distance	Vzdálenost očí
+	Nose Height	Výška nosu
+	Nose Width	Šířka nosu
+	Smile	Úsměv
+	Upper Lip	Horní ret
+	Lower Lip	Dolní ret
+	Mouth Width	Šířka úst
+	Mouth Height	Výška úst
+	Forehead	Čelo
+	Chin Height	Výška brady
+	Jawline	Linie čelisti
+	Face Width	Šířka obličeje
 	Restore Defaults	Obnovit výchozí
 	Restrictive (Web)	Omezená (web)
 	Right align text	Zarovnat text vpravo

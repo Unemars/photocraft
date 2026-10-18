@@ -1451,6 +1451,34 @@
 	Resolution	分辨率
 	Resolution:	分辨率：
 	Restore All	全部还原
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	人脸识别液化
+	Face Tool	脸部工具
+	Select Face	选择脸部
+	Face {n}	脸部 {n}
+	No face found	未找到脸部
+	Face mesh model not found	未找到脸部网格模型
+	Link the eyes	链接双眼
+	Eyes	眼睛
+	Nose	鼻子
+	Mouth	嘴唇
+	Face Shape	脸部形状
+	Eye Size	眼睛大小
+	Eye Height	眼睛高度
+	Eye Width	眼睛宽度
+	Eye Tilt	眼睛斜度
+	Eye Distance	眼睛距离
+	Nose Height	鼻子高度
+	Nose Width	鼻子宽度
+	Smile	微笑
+	Upper Lip	上唇
+	Lower Lip	下唇
+	Mouth Width	嘴唇宽度
+	Mouth Height	嘴唇高度
+	Forehead	前额
+	Chin Height	下巴高度
+	Jawline	下颌
+	Face Width	脸部宽度
 	Restore Defaults	还原默认值
 	Restrictive (Web)	限定（Web）
 	Right align text	文字右对齐

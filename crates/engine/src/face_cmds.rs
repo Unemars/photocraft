@@ -1,9 +1,12 @@
 //! Face detection (#3603): the faces in the document, with their box and five landmarks, from
-//! [`photocraft_algo::faces`]. Select › Color Range's Detect Faces and Face-Aware Liquify read
-//! faces through [`faces_in`]; `image.detectFaces` reports them to scripts and agents.
+//! [`photocraft_algo::faces`], and their 478-point mesh when the landmark model is installed
+//! ([`crate::face_mesh`]). Select › Color Range's Detect Faces reads faces through [`faces_in`],
+//! Face-Aware Liquify through [`faces_with_mesh`]; `image.detectFaces` reports them to scripts
+//! and agents.
 
 use photocraft_algo::faces::{self, Face};
 use photocraft_doc::{Document, LayerId};
+use photocraft_geom::Rect;
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -24,9 +27,9 @@ pub fn detect(px: &[[f32; 4]], w: usize, h: usize, min_score: f32) -> Result<Vec
     faces::detect(px, w, h, min_score).ok_or_else(|| EngineError::Other("face detection failed".into()))
 }
 
-/// The faces in `doc`, best first: in the composite, or in the active layer's pixels when
-/// `all_layers` is off. Coordinates are document pixels.
-pub fn faces_in(doc: &Document, active: Option<LayerId>, all_layers: bool, min_score: f32) -> Result<Vec<Face>> {
+/// The pixels face detection looks at: the composite, or the active layer's own pixels when
+/// `all_layers` is off, over the canvas.
+fn pixels(doc: &Document, active: Option<LayerId>, all_layers: bool) -> (Rect, Vec<[f32; 4]>) {
     let area = doc.bounds();
     let (w, h) = (area.width() as usize, area.height() as usize);
     let surface = active.and_then(|id| doc.layer(id)).and_then(|l| l.surface()).filter(|_| !all_layers);
@@ -38,11 +41,44 @@ pub fn faces_in(doc: &Document, active: Option<LayerId>, all_layers: bool, min_s
         }
         None => photocraft_compose::render(doc, area).px,
     };
-    let found = detect(&px, w, h, min_score)?;
+    (area, px)
+}
+
+/// The faces in `doc`, best first: in the composite, or in the active layer's pixels when
+/// `all_layers` is off. Coordinates are document pixels.
+pub fn faces_in(doc: &Document, active: Option<LayerId>, all_layers: bool, min_score: f32) -> Result<Vec<Face>> {
+    let (area, px) = pixels(doc, active, all_layers);
+    let found = detect(&px, area.width() as usize, area.height() as usize, min_score)?;
     let (x0, y0) = (area.x0 as f32, area.y0 as f32);
     Ok(found
         .into_iter()
         .map(|f| Face { rect: [f.rect[0] + x0, f.rect[1] + y0, f.rect[2], f.rect[3]], landmarks: f.landmarks.map(|[x, y]| [x + x0, y + y0]), ..f })
+        .collect())
+}
+
+/// A detected face with its 478-point mesh, when the landmark model found one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoundFace {
+    pub face: Face,
+    /// The mesh in document pixels (`None`: no model, or none found in this face).
+    pub mesh: Option<Vec<[f32; 2]>>,
+}
+
+/// [`faces_in`] plus each face's mesh from [`crate::face_mesh`] (none when the model is not
+/// installed: the faces still come back). A model that is there but fails is an error.
+pub fn faces_with_mesh(doc: &Document, active: Option<LayerId>, all_layers: bool, min_score: f32) -> Result<Vec<FoundFace>> {
+    let (area, px) = pixels(doc, active, all_layers);
+    let (w, h) = (area.width() as usize, area.height() as usize);
+    let found = detect(&px, w, h, min_score)?;
+    let meshes = crate::face_mesh::meshes(&px, w, h, &found).map_err(EngineError::Other)?;
+    let (x0, y0) = (area.x0 as f32, area.y0 as f32);
+    Ok(found
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| FoundFace {
+            face: Face { rect: [f.rect[0] + x0, f.rect[1] + y0, f.rect[2], f.rect[3]], landmarks: f.landmarks.map(|[x, y]| [x + x0, y + y0]), ..f },
+            mesh: meshes.as_ref().and_then(|m| m.get(i).cloned().flatten()).map(|m| m.into_iter().map(|[x, y]| [x + x0, y + y0]).collect()),
+        })
         .collect())
 }
 
@@ -66,9 +102,27 @@ fn detect_faces(s: &mut Session, p: &Value) -> Result<Value> {
         None => true,
         Some(v) => v.as_bool().ok_or_else(|| bad("sampleAllLayers must be true or false"))?,
     };
+    let mesh = match p.get("mesh") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| bad("mesh must be true or false"))?,
+    };
     let d = s.active().ok_or(EngineError::NoDocument)?;
-    let found = faces_in(&d.doc, d.active_layer, all_layers, min_score)?;
-    Ok(json!({ "faces": found.iter().map(face_json).collect::<Vec<_>>() }))
+    if !mesh {
+        let found = faces_in(&d.doc, d.active_layer, all_layers, min_score)?;
+        return Ok(json!({ "faces": found.iter().map(face_json).collect::<Vec<_>>() }));
+    }
+    let found = faces_with_mesh(&d.doc, d.active_layer, all_layers, min_score)?;
+    let faces: Vec<Value> = found
+        .iter()
+        .map(|f| {
+            let mut j = face_json(&f.face);
+            if let Some(m) = &f.mesh {
+                j["mesh"] = json!(m);
+            }
+            j
+        })
+        .collect();
+    Ok(json!({ "faces": faces, "meshModel": crate::face_mesh::status().to_json() }))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -77,7 +131,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Detect Faces",
         menu: &[],
         shortcut: None,
-        params: r##"{"minScore":0..1=0.5,"sampleAllLayers":bool=true} → {"faces":[{"score","rect":[x,y,w,h],"landmarks":{"rightEye","leftEye","nose","mouthRight","mouthLeft"}: [x,y] each},…]} (best first; "rightEye" is the one on the image's left)"##,
+        params: r##"{"minScore":0..1=0.5,"sampleAllLayers":bool=true,"mesh":bool=false} → {"faces":[{"score","rect":[x,y,w,h],"landmarks":{"rightEye","leftEye","nose","mouthRight","mouthLeft"}: [x,y] each,"mesh":[[x,y]×478]? (with mesh, when the landmark model is installed)},…],"meshModel":{"status":"available|missing|notBuilt",…}?} (best first; "rightEye" is the one on the image's left)"##,
         enabled: |s| {
             if !faces::AVAILABLE {
                 return Err(UNAVAILABLE.into());

@@ -2207,6 +2207,34 @@
 	Rename Group…	Переименовать группу…
 	Rename Layer…	Переименовать слой…
 	Restore All	Восстановить всё
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Пластичность с учётом лица
+	Face Tool	Лицо
+	Select Face	Выбор лица
+	Face {n}	Лицо {n}
+	No face found	Лица не найдены
+	Face mesh model not found	Модель сетки лица не найдена
+	Link the eyes	Связать глаза
+	Eyes	Глаза
+	Nose	Нос
+	Mouth	Рот
+	Face Shape	Форма лица
+	Eye Size	Размер глаз
+	Eye Height	Высота глаз
+	Eye Width	Ширина глаз
+	Eye Tilt	Наклон глаз
+	Eye Distance	Расстояние между глазами
+	Nose Height	Высота носа
+	Nose Width	Ширина носа
+	Smile	Улыбка
+	Upper Lip	Верхняя губа
+	Lower Lip	Нижняя губа
+	Mouth Width	Ширина рта
+	Mouth Height	Высота рта
+	Forehead	Лоб
+	Chin Height	Высота подбородка
+	Jawline	Линия подбородка
+	Face Width	Ширина лица
 	Restrictive (Web)	Ограниченная (Web)
 	Rigid	Жёсткая
 	Roughness	Шероховатость

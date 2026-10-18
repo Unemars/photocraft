@@ -445,6 +445,55 @@ impl LiquifyField {
         Some((u0 * len, u1 * len))
     }
 
+    /// Composes an inverse map into the field over `region` (document px): for every node `p`
+    /// there, `map(p)` is the point the output at `p` should now show, before the field's own
+    /// displacement, and the node becomes `q + d(q) − p` (the brush tools' rule, see [`Self::dab`]).
+    /// `d(q)` is read from the field as it was before the call, so the map and the strokes so far
+    /// form one field. Nodes under the freeze mask move by `1 − freeze` of the way. Returns the
+    /// document rect that changed.
+    pub fn compose(&mut self, region: Rect, map: &dyn Fn([f64; 2]) -> [f64; 2]) -> Rect {
+        let region = region.intersect(&self.bounds);
+        if region.is_empty() || self.w < 2 || self.h < 2 {
+            return Rect::EMPTY;
+        }
+        let (gx0, gy0) = self.to_grid(f64::from(region.x0), f64::from(region.y0));
+        let (gx1, gy1) = self.to_grid(f64::from(region.x1), f64::from(region.y1));
+        let i0 = gx0.floor().max(0.0) as usize;
+        let j0 = gy0.floor().max(0.0) as usize;
+        let i1 = (gx1.ceil().max(0.0) as usize).min(self.w - 1);
+        let j1 = (gy1.ceil().max(0.0) as usize).min(self.h - 1);
+        if i1 < i0 || j1 < j0 {
+            return Rect::EMPTY;
+        }
+        let snap = self.d.clone();
+        let inv_cell = 1.0 / self.cell;
+        let mut changed = Rect::EMPTY;
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let idx = j * self.w + i;
+                let p = self.node_pos(i, j);
+                let q = map(p);
+                if !(q[0].is_finite() && q[1].is_finite()) {
+                    continue;
+                }
+                let k = 1.0 - f64::from(self.freeze[idx].clamp(0.0, 1.0));
+                let q = [p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k];
+                if q == p {
+                    continue;
+                }
+                let (qx, qy) = ((q[0] - p[0]) * inv_cell + i as f64, (q[1] - p[1]) * inv_cell + j as f64);
+                let dq = bilinear(&snap, self.w, self.h, qx, qy);
+                let new = [(q[0] + dq[0] - p[0]) as f32, (q[1] + dq[1] - p[1]) as f32];
+                if new != self.d[idx] {
+                    self.d[idx] = new;
+                    let node = Rect::new(p[0].floor() as i32, p[1].floor() as i32, p[0].ceil() as i32 + 1, p[1].ceil() as i32 + 1);
+                    changed = if changed.is_empty() { node } else { changed.union(&node) };
+                }
+            }
+        }
+        if changed.is_empty() { Rect::EMPTY } else { changed.inflate(self.cell.ceil() as i32 + 1).intersect(&self.bounds) }
+    }
+
     /// One dab at `c` with brush motion `delta`, its strength scaled by `weight`. Returns the
     /// document rect it affected.
     fn dab(&mut self, s: &LiquifyStroke, c: [f64; 2], delta: [f64; 2], point_pressure: f64, weight: f64) -> Rect {

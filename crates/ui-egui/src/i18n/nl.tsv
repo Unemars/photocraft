@@ -1420,6 +1420,34 @@
 	Resolution	Resolutie
 	Resolution:	Resolutie:
 	Restore All	Alles herstellen
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Uitvloeien met gezichtsherkenning
+	Face Tool	Gezichtsgereedschap
+	Select Face	Gezicht selecteren
+	Face {n}	Gezicht {n}
+	No face found	Geen gezicht gevonden
+	Face mesh model not found	Model voor gezichtsmesh niet gevonden
+	Link the eyes	Ogen koppelen
+	Eyes	Ogen
+	Nose	Neus
+	Mouth	Mond
+	Face Shape	Gezichtsvorm
+	Eye Size	Ooggrootte
+	Eye Height	Ooghoogte
+	Eye Width	Oogbreedte
+	Eye Tilt	Oogkanteling
+	Eye Distance	Oogafstand
+	Nose Height	Neushoogte
+	Nose Width	Neusbreedte
+	Smile	Glimlach
+	Upper Lip	Bovenlip
+	Lower Lip	Onderlip
+	Mouth Width	Mondbreedte
+	Mouth Height	Mondhoogte
+	Forehead	Voorhoofd
+	Chin Height	Kinhoogte
+	Jawline	Kaaklijn
+	Face Width	Gezichtsbreedte
 	Restore Defaults	Standaardwaarden herstellen
 	Restrictive (Web)	Beperkt (web)
 	Right align text	Tekst rechts uitlijnen

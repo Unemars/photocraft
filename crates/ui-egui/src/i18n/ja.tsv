@@ -3780,6 +3780,35 @@ curves	Smooth	スムーズ
 	Freeze Mask	ブラシでマスクを描画
 	Thaw Mask	ブラシでマスクを消去
 
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	顔立ちを調整
+	Face Tool	顔ツール
+	Select Face	顔を選択
+	Face {n}	顔 {n}
+	No face found	顔が見つかりません
+	Face mesh model not found	顔メッシュモデルが見つかりません
+	Link the eyes	両目をリンク
+	Eyes	目
+	Nose	鼻
+	Mouth	口
+	Face Shape	顔の形
+	Eye Size	目の大きさ
+	Eye Height	目の高さ
+	Eye Width	目の幅
+	Eye Tilt	目の傾き
+	Eye Distance	目の間隔
+	Nose Height	鼻の高さ
+	Nose Width	鼻の幅
+	Smile	笑顔
+	Upper Lip	上唇
+	Lower Lip	下唇
+	Mouth Width	口の幅
+	Mouth Height	口の高さ
+	Forehead	額
+	Chin Height	あごの高さ
+	Jawline	あごのライン
+	Face Width	顔の幅
+
 # Panel menu items and section labels passed to tl!() as variables (channels panel, paths panel, layer style)
 	Convert to Alpha Channel	アルファチャンネルに変換
 	Delete Channel	チャンネルを削除

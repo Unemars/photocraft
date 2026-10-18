@@ -1416,6 +1416,34 @@
 	Resolution	Resolusi
 	Resolution:	Resolusi:
 	Restore All	Pulihkan Semua
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Liquify Peka Wajah
+	Face Tool	Alat Wajah
+	Select Face	Pilih Wajah
+	Face {n}	Wajah {n}
+	No face found	Wajah tidak ditemukan
+	Face mesh model not found	Model mesh wajah tidak ditemukan
+	Link the eyes	Tautkan kedua mata
+	Eyes	Mata
+	Nose	Hidung
+	Mouth	Mulut
+	Face Shape	Bentuk Wajah
+	Eye Size	Ukuran Mata
+	Eye Height	Tinggi Mata
+	Eye Width	Lebar Mata
+	Eye Tilt	Kemiringan Mata
+	Eye Distance	Jarak Mata
+	Nose Height	Tinggi Hidung
+	Nose Width	Lebar Hidung
+	Smile	Senyum
+	Upper Lip	Bibir Atas
+	Lower Lip	Bibir Bawah
+	Mouth Width	Lebar Mulut
+	Mouth Height	Tinggi Mulut
+	Forehead	Dahi
+	Chin Height	Tinggi Dagu
+	Jawline	Garis Rahang
+	Face Width	Lebar Wajah
 	Restore Defaults	Pulihkan Default
 	Restrictive (Web)	Restriktif (Web)
 	Right align text	Teks rata kanan

@@ -1437,6 +1437,34 @@
 	Resolution	Risoluzione
 	Resolution:	Risoluzione:
 	Restore All	Ripristina tutto
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Fluidifica con riconoscimento del viso
+	Face Tool	Strumento Viso
+	Select Face	Seleziona viso
+	Face {n}	Viso {n}
+	No face found	Nessun viso trovato
+	Face mesh model not found	Modello della mesh del viso non trovato
+	Link the eyes	Collega gli occhi
+	Eyes	Occhi
+	Nose	Naso
+	Mouth	Bocca
+	Face Shape	Forma del viso
+	Eye Size	Dimensione occhi
+	Eye Height	Altezza occhi
+	Eye Width	Larghezza occhi
+	Eye Tilt	Inclinazione occhi
+	Eye Distance	Distanza occhi
+	Nose Height	Altezza naso
+	Nose Width	Larghezza naso
+	Smile	Sorriso
+	Upper Lip	Labbro superiore
+	Lower Lip	Labbro inferiore
+	Mouth Width	Larghezza bocca
+	Mouth Height	Altezza bocca
+	Forehead	Fronte
+	Chin Height	Altezza mento
+	Jawline	Mascella
+	Face Width	Larghezza viso
 	Restore Defaults	Ripristina predefiniti
 	Restrictive (Web)	Restrittivo (web)
 	Right align text	Allinea testo a destra

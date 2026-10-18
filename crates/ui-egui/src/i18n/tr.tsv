@@ -1396,6 +1396,34 @@
 	Resolution	Çözünürlük
 	Resolution:	Çözünürlük:
 	Restore All	Tümünü Geri Yükle
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Yüze Duyarlı Sıvılaştırma
+	Face Tool	Yüz Aracı
+	Select Face	Yüz Seç
+	Face {n}	Yüz {n}
+	No face found	Yüz bulunamadı
+	Face mesh model not found	Yüz ağı modeli bulunamadı
+	Link the eyes	Gözleri bağla
+	Eyes	Gözler
+	Nose	Burun
+	Mouth	Ağız
+	Face Shape	Yüz Şekli
+	Eye Size	Göz Boyutu
+	Eye Height	Göz Yüksekliği
+	Eye Width	Göz Genişliği
+	Eye Tilt	Göz Eğimi
+	Eye Distance	Göz Mesafesi
+	Nose Height	Burun Yüksekliği
+	Nose Width	Burun Genişliği
+	Smile	Gülümseme
+	Upper Lip	Üst Dudak
+	Lower Lip	Alt Dudak
+	Mouth Width	Ağız Genişliği
+	Mouth Height	Ağız Yüksekliği
+	Forehead	Alın
+	Chin Height	Çene Yüksekliği
+	Jawline	Çene Hattı
+	Face Width	Yüz Genişliği
 	Restore Defaults	Varsayılanları Geri Yükle
 	Restrictive (Web)	Kısıtlayıcı (Web)
 	Right align text	Metni sağa hizala

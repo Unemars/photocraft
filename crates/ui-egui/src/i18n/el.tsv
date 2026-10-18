@@ -2958,6 +2958,34 @@
 	Resolve Missing Fonts	Επίλυση ελλείψεων γραμματοσειρών
 	Resolve Missing Fonts…	Επίλυση ελλείψεων γραμματοσειρών…
 	Restore All	Επαναφορά όλων
+# Face-Aware Liquify (the Face Tool and face sliders in Liquify)
+	Face-Aware Liquify	Ρευστοποίηση με αναγνώριση προσώπου
+	Face Tool	Πρόσωπο (Face Tool)
+	Select Face	Επιλογή προσώπου
+	Face {n}	Πρόσωπο {n}
+	No face found	Δεν βρέθηκε πρόσωπο
+	Face mesh model not found	Δεν βρέθηκε το μοντέλο πλέγματος προσώπου
+	Link the eyes	Σύνδεση των ματιών
+	Eyes	Μάτια
+	Nose	Μύτη
+	Mouth	Στόμα
+	Face Shape	Σχήμα προσώπου
+	Eye Size	Μέγεθος ματιών
+	Eye Height	Ύψος ματιών
+	Eye Width	Πλάτος ματιών
+	Eye Tilt	Κλίση ματιών
+	Eye Distance	Απόσταση ματιών
+	Nose Height	Ύψος μύτης
+	Nose Width	Πλάτος μύτης
+	Smile	Χαμόγελο
+	Upper Lip	Άνω χείλος
+	Lower Lip	Κάτω χείλος
+	Mouth Width	Πλάτος στόματος
+	Mouth Height	Ύψος στόματος
+	Forehead	Μέτωπο
+	Chin Height	Ύψος πηγουνιού
+	Jawline	Γραμμή σαγονιού
+	Face Width	Πλάτος προσώπου
 	Restore Defaults	Επαναφορά προεπιλογών
 	Restrictive (Web)	Περιοριστικό (ιστός)
 	Reticulation	Δικτύωση
