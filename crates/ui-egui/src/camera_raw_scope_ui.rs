@@ -382,8 +382,10 @@ fn graph(ui: &mut egui::Ui, d: &mut CameraRawDialog, view: &mut CameraRawScopeSt
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width().max(1.0), height), Sense::click_and_drag());
     d.scope.rect = Some(rect);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, ui.is_enabled(), tl!("Tone Histogram")));
-    ui.painter().rect_filled(rect, t.radius_sm, t.histogram_background());
-    let plot = rect.shrink(4.0);
+    // Camera Raw's histogram fills its block edge to edge on the rule colour.
+    ui.painter().rect_filled(rect, 0.0, crate::camera_raw_style::Acr::get(ui.ctx()).rule);
+    // Edge to edge and down to the bottom, as Camera Raw draws it.
+    let plot = Rect::from_min_max(rect.min + vec2(1.0, 6.0), rect.max - vec2(1.0, 0.0));
     // Camera Raw's scale: the typical columns set it and a shadow or highlight spike runs off the top.
     crate::rgb_histogram::paint_with(ui.painter(), plot, d.histogram(), &t, crate::rgb_histogram::Spikes::Clip);
     let corner = 18.0;
