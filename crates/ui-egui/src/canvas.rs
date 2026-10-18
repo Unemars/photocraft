@@ -112,6 +112,8 @@ pub(crate) struct ClonePreviewCache {
     /// The reduced sources in use (the stamp's, and the composite under the brush for the
     /// overlay's blend modes).
     reduced: Vec<ReducedSource>,
+    /// The budget a reduced source must fit (the engine's; tests inject a smaller one).
+    source_budget: SourceBudget,
 }
 
 impl ClonePreviewCache {
@@ -162,10 +164,10 @@ impl ClonePreviewCache {
     }
 
     /// The source over `bounds` for what `sample` reads, reduced by at least `k` and by whatever
-    /// more the document's size needs to fit the engine's reduced-source budget (its own factor,
-    /// apart from the overlay's stride), built once per `key`.
+    /// more the document's size needs to fit the reduced-source budget (its own factor, apart
+    /// from the overlay's stride), built once per `key`.
     fn reduced_source(&mut self, session: &photocraft_engine::Session, sample: &str, key: String, k: u32, bounds: DRect) -> Option<&ReducedSource> {
-        let k = reduced_source_factor(k, bounds);
+        let k = reduced_source_factor(k, bounds, self.source_budget);
         let key = format!("{key}:{k}");
         if let Some(i) = self.reduced.iter().position(|r| r.key == key) {
             return self.reduced.get(i);
@@ -180,14 +182,46 @@ impl ClonePreviewCache {
     }
 }
 
-/// The reduction a source over `bounds` needs to fit the engine's reduced-source budget
-/// (`retouch_cmds::REDUCED_SOURCE_MAX_PIXELS`, `REDUCED_SOURCE_MAX_SIDE`), at least `k`.
-fn reduced_source_factor(k: u32, bounds: DRect) -> u32 {
-    use photocraft_engine::retouch_cmds::{REDUCED_SOURCE_MAX_PIXELS, REDUCED_SOURCE_MAX_SIDE};
-    let area = u64::from(bounds.width()) * u64::from(bounds.height());
-    let by_area = (area as f64 / REDUCED_SOURCE_MAX_PIXELS as f64).sqrt().ceil().clamp(1.0, 1e6) as u32;
-    let by_side = bounds.width().max(bounds.height()).div_ceil(REDUCED_SOURCE_MAX_SIDE).max(1);
-    k.max(1).max(by_area).max(by_side)
+/// What a reduced source may hold: pixels in all and on a side. The engine's guard
+/// (`retouch_cmds::REDUCED_SOURCE_MAX_PIXELS`, `REDUCED_SOURCE_MAX_SIDE`) is the one in use;
+/// tests inject a smaller one through [`ClonePreviewCache::source_budget`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SourceBudget {
+    pixels: u64,
+    side: u32,
+}
+
+impl SourceBudget {
+    const ENGINE: SourceBudget =
+        SourceBudget { pixels: photocraft_engine::retouch_cmds::REDUCED_SOURCE_MAX_PIXELS, side: photocraft_engine::retouch_cmds::REDUCED_SOURCE_MAX_SIDE };
+
+    /// Does a `w × h` source fit?
+    fn fits(self, w: u32, h: u32) -> bool {
+        w <= self.side && h <= self.side && u64::from(w) * u64::from(h) <= self.pixels
+    }
+}
+
+impl Default for SourceBudget {
+    fn default() -> Self {
+        SourceBudget::ENGINE
+    }
+}
+
+/// The reduction a source over `bounds` takes to fit `budget`, at least `k`: the smallest factor
+/// `f` whose source, `⌈w/f⌉ × ⌈h/f⌉` pixels as [`ClonePreviewCache::reduced_source`] asks for
+/// it, fits. `√(w·h / pixels)` and `max(w, h) / side` are lower bounds; the rounding up of each
+/// dimension can put the product past the budget (4097 × 4095 at `f` = 2 is 2049 × 2048, 2048
+/// pixels too many), so the rounded dimensions are checked and `f` raised until they fit.
+fn reduced_source_factor(k: u32, bounds: DRect, budget: SourceBudget) -> u32 {
+    let (w, h) = (bounds.width(), bounds.height());
+    let area = u64::from(w) * u64::from(h);
+    let by_area = (area as f64 / budget.pixels.max(1) as f64).sqrt().ceil().clamp(1.0, 1e6) as u32;
+    let by_side = w.max(h).div_ceil(budget.side.max(1)).max(1);
+    let mut f = k.max(1).max(by_area).max(by_side);
+    while !budget.fits(w.div_ceil(f), h.div_ceil(f)) && f < 1 << 20 {
+        f += 1;
+    }
+    f
 }
 
 /// Box-average a straight-alpha buffer by `k` (premultiplied, so transparent pixels don't tint
@@ -7515,15 +7549,41 @@ mod tests {
         assert_eq!(app.clone_preview.as_ref().unwrap().footprint_builds, 2, "a new position rasterizes the tip once more");
     }
 
-    /// A document much larger than the tip (tests: 600 × 600 against a 128² reduced-source
-    /// budget): the full-resolution overlay is over its budget and the source needs more reduction
-    /// than the overlay's stride. The source takes its own factor, the overlay is drawn, and both
-    /// the source and the texture stay within their budgets.
+    /// The source's factor fits the dimensions the source is asked for, `⌈w/f⌉ × ⌈h/f⌉`, not
+    /// only the area estimate: a 4097 × 4095 document at the overlay's stride 2 asked for
+    /// 2049 × 2048 pixels, 2048 past the engine's guard, and the overlay vanished. The factor is
+    /// also the smallest that fits, and never below the stride.
+    #[test]
+    fn reduced_source_factor_fits_the_rounded_dimensions() {
+        let b = SourceBudget::ENGINE;
+        let fits = |w: u32, h: u32, f: u32| b.fits(w.div_ceil(f), h.div_ceil(f));
+        assert!(!fits(4097, 4095, 2), "the boundary the estimate alone gets wrong");
+        assert_eq!(reduced_source_factor(2, DRect::new(0, 0, 4097, 4095), b), 3);
+        assert_eq!(reduced_source_factor(1, DRect::new(0, 0, 10000, 10000), b), 5, "2000 × 2000 fits exactly");
+        assert_eq!(reduced_source_factor(1, DRect::new(0, 0, 4096, 4096), b), 2);
+        assert_eq!(reduced_source_factor(3, DRect::new(0, 0, 100, 100), b), 3, "never below the overlay's stride");
+        for (w, h) in (4090u32..4110).flat_map(|w| [(w, 4095u32), (w, 4097), (w, 8191), (w, 12289)]) {
+            for k in 1..4 {
+                let f = reduced_source_factor(k, DRect::new(0, 0, w as i32, h as i32), b);
+                assert!(f >= k && fits(w, h, f), "{w} × {h} at stride {k}: factor {f} fits");
+                assert!(f == k || !fits(w, h, f - 1), "{w} × {h} at stride {k}: {f} is the smallest");
+            }
+        }
+        let small = SourceBudget { pixels: 128 * 128, side: 128 };
+        assert_eq!(reduced_source_factor(2, DRect::new(0, 0, 600, 600), small), 5, "600 × 600 → 120 × 120");
+    }
+
+    /// A document much larger than the tip (600 × 600 against a 128² reduced-source budget,
+    /// injected into the cache: the engine's own test constants don't reach this crate's tests):
+    /// the full-resolution overlay is over its budget and the source needs more reduction than
+    /// the overlay's stride. The source takes its own factor, past the stride, the overlay is
+    /// drawn, and both the source and the texture stay within their budgets.
     #[test]
     fn clone_overlay_reduces_a_large_document_source_on_its_own() {
-        use photocraft_engine::retouch_cmds::{REDUCED_SOURCE_MAX_PIXELS, REDUCED_SOURCE_MAX_SIDE};
+        let budget = SourceBudget { pixels: 128 * 128, side: 128 };
         let ctx = egui::Context::default();
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        app.clone_preview = Some(ClonePreviewCache { source_budget: budget, ..Default::default() });
         app.run("file.new", json!({"width": 600, "height": 600})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
         app.session
@@ -7543,10 +7603,15 @@ mod tests {
         let cache = app.clone_preview.as_ref().unwrap();
         let (image, _) = image.expect("the overlay uploads a texture");
         assert!((image.width() * image.height()) as u64 <= CLONE_OVERLAY_BUDGET, "{:?} within the overlay's budget", image.size);
+        let covered = cache.texture.as_ref().unwrap().1;
+        let k_dst = covered.width().div_ceil(image.width() as u32);
+        assert!(k_dst > 1, "the overlay itself is reduced: stride {k_dst} over {covered:?}");
         let src = cache.reduced.last().expect("built from the reduced source");
         let (sw, sh) = (src.buf.rect.width(), src.buf.rect.height());
-        assert!(u64::from(sw) * u64::from(sh) <= REDUCED_SOURCE_MAX_PIXELS && sw <= REDUCED_SOURCE_MAX_SIDE, "{sw}x{sh} within the source's budget");
-        assert!(src.k > 1 && src.k * sw >= 600, "its own reduction covers the document: k {}", src.k);
+        assert!(budget.fits(sw, sh), "{sw} × {sh} within the injected source budget");
+        assert_eq!(src.k, reduced_source_factor(k_dst, DRect::new(0, 0, 600, 600), budget));
+        assert!(src.k > k_dst, "the source's own factor {} is past the overlay's stride {k_dst}", src.k);
+        assert!(src.k * sw >= 600, "its own reduction covers the document: k {}", src.k);
         let centre = image.pixels[(image.height() / 2) * image.width() + image.width() / 2];
         assert!(centre.g() > 250 && centre.a() > 200, "the source's green under the tip's centre: {centre:?}");
     }
