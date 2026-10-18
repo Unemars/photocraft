@@ -643,8 +643,11 @@ fn mixer(ui: &mut Ui, e: &mut Edit) {
         if crate::widgets::dropdown(ui, "cr-mixer-adjust", &mut adjust, &[("hsl".to_string(), tr("HSL")), ("color".to_string(), tr("Color"))], 120.0) {
             e.layout.mixer_adjust = adjust;
         }
-        let tat = crate::icons::button(ui, "scan-eye", 22.0, false, tl!("Targeted Adjustment Tool: drag in the image to adjust the colour under the pointer"));
-        tat.on_disabled_hover_text(tl!("Not available yet"));
+        // The Targeted Adjustment Tool is not available yet: laid out, disabled.
+        ui.add_enabled_ui(false, |ui| {
+            crate::icons::button(ui, "scan-eye", 22.0, false, tl!("Targeted Adjustment Tool: drag in the image to adjust the colour under the pointer"))
+                .on_disabled_hover_text(tl!("Not available yet"));
+        });
     });
     if e.layout.mixer_adjust == "color" {
         // One colour at a time: eight swatches, then its hue, saturation and luminance.

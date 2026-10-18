@@ -19,6 +19,8 @@ fn inspect(h: &Harness<'_, PhotocraftApp>) -> Value {
     control::inspect(h.state(), &h.ctx)["cameraRaw"].clone()
 }
 fn fixture() -> Harness<'static, PhotocraftApp> {
+    // The tests query English labels; the dialog draws in the current interface language.
+    photocraft_ui_egui::i18n::set_current(photocraft_ui_egui::i18n::Lang::EN);
     let mut h = Harness::builder().with_step_dt(1.0 / 60.0).with_size(vec2(1632.0, 1046.0)).build_eframe(move |cc| {
         PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::ProMedium);
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());

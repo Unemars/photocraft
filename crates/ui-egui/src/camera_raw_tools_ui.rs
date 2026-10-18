@@ -357,6 +357,9 @@ pub(crate) fn more_menu(ui: &mut Ui, d: &mut CameraRawDialog, previous: Option<C
         ui.close();
     }
     if changed {
+        // The settings no longer come from the selected preset: Amount must not rebuild them from it.
+        d.tools.preset = None;
+        d.tools.preset_amount = 100.0;
         ui.close();
     }
     changed

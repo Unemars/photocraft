@@ -1119,7 +1119,10 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
     let screen = ctx.content_rect();
     let current_display = app.session.active().and_then(|st| app.session.color.canvas_display(&st.doc).ok());
     let mut action: Option<&str> = None;
-    let previous: Option<CameraRaw> = app.session.prefs().dialogs.get(PREVIOUS_KEY).and_then(|v| serde_json::from_value(v.clone()).ok());
+    // The settings of the last OK, from the preferences store: validated like a paste, since the
+    // store can be hand-edited.
+    let previous: Option<CameraRaw> =
+        app.session.prefs().dialogs.get(PREVIOUS_KEY).and_then(|v| serde_json::from_value::<CameraRaw>(v.clone()).ok()).filter(|p| p.validate().is_ok());
     egui::Area::new(egui::Id::new("camera-raw-dialog")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let Some(d) = app.camera_raw.as_mut() else { return };
         history_keys(d, ctx);
@@ -1552,28 +1555,34 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
         if i.consume_key(Modifiers::NONE, Key::Y) {
             d.before_after = if d.before_after == BeforeAfter::LeftRight { BeforeAfter::Off } else { BeforeAfter::LeftRight };
         }
-        if i.consume_key(Modifiers::NONE, Key::P) || i.consume_key(Modifiers::NONE, Key::Backslash) {
-            d.show_before = !d.show_before;
-        }
         if i.consume_key(Modifiers::COMMAND, Key::K) {
             d.prefs_open = true;
         }
         if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G) {
             layout.grid = !layout.grid;
         }
+        // A pattern without Shift also matches the key with Shift (`Modifiers::matches_logically`),
+        // so the Shift shortcuts go first: Shift+E (Red Eye) before E (Edit), Shift+P (Presets)
+        // before P (toggle Before).
         for (key, mods, tool) in [
+            (Key::E, Modifiers::SHIFT, "redEye"),
+            (Key::P, Modifiers::SHIFT, "presets"),
             (Key::E, Modifiers::NONE, "edit"),
             (Key::B, Modifiers::NONE, "remove"),
             (Key::M, Modifiers::NONE, "masking"),
-            (Key::E, Modifiers::SHIFT, "redEye"),
-            (Key::P, Modifiers::SHIFT, "presets"),
         ] {
             if i.consume_key(mods, key) {
                 layout.tool = tool.into();
             }
         }
+        if i.consume_key(Modifiers::NONE, Key::P) || i.consume_key(Modifiers::NONE, Key::Backslash) {
+            d.show_before = !d.show_before;
+        }
         if i.consume_key(Modifiers::NONE, Key::Escape) {
-            if d.profile_browser {
+            // Esc closes what is open on top of the dialog first; only the bare dialog cancels.
+            if d.prefs_open {
+                d.prefs_open = false;
+            } else if d.profile_browser {
                 d.profile_browser = false;
             } else {
                 *action = Some("cancel");
