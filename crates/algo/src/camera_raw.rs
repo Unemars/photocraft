@@ -427,16 +427,17 @@ fn lut_eval(lut: &[f32], v: f32) -> f32 {
     lut[i] + (lut[i + 1] - lut[i]) * t
 }
 
-/// Parametric tone curve as a LUT (regions split at `splits`, each slider ±100 moves its region
-/// by up to a quarter of the range, smoothly).
-fn parametric_lut(p: &CameraRaw, n: usize) -> Vec<f32> {
+/// Parametric tone curve as an `n`-entry LUT over 0..=1 (regions split at `curve_splits`, each
+/// slider ±100 moves its region by up to a quarter of the range, smoothly; `n` ≥ 2).
+pub fn parametric_lut(p: &CameraRaw, n: usize) -> Vec<f32> {
     let s = p.curve_splits.map(|v| v.clamp(5.0, 95.0) / 100.0);
     let centres = [s[0] / 2.0, (s[0] + s[1]) / 2.0, (s[1] + s[2]) / 2.0, (s[2] + 1.0) / 2.0];
     let amounts = [p.curve_shadows, p.curve_darks, p.curve_lights, p.curve_highlights];
     let widths = [s[0].max(0.1), (s[1] - s[0]).max(0.1), (s[2] - s[1]).max(0.1), (1.0 - s[2]).max(0.1)];
+    let last = n.saturating_sub(1).max(1) as f32;
     let mut lut: Vec<f32> = (0..n)
         .map(|i| {
-            let x = i as f32 / (n - 1) as f32;
+            let x = i as f32 / last;
             let mut y = x;
             for k in 0..4 {
                 let d = (x - centres[k]) / (widths[k] * 1.2);
