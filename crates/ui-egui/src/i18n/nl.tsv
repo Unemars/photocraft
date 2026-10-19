@@ -4276,3 +4276,15 @@ cameraRaw	Type	Type
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Randen: paars hoeveelheid
+	Defringe Purple Hue	Randen: paarse tint
+	Defringe Green Amount	Randen: groen hoeveelheid
+	Defringe Green Hue	Randen: groene tint
+	Lens Vignette Amount	Lensvignettering: hoeveelheid
+	Lens Vignette Midpoint	Lensvignettering: middelpunt
+	Calibration Red Hue	Kalibratie: rode tint
+	Calibration Red Saturation	Kalibratie: rode verzadiging
+	Calibration Green Hue	Kalibratie: groene tint
+	Calibration Green Saturation	Kalibratie: groene verzadiging
+	Calibration Blue Hue	Kalibratie: blauwe tint
+	Calibration Blue Saturation	Kalibratie: blauwe verzadiging

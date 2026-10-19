@@ -4674,3 +4674,9 @@ cameraRaw	Sharpening	Nitidezza
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Hue	Frangia: tonalità viola
+	Defringe Green Hue	Frangia: tonalità verde
+	Lens Vignette Amount	Vignettatura obiettivo: quantità
+	Calibration Red Saturation	Calibrazione: saturazione rosso
+	Calibration Green Saturation	Calibrazione: saturazione verde
+	Calibration Blue Saturation	Calibrazione: saturazione blu

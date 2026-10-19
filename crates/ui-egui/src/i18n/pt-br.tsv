@@ -4465,3 +4465,15 @@ cameraRaw	Type	Tipo
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Franjas: quantidade de roxo
+	Defringe Purple Hue	Franjas: matiz roxo
+	Defringe Green Amount	Franjas: quantidade de verde
+	Defringe Green Hue	Franjas: matiz verde
+	Lens Vignette Amount	Vinheta da lente: quantidade
+	Lens Vignette Midpoint	Vinheta da lente: ponto médio
+	Calibration Red Hue	Calibração: matiz vermelho
+	Calibration Red Saturation	Calibração: saturação do vermelho
+	Calibration Green Hue	Calibração: matiz verde
+	Calibration Green Saturation	Calibração: saturação do verde
+	Calibration Blue Hue	Calibração: matiz azul
+	Calibration Blue Saturation	Calibração: saturação do azul

@@ -4518,3 +4518,9 @@ cameraRaw	Type	Tipo
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Hue	Halos: tono púrpura
+	Defringe Green Hue	Halos: tono verde
+	Lens Vignette Amount	Viñeta del objetivo: cantidad
+	Calibration Red Saturation	Calibración: saturación de rojo
+	Calibration Green Saturation	Calibración: saturación de verde
+	Calibration Blue Saturation	Calibración: saturación de azul

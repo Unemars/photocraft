@@ -4587,3 +4587,15 @@ cameraRaw	Zoom and Pan	Uvećanje i pomeranje
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Obrub: količina ljubičaste
+	Defringe Purple Hue	Obrub: ljubičasta nijansa
+	Defringe Green Amount	Obrub: količina zelene
+	Defringe Green Hue	Obrub: zelena nijansa
+	Lens Vignette Amount	Vinjeta objektiva: količina
+	Lens Vignette Midpoint	Vinjeta objektiva: sredina
+	Calibration Red Hue	Kalibracija: crvena nijansa
+	Calibration Red Saturation	Kalibracija: crvena zasićenost
+	Calibration Green Hue	Kalibracija: zelena nijansa
+	Calibration Green Saturation	Kalibracija: zelena zasićenost
+	Calibration Blue Hue	Kalibracija: plava nijansa
+	Calibration Blue Saturation	Kalibracija: plava zasićenost

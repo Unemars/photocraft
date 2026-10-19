@@ -3,8 +3,9 @@
 //! Geometry, Calibration; its Early Access Lens Blur is left out), laid out as measured in
 //! Photoshop 25.4. Controls whose processing has not been measured against Camera Raw's yet
 //! (Profile › Monochrome, the White Balance menu and tool, Auto, Refine Saturation, the noise
-//! Contrast and Smoothness, Optics, Geometry, Calibration) are laid out and disabled at their
-//! defaults, and nothing is stored for them: each lands with its measurement.
+//! Contrast and Smoothness, Optics › Distortion and the fringe eyedropper, Geometry, Calibration's
+//! process version and Shadows tint) are laid out and disabled at their defaults, and nothing is
+//! stored for them: each lands with its measurement.
 
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use photocraft_algo::camera_raw::{CameraRaw, Wheel, curve_lut};
@@ -76,7 +77,17 @@ pub(crate) fn without(p: &CameraRaw, id: &str) -> CameraRaw {
             (q.noise_luminance, q.noise_luminance_detail, q.noise_color, q.noise_color_detail) =
                 (d.noise_luminance, d.noise_luminance_detail, d.noise_color, d.noise_color_detail);
         }
-        // Optics, Geometry and Calibration have no settings yet: their controls are placeholders.
+        "optics" => {
+            (q.lens_vignette_amount, q.lens_vignette_midpoint) = (d.lens_vignette_amount, d.lens_vignette_midpoint);
+            (q.defringe_purple_amount, q.defringe_purple_hue, q.defringe_green_amount, q.defringe_green_hue) =
+                (d.defringe_purple_amount, d.defringe_purple_hue, d.defringe_green_amount, d.defringe_green_hue);
+        }
+        "calibration" => {
+            (q.calibration_red_hue, q.calibration_red_saturation) = (d.calibration_red_hue, d.calibration_red_saturation);
+            (q.calibration_green_hue, q.calibration_green_saturation) = (d.calibration_green_hue, d.calibration_green_saturation);
+            (q.calibration_blue_hue, q.calibration_blue_saturation) = (d.calibration_blue_hue, d.calibration_blue_saturation);
+        }
+        // Geometry has no settings yet: its controls are placeholders.
         _ => {}
     }
     q
@@ -962,24 +973,26 @@ fn detail(ui: &mut Ui, e: &mut Edit) {
     st::note(ui, tl!("For a more accurate preview, zoom the preview size to 100% or larger when adjusting the controls in this panel."), false);
 }
 
-/// Optics: Distortion, the lens Vignette and Defringe wait for their processing to be measured
-/// against Camera Raw's. The panel is laid out as Camera Raw's, every control disabled at its
-/// default, and nothing is stored.
+/// Optics: the lens Vignette and Defringe, as measured (`camera_raw::lens_vignette`, `defringe`).
+/// Distortion and the fringe eyedropper wait for theirs: laid out, disabled, nothing stored.
 fn optics(ui: &mut Ui, e: &mut Edit) {
     let mut distortion = 0.0;
     st::slider(ui, "lensDistortion", tr("Distortion"), &mut distortion, &Spec::centred(100.0).enabled(false));
     let mut open = e.group_open("lensVignette");
-    let (mut vignette, mut midpoint) = (0.0, 50.0);
-    st::group(
+    let p = &mut *e.p;
+    // Midpoint acts only with a vignette, as in Camera Raw.
+    let active = p.lens_vignette_amount != 0.0;
+    e.dirty |= st::group(
         ui,
         "lensVignette",
         &mut open,
-        |ui| st::slider(ui, "lensVignette", tr("Vignette"), &mut vignette, &Spec::centred(100.0).enabled(false)).changed,
-        |ui| st::slider(ui, "lensVignetteMidpoint", tr("Midpoint"), &mut midpoint, &Spec::amount(100.0, 50.0).enabled(false)).changed,
+        |ui| st::slider(ui, "lensVignette", tr("Vignette"), &mut p.lens_vignette_amount, &Spec::centred(100.0)).changed,
+        |ui| st::slider(ui, "lensVignetteMidpoint", tr("Midpoint"), &mut p.lens_vignette_midpoint, &Spec::amount(100.0, 50.0).enabled(active)).changed,
     );
     e.set_group("lensVignette", open);
     let mut open = e.group_open("defringe");
-    st::boxed_group(ui, "defringe", "droplet", tr("Defringe"), &mut open, |ui| {
+    let p = &mut *e.p;
+    e.dirty |= st::boxed_group(ui, "defringe", "droplet", tr("Defringe"), &mut open, |ui| {
         let c = Acr::get(ui.ctx());
         ui.horizontal(|ui| {
             ui.add_space(st::INSET_L);
@@ -989,16 +1002,13 @@ fn optics(ui: &mut Ui, e: &mut Edit) {
                 .on_disabled_hover_text(tl!("Not available yet"));
         });
         st::note(ui, tl!("Use the eyedropper to sample purple and green areas of fringing that need correction."), true);
-        let (mut purple, mut green) = (0.0, 0.0);
-        let (mut purple_hue, mut green_hue) = ([30.0, 70.0], [40.0, 60.0]);
-        st::slider(ui, "defringePurple", tr("Purple Amount"), &mut purple, &Spec::amount(20.0, 0.0).enabled(false));
-        hue_range(ui, "defringePurpleHue", tr("Purple Hue"), &mut purple_hue, [260.0, 340.0], 10.0, false);
-        st::slider(ui, "defringeGreen", tr("Green Amount"), &mut green, &Spec::amount(20.0, 0.0).enabled(false));
-        hue_range(ui, "defringeGreenHue", tr("Green Hue"), &mut green_hue, [60.0, 180.0], 10.0, false);
-        false
+        let mut ch = st::slider(ui, "defringePurple", tr("Purple Amount"), &mut p.defringe_purple_amount, &Spec::amount(20.0, 0.0)).changed;
+        ch |= hue_range(ui, "defringePurpleHue", tr("Purple Hue"), &mut p.defringe_purple_hue, [260.0, 340.0], 10.0, true);
+        ch |= st::slider(ui, "defringeGreen", tr("Green Amount"), &mut p.defringe_green_amount, &Spec::amount(20.0, 0.0)).changed;
+        ch |= hue_range(ui, "defringeGreenHue", tr("Green Hue"), &mut p.defringe_green_hue, [60.0, 180.0], 10.0, true);
+        ch
     });
     e.set_group("defringe", open);
-    st::note(ui, tl!("Not available yet"), true);
 }
 
 /// A two-knob range slider (Defringe hue windows): `lo / hi` in 0..=100 at least `gap` apart,
@@ -1115,9 +1125,9 @@ fn geometry(ui: &mut Ui, e: &mut Edit) {
     st::note(ui, tl!("Not available yet"), true);
 }
 
-/// Calibration: the process version, the Shadows tint and the primaries wait for their processing
-/// to be measured against Camera Raw's. Laid out as Camera Raw's, disabled, nothing stored.
-fn calibration(ui: &mut Ui, _e: &mut Edit) {
+/// Calibration: the primaries' hue and saturation, as measured (`pointwise`). The process version
+/// and the Shadows tint wait for theirs: laid out, disabled, nothing stored.
+fn calibration(ui: &mut Ui, e: &mut Edit) {
     ui.horizontal(|ui| {
         ui.add_space(st::INSET_L);
         ui.set_min_height(30.0);
@@ -1134,16 +1144,20 @@ fn calibration(ui: &mut Ui, _e: &mut Edit) {
     st::caption(ui, tr("Shadows"));
     let mut tint = 0.0;
     st::slider(ui, "shadowsTint", tr("Tint"), &mut tint, &Spec::centred(100.0).colors(st::tint_stops()).enabled(false));
-    for (title, hue) in [("Red Primary", 0.0), ("Green Primary", 120.0), ("Blue Primary", 240.0)] {
+    let p = &mut *e.p;
+    let rows: [(&str, f32, &mut f32, &mut f32); 3] = [
+        ("Red Primary", 0.0, &mut p.calibration_red_hue, &mut p.calibration_red_saturation),
+        ("Green Primary", 120.0, &mut p.calibration_green_hue, &mut p.calibration_green_saturation),
+        ("Blue Primary", 240.0, &mut p.calibration_blue_hue, &mut p.calibration_blue_saturation),
+    ];
+    for (title, hue, h, s) in rows {
         ui.add_space(4.0);
         st::caption(ui, tr(title));
-        let (mut h, mut s) = (0.0, 0.0);
         let hues = vec![st::hsv(hue - 35.0, 0.6, 0.62), st::hsv(hue, 0.6, 0.62), st::hsv(hue + 35.0, 0.6, 0.62)];
-        st::slider(ui, &format!("{title}Hue"), tr("Hue"), &mut h, &Spec::centred(100.0).colors(hues).enabled(false));
+        e.dirty |= st::slider(ui, &format!("{title}Hue"), tr("Hue"), h, &Spec::centred(100.0).colors(hues)).changed;
         let sats = vec![st::hsv(hue, 0.15, 0.58), st::hsv(hue, 0.65, 0.58)];
-        st::slider(ui, &format!("{title}Sat"), tr("Saturation"), &mut s, &Spec::centred(100.0).colors(sats).enabled(false));
+        e.dirty |= st::slider(ui, &format!("{title}Sat"), tr("Saturation"), s, &Spec::centred(100.0).colors(sats)).changed;
     }
-    st::note(ui, tl!("Not available yet"), true);
 }
 
 #[cfg(test)]
@@ -1160,10 +1174,12 @@ mod tests {
             hsl_sat: [5.0; 8],
             grade_balance: 20.0,
             sharpen_amount: 40.0,
+            defringe_purple_amount: 4.0,
+            calibration_blue_saturation: 30.0,
             ..Default::default()
         };
-        // Optics, Geometry and Calibration have no settings yet: their controls are placeholders.
-        let placeholders = ["optics", "geometry", "calibration"];
+        // Geometry has no settings yet: its controls are placeholders.
+        let placeholders = ["geometry"];
         let with_settings: Vec<&str> = PANELS.iter().map(|(id, _)| *id).filter(|id| !placeholders.contains(id)).collect();
         let mut all_reset = edited_all.clone();
         for &id in &with_settings {

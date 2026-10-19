@@ -4274,3 +4274,15 @@ cameraRaw	Dehaze	Odstranění oparu
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Odstranit lem: množství fialové
+	Defringe Purple Hue	Odstranit lem: fialový odstín
+	Defringe Green Amount	Odstranit lem: množství zelené
+	Defringe Green Hue	Odstranit lem: zelený odstín
+	Lens Vignette Amount	Vinětace objektivu: množství
+	Lens Vignette Midpoint	Vinětace objektivu: střed
+	Calibration Red Hue	Kalibrace: červená, odstín
+	Calibration Red Saturation	Kalibrace: červená, sytost
+	Calibration Green Hue	Kalibrace: zelená, odstín
+	Calibration Green Saturation	Kalibrace: zelená, sytost
+	Calibration Blue Hue	Kalibrace: modrá, odstín
+	Calibration Blue Saturation	Kalibrace: modrá, sytost

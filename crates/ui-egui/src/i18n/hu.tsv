@@ -4431,3 +4431,15 @@ cameraRaw	Zoom and Pan	Nagyítás és pásztázás
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Színszegély: lila mennyisége
+	Defringe Purple Hue	Színszegély: lila árnyalat
+	Defringe Green Amount	Színszegély: zöld mennyisége
+	Defringe Green Hue	Színszegély: zöld árnyalat
+	Lens Vignette Amount	Objektív-vignettálás: mennyiség
+	Lens Vignette Midpoint	Objektív-vignettálás: középpont
+	Calibration Red Hue	Kalibrálás: vörös árnyalat
+	Calibration Red Saturation	Kalibrálás: vörös telítettség
+	Calibration Green Hue	Kalibrálás: zöld árnyalat
+	Calibration Green Saturation	Kalibrálás: zöld telítettség
+	Calibration Blue Hue	Kalibrálás: kék árnyalat
+	Calibration Blue Saturation	Kalibrálás: kék telítettség

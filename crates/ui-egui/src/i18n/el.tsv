@@ -4216,3 +4216,15 @@ cameraRaw	Type	Τύπος
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Περιθώριο: ποσότητα μοβ
+	Defringe Purple Hue	Περιθώριο: μοβ απόχρωση
+	Defringe Green Amount	Περιθώριο: ποσότητα πράσινου
+	Defringe Green Hue	Περιθώριο: πράσινη απόχρωση
+	Lens Vignette Amount	Βινιέτα φακού: ποσότητα
+	Lens Vignette Midpoint	Βινιέτα φακού: μέσο
+	Calibration Red Hue	Βαθμονόμηση: κόκκινη απόχρωση
+	Calibration Red Saturation	Βαθμονόμηση: κόκκινος κορεσμός
+	Calibration Green Hue	Βαθμονόμηση: πράσινη απόχρωση
+	Calibration Green Saturation	Βαθμονόμηση: πράσινος κορεσμός
+	Calibration Blue Hue	Βαθμονόμηση: μπλε απόχρωση
+	Calibration Blue Saturation	Βαθμονόμηση: μπλε κορεσμός

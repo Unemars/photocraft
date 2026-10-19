@@ -62,18 +62,31 @@ const SCALARS: &[(&str, &str)] = &[
     ("vignetteMidpoint", "PCVM"),
     ("vignetteFeather", "PCVF"),
     ("vignetteRoundness", "PCVR"),
+    ("vignetteHighlights", "PCVH"),
+    ("defringePurpleAmount", "DfPA"),
+    ("defringeGreenAmount", "DfGA"),
+    ("lensVignetteAmount", "VigA"),
+    ("lensVignetteMidpoint", "VigM"),
+    ("calibrationRedHue", "RHue"),
+    ("calibrationRedSaturation", "RSat"),
+    ("calibrationGreenHue", "GHue"),
+    ("calibrationGreenSaturation", "GSat"),
+    ("calibrationBlueHue", "BHue"),
+    ("calibrationBlueSaturation", "BSat"),
 ];
 const ARRAYS: &[(&str, &[&str])] = &[
     ("curveSplits", &["PC_1", "PC_2", "PC_3"]),
     ("hslHue", &["HA_R", "HA_O", "HA_Y", "HA_G", "HA_A", "HA_B", "HA_P", "HA_M"]),
     ("hslSat", &["SA_R", "SA_O", "SA_Y", "SA_G", "SA_A", "SA_B", "SA_P", "SA_M"]),
     ("hslLum", &["LA_R", "LA_O", "LA_Y", "LA_G", "LA_A", "LA_B", "LA_P", "LA_M"]),
+    ("defringePurpleHue", &["DPHL", "DPHH"]),
+    ("defringeGreenHue", &["DPGL", "DPGH"]),
 ];
 const CURVES: &[(&str, &str)] = &[("pointCurve", "Crv "), ("pointCurveRed", "CrvR"), ("pointCurveGreen", "CrvG"), ("pointCurveBlue", "CrvB")];
 
 // These controls have no PhotoCraft counterpart yet. Their observed neutral values can be
 // retained in the template; active values must keep the entire filter opaque.
-const NEUTRAL_ONLY: &[(&str, i32)] = &[("LNRC", 0), ("CNRS", 50), ("MDis", 0), ("VigA", 0), ("VigM", 50), ("crfs", 100), ("TMMs", 0), ("PGTM", 0), ("RGBt", 0)];
+const NEUTRAL_ONLY: &[(&str, i32)] = &[("LNRC", 0), ("CNRS", 50), ("MDis", 0), ("crfs", 100), ("TMMs", 0), ("PGTM", 0), ("RGBt", 0)];
 
 fn default_params() -> Option<J> {
     serde_json::to_value(CameraRaw::default()).ok()
@@ -102,7 +115,8 @@ fn number_range(key: &str) -> std::ops::RangeInclusive<f64> {
         "Shrp" => 0.0..=150.0,
         "STSH" | "STHH" | "CgMH" | "CgGH" => 0.0..=360.0,
         "PC_1" | "PC_2" | "PC_3" | "ShpD" | "ShpM" | "LNR " | "LNRD" | "CNR " | "CNRD" | "STSS" | "STHS" | "CgMS" | "CgGS" | "CgBl" | "GRNA" | "GRNS"
-        | "GRNF" | "PCVM" | "PCVF" => 0.0..=100.0,
+        | "GRNF" | "PCVM" | "PCVF" | "PCVH" | "DPHL" | "DPHH" | "DPGL" | "DPGH" | "VigM" => 0.0..=100.0,
+        "DfPA" | "DfGA" => 0.0..=20.0,
         _ => -100.0..=100.0,
     }
 }
@@ -656,7 +670,7 @@ mod tests {
             json!({"gradeShadows": {"hue": 361}}),
             json!({"gradeShadows": {"unknown": 1}}),
             json!({"seed": 1}),
-            json!({"vignetteHighlights": 10}),
+            json!({"vignetteHighlights": 101}),
             json!({"futureSetting": 1}),
             json!({TEMPLATE_KEY: "zz"}),
             json!({TEMPLATE_KEY: "00"}),

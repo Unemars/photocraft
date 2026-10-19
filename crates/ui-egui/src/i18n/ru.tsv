@@ -4740,3 +4740,15 @@ shape	Appearance	Оформление
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Кайма: пурпурный, величина
+	Defringe Purple Hue	Кайма: пурпурный оттенок
+	Defringe Green Amount	Кайма: зелёный, величина
+	Defringe Green Hue	Кайма: зелёный оттенок
+	Lens Vignette Amount	Виньетирование объектива: величина
+	Lens Vignette Midpoint	Виньетирование объектива: средняя точка
+	Calibration Red Hue	Калибровка: красный, оттенок
+	Calibration Red Saturation	Калибровка: красный, насыщенность
+	Calibration Green Hue	Калибровка: зелёный, оттенок
+	Calibration Green Saturation	Калибровка: зелёный, насыщенность
+	Calibration Blue Hue	Калибровка: синий, оттенок
+	Calibration Blue Saturation	Калибровка: синий, насыщенность

@@ -3758,3 +3758,10 @@ cameraRaw	Type	유형
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+cameraRaw	Hue	색조
+	Defringe Purple Hue	프린지 제거: 보라색 색조
+	Defringe Green Hue	프린지 제거: 녹색 색조
+	Lens Vignette Amount	렌즈 비네팅: 양
+	Calibration Red Saturation	보정: 빨강 채도
+	Calibration Green Saturation	보정: 녹색 채도
+	Calibration Blue Saturation	보정: 파랑 채도

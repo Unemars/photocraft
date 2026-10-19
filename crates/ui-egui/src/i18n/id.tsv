@@ -3542,3 +3542,17 @@ cameraRaw	Type	Jenis
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+cameraRaw	Hue	Rona
+	Defringe	Hilangkan pinggiran
+	Defringe Purple Amount	Pinggiran: jumlah ungu
+	Defringe Purple Hue	Pinggiran: rona ungu
+	Defringe Green Amount	Pinggiran: jumlah hijau
+	Defringe Green Hue	Pinggiran: rona hijau
+	Lens Vignette Amount	Vignet lensa: jumlah
+	Lens Vignette Midpoint	Vignet lensa: titik tengah
+	Calibration Red Hue	Kalibrasi: rona merah
+	Calibration Red Saturation	Kalibrasi: saturasi merah
+	Calibration Green Hue	Kalibrasi: rona hijau
+	Calibration Green Saturation	Kalibrasi: saturasi hijau
+	Calibration Blue Hue	Kalibrasi: rona biru
+	Calibration Blue Saturation	Kalibrasi: saturasi biru

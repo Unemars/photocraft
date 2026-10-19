@@ -58,6 +58,20 @@ const SCALARS: &[(&str, Field, f32, f32)] = &[
     ("SaturationAdjustmentGreen", |p| &mut p.hsl_sat[3], -100.0, 100.0),
     ("SaturationAdjustmentAqua", |p| &mut p.hsl_sat[4], -100.0, 100.0),
     ("SaturationAdjustmentBlue", |p| &mut p.hsl_sat[5], -100.0, 100.0),
+    ("DefringePurpleAmount", |p| &mut p.defringe_purple_amount, 0.0, 20.0),
+    ("DefringePurpleHueLo", |p| &mut p.defringe_purple_hue[0], 0.0, 100.0),
+    ("DefringePurpleHueHi", |p| &mut p.defringe_purple_hue[1], 0.0, 100.0),
+    ("DefringeGreenAmount", |p| &mut p.defringe_green_amount, 0.0, 20.0),
+    ("DefringeGreenHueLo", |p| &mut p.defringe_green_hue[0], 0.0, 100.0),
+    ("DefringeGreenHueHi", |p| &mut p.defringe_green_hue[1], 0.0, 100.0),
+    ("VignetteAmount", |p| &mut p.lens_vignette_amount, -100.0, 100.0),
+    ("VignetteMidpoint", |p| &mut p.lens_vignette_midpoint, 0.0, 100.0),
+    ("RedHue", |p| &mut p.calibration_red_hue, -100.0, 100.0),
+    ("RedSaturation", |p| &mut p.calibration_red_saturation, -100.0, 100.0),
+    ("GreenHue", |p| &mut p.calibration_green_hue, -100.0, 100.0),
+    ("GreenSaturation", |p| &mut p.calibration_green_saturation, -100.0, 100.0),
+    ("BlueHue", |p| &mut p.calibration_blue_hue, -100.0, 100.0),
+    ("BlueSaturation", |p| &mut p.calibration_blue_saturation, -100.0, 100.0),
     ("SaturationAdjustmentPurple", |p| &mut p.hsl_sat[6], -100.0, 100.0),
     ("SaturationAdjustmentMagenta", |p| &mut p.hsl_sat[7], -100.0, 100.0),
     ("LuminanceAdjustmentRed", |p| &mut p.hsl_lum[0], -100.0, 100.0),
@@ -182,9 +196,8 @@ fn neutral(name: &str, value: &str) -> bool {
     }
     match name {
         "GrainSeed" => true,
-        "VignetteMidpoint" => number(v) == Some(50.0),
         "PerspectiveScale" => number(v) == Some(100.0),
-        _ => name.starts_with("Defringe") && name.contains("Hue"),
+        _ => false,
     }
 }
 
@@ -356,8 +369,9 @@ mod tests {
         assert!(p.point_curve.is_empty());
         assert_eq!(p.point_curve_red, vec![[0.0, 0.0], [128.0, 140.0], [255.0, 255.0]]);
         assert_eq!(p.dehaze, 12.0);
-        // Lens vignetting, calibration and geometry have no counterpart.
-        assert_eq!(r.ignored, vec!["VignetteAmount".to_string(), "RedHue".to_string()]);
+        // The lens vignette and the calibration primaries are read too; nothing is left over.
+        assert_eq!((p.lens_vignette_amount, p.calibration_red_hue), (-20.0, -5.0));
+        assert!(r.ignored.is_empty(), "{:?}", r.ignored);
     }
 
     #[test]

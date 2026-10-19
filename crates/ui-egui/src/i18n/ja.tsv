@@ -4197,3 +4197,16 @@ cameraRaw	Type	種類
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+cameraRaw	Hue	色相
+	Defringe Purple Amount	フリンジ軽減: パープルの適用量
+	Defringe Purple Hue	フリンジ軽減: パープルの色相
+	Defringe Green Amount	フリンジ軽減: グリーンの適用量
+	Defringe Green Hue	フリンジ軽減: グリーンの色相
+	Lens Vignette Amount	レンズの周辺光量: 適用量
+	Lens Vignette Midpoint	レンズの周辺光量: 中心点
+	Calibration Red Hue	キャリブレーション: レッドの色相
+	Calibration Red Saturation	キャリブレーション: レッドの彩度
+	Calibration Green Hue	キャリブレーション: グリーンの色相
+	Calibration Green Saturation	キャリブレーション: グリーンの彩度
+	Calibration Blue Hue	キャリブレーション: ブルーの色相
+	Calibration Blue Saturation	キャリブレーション: ブルーの彩度

@@ -3190,3 +3190,17 @@ cameraRaw	Type	类型
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+cameraRaw	Hue	色相
+	Defringe	去边
+	Defringe Purple Amount	去边：紫色数量
+	Defringe Purple Hue	去边：紫色色相
+	Defringe Green Amount	去边：绿色数量
+	Defringe Green Hue	去边：绿色色相
+	Lens Vignette Amount	镜头晕影：数量
+	Lens Vignette Midpoint	镜头晕影：中点
+	Calibration Red Hue	校准：红色色相
+	Calibration Red Saturation	校准：红色饱和度
+	Calibration Green Hue	校准：绿色色相
+	Calibration Green Saturation	校准：绿色饱和度
+	Calibration Blue Hue	校准：蓝色色相
+	Calibration Blue Saturation	校准：蓝色饱和度

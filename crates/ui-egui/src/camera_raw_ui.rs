@@ -2494,7 +2494,7 @@ mod tests {
         let written: Written = Arc::default();
         let w = written.clone();
         let foreign = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-            <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Clarity2012="+25" crs:RedHue="-5"/>
+            <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Clarity2012="+25" crs:PerspectiveVertical="10"/>
             </rdf:RDF></x:xmpmeta>"#;
         let answers = vec![
             Some(FileDialogAnswer::SaveTo("/out/Look.xmp".into())),

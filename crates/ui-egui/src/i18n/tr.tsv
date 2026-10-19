@@ -4245,3 +4245,15 @@ cameraRaw	Zoom and Pan	Yakınlaştırma ve Kaydırma
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Saçak: mor miktarı
+	Defringe Purple Hue	Saçak: mor ton
+	Defringe Green Amount	Saçak: yeşil miktarı
+	Defringe Green Hue	Saçak: yeşil ton
+	Lens Vignette Amount	Lens vinyeti: miktar
+	Lens Vignette Midpoint	Lens vinyeti: orta nokta
+	Calibration Red Hue	Kalibrasyon: kırmızı ton
+	Calibration Red Saturation	Kalibrasyon: kırmızı doygunluk
+	Calibration Green Hue	Kalibrasyon: yeşil ton
+	Calibration Green Saturation	Kalibrasyon: yeşil doygunluk
+	Calibration Blue Hue	Kalibrasyon: mavi ton
+	Calibration Blue Saturation	Kalibrasyon: mavi doygunluk

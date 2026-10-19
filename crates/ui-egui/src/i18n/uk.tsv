@@ -4228,3 +4228,15 @@ cameraRaw	Type	Тип
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Облямівка: пурпурний, величина
+	Defringe Purple Hue	Облямівка: пурпурний відтінок
+	Defringe Green Amount	Облямівка: зелений, величина
+	Defringe Green Hue	Облямівка: зелений відтінок
+	Lens Vignette Amount	Віньєтування об’єктива: величина
+	Lens Vignette Midpoint	Віньєтування об’єктива: середня точка
+	Calibration Red Hue	Калібрування: червоний, відтінок
+	Calibration Red Saturation	Калібрування: червоний, насиченість
+	Calibration Green Hue	Калібрування: зелений, відтінок
+	Calibration Green Saturation	Калібрування: зелений, насиченість
+	Calibration Blue Hue	Калібрування: синій, відтінок
+	Calibration Blue Saturation	Калібрування: синій, насиченість

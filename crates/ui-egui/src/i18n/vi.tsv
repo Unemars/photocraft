@@ -4028,3 +4028,15 @@ cameraRaw	Zoom and Pan	Thu phóng và kéo
 
 # Print preview image (#8236)
 	Print preview image	Print preview image
+	Defringe Purple Amount	Viền: lượng tím
+	Defringe Purple Hue	Viền: sắc tím
+	Defringe Green Amount	Viền: lượng xanh lục
+	Defringe Green Hue	Viền: sắc xanh lục
+	Lens Vignette Amount	Tối góc ống kính: lượng
+	Lens Vignette Midpoint	Tối góc ống kính: điểm giữa
+	Calibration Red Hue	Hiệu chuẩn: sắc đỏ
+	Calibration Red Saturation	Hiệu chuẩn: độ bão hòa đỏ
+	Calibration Green Hue	Hiệu chuẩn: sắc lục
+	Calibration Green Saturation	Hiệu chuẩn: độ bão hòa lục
+	Calibration Blue Hue	Hiệu chuẩn: sắc lam
+	Calibration Blue Saturation	Hiệu chuẩn: độ bão hòa lam
