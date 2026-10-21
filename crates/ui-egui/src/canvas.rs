@@ -37,7 +37,9 @@ const CLONE_OVERLAY_BUDGET: u64 = 256 * 256;
 /// are the same.
 struct ReducedSource {
     key: String,
-    k: u32,
+    /// Document pixels per buffer pixel on each axis: the renderer spreads the bounds over the
+    /// buffer, `W / ⌈W/k⌉`, which is below `k` when `k` doesn't divide the side.
+    scale: [f64; 2],
     /// Document pixel of the buffer's (0, 0).
     origin: [i32; 2],
     buf: photocraft_compose::Buffer,
@@ -47,8 +49,7 @@ impl ReducedSource {
     /// Straight RGBA at document point `(x, y)` (full-resolution px), bilinear between the reduced
     /// pixels (premultiplied, so transparent ones don't tint their neighbours); transparent outside.
     fn at(&self, x: f64, y: f64) -> [f32; 4] {
-        let k = f64::from(self.k);
-        let (fx, fy) = ((x - f64::from(self.origin[0])) / k - 0.5, (y - f64::from(self.origin[1])) / k - 0.5);
+        let (fx, fy) = ((x - f64::from(self.origin[0])) / self.scale[0] - 0.5, (y - f64::from(self.origin[1])) / self.scale[1] - 0.5);
         let (x0, y0) = (fx.floor() as i32, fy.floor() as i32);
         let (tx, ty) = ((fx - f64::from(x0)) as f32, (fy - f64::from(y0)) as f32);
         let (w, h) = (self.buf.rect.width() as i32, self.buf.rect.height() as i32);
@@ -80,7 +81,7 @@ impl ReducedSource {
 
     /// The reduced destination rectangle `dst` (reduced px, `k_dst` document px per texel) sampled
     /// through `map` at its texels' centres. The destination's stride is its own: the source's
-    /// reduction (`self.k`) follows the document's size.
+    /// reduction (`self.scale`) follows the document's size.
     fn sample(&self, dst: DRect, k_dst: u32, map: &photocraft_engine::presets::clone_source::Mapping) -> photocraft_compose::Buffer {
         let k = f64::from(k_dst);
         let w = dst.width() as usize;
@@ -174,10 +175,11 @@ impl ClonePreviewCache {
         }
         let (w, h) = (bounds.width().div_ceil(k), bounds.height().div_ceil(k));
         let buf = photocraft_engine::retouch_cmds::clone_source_reduced(session, sample, w, h).ok()?;
+        let scale = [f64::from(bounds.width()) / f64::from(buf.rect.width().max(1)), f64::from(bounds.height()) / f64::from(buf.rect.height().max(1))];
         if self.reduced.len() >= 2 {
             self.reduced.remove(0);
         }
-        self.reduced.push(ReducedSource { key, k, origin: [bounds.x0, bounds.y0], buf });
+        self.reduced.push(ReducedSource { key, scale, origin: [bounds.x0, bounds.y0], buf });
         self.reduced.last()
     }
 }
@@ -261,6 +263,23 @@ fn snap_to_blocks(rect: DRect, k: u32) -> DRect {
     DRect::new(rect.x0.div_euclid(ki) * ki, rect.y0.div_euclid(ki) * ki, up(rect.x1), up(rect.y1))
 }
 
+/// The overlay's reduction for the box `rect`, at least `k`, with the box snapped to its blocks
+/// ([`snap_to_blocks`]) and the reduced box (one texel per block): raised until the reduced box
+/// fits a texture of `side` texels a side. Snapping can add a block on each side, so the
+/// dimensions are checked after it, not estimated before.
+fn overlay_blocks(rect: DRect, k: u32, side: u32) -> (u32, DRect, DRect) {
+    let mut k = k.max(1);
+    loop {
+        let snapped = snap_to_blocks(rect, k);
+        let ki = k as i32;
+        let reduced = DRect::new(snapped.x0 / ki, snapped.y0 / ki, snapped.x1 / ki, snapped.y1 / ki);
+        if (reduced.width() <= side && reduced.height() <= side) || k >= 1 << 20 {
+            return (k, snapped, reduced);
+        }
+        k += 1;
+    }
+}
+
 /// A transient source image beneath the brush outline; never part of the document render.
 ///
 /// Measured on Photoshop 25.4 (2026-10-17): with Clipped on, the overlay is the source composited
@@ -314,16 +333,16 @@ fn draw_clone_preview(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &Vie
     if rect0.is_empty() {
         return;
     }
-    // One texel per screen pixel at most (the canvas shows no more zoomed out), and within the
-    // budget: `k` document pixels per texel, in blocks on the document's grid.
+    // One texel per screen pixel at most (the canvas shows no more zoomed out), within the budget
+    // and within the device's texture side (a wide view under the budget can still be wider than
+    // the GPU allows): `k` document pixels per texel, in blocks on the document's grid.
     let area0 = u64::from(rect0.width()) * u64::from(rect0.height());
     let screen_px = f64::from(xf.zoom) * f64::from(if ppp.is_finite() && ppp > 0.0 { ppp } else { 1.0 });
     let k_view = if screen_px.is_finite() && screen_px > 0.0 { (1.0 / screen_px).ceil().clamp(1.0, 4096.0) as u32 } else { 1 };
     let k_budget = (area0 as f64 / CLONE_OVERLAY_BUDGET as f64).sqrt().ceil().clamp(1.0, 4096.0) as u32;
-    let k = k_view.max(k_budget);
-    let rect = snap_to_blocks(rect0, k);
-    let ki = k as i32;
-    let reduced = DRect::new(rect.x0 / ki, rect.y0 / ki, rect.x1 / ki, rect.y1 / ki);
+    let side = texture_side(painter.ctx());
+    let k_side = rect0.width().max(rect0.height()).div_ceil(side).max(1);
+    let (k, rect, reduced) = overlay_blocks(rect0, k_view.max(k_budget).max(k_side), side);
     if reduced.is_empty() {
         return;
     }
@@ -7409,7 +7428,19 @@ mod tests {
         xf: &ViewXform,
         at: [f64; 2],
     ) -> (Option<(egui::ColorImage, TextureOptions)>, Vec<egui::Shape>) {
-        let mut output = ctx.run_ui(Default::default(), |ui| {
+        clone_overlay_draw_with(app, ctx, xf, at, Default::default())
+    }
+
+    /// [`clone_overlay_draw`] with the frame's input (a device's `max_texture_side` reaches the
+    /// context through it; set before the run, it is overwritten).
+    fn clone_overlay_draw_with(
+        app: &mut PhotocraftApp,
+        ctx: &egui::Context,
+        xf: &ViewXform,
+        at: [f64; 2],
+        input: egui::RawInput,
+    ) -> (Option<(egui::ColorImage, TextureOptions)>, Vec<egui::Shape>) {
+        let mut output = ctx.run_ui(input, |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("clone-test")));
             draw_clone_preview(app, &painter, xf, at, None);
         });
@@ -7659,6 +7690,73 @@ mod tests {
         assert_eq!(reduced_source_factor(2, DRect::new(0, 0, 600, 600), small), 5, "600 × 600 → 120 × 120");
     }
 
+    /// Clipped off over a wide, short view: 2000 × 30 document pixels at 100 % are within the
+    /// overlay's pixel budget, but wider than a device that allows 1024-texel textures (egui
+    /// asserts past it and the backend can't create the texture). The overlay is reduced to fit
+    /// the device's side and still shows the source.
+    #[test]
+    fn clone_overlay_unclipped_fits_the_device_texture_side() {
+        let ctx = egui::Context::default();
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width": 2000, "height": 30})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        app.session
+            .edit("paint", |doc, a| {
+                let s = doc.layer_mut(a.unwrap()).unwrap().surface_mut().unwrap();
+                s.fill_rect(DRect::new(0, 0, 1000, 30), &[1.0, 0.0, 0.0, 1.0]);
+                s.fill_rect(DRect::new(1000, 0, 2000, 30), &[0.0, 0.0, 1.0, 1.0]);
+                Ok(())
+            })
+            .unwrap();
+        app.run("cloneSource.set", json!({"source": [1000, 15]})).unwrap();
+        app.run("cloneSource.overlay", json!({"clipped": false})).unwrap();
+        app.ui.tool = Tool::CloneStamp;
+        app.session.tools.brush.size = 20.0;
+        let xf =
+            ViewXform { rect: Rect::from_min_size(Pos2::ZERO, vec2(2000.0, 30.0)), zoom: 1.0, center: [1000.0, 15.0], flip: false, rotation: 0.0, aspect: 1.0 };
+        let input = egui::RawInput { max_texture_side: Some(1024), ..Default::default() };
+        let (image, shapes) = clone_overlay_draw_with(&mut app, &ctx, &xf, [1000.0, 15.0], input);
+        assert!(shapes.iter().any(|s| matches!(s, egui::Shape::Mesh(_))), "the overlay is drawn");
+        let covered = app.clone_preview.as_ref().unwrap().texture.as_ref().unwrap().1;
+        assert_eq!((covered.x0, covered.x1), (0, 2000), "the whole visible document: {covered:?}");
+        assert!(u64::from(covered.width()) * u64::from(covered.height()) <= CLONE_OVERLAY_BUDGET, "within the pixel budget: only the side limits it");
+        let (image, _) = image.expect("the overlay uploads a texture");
+        assert!(image.width() <= 1024 && image.height() <= 1024, "{:?} within the device's side", image.size);
+        assert_eq!(image.width() as u32 * 2, covered.width(), "two document pixels per texel: {:?} for {covered:?}", image.size);
+        // The source under the pointer (identity offset): red on the left, blue on the right.
+        let texel = |x: usize, y: usize| image.pixels[y * image.width() + x];
+        assert_eq!(texel(100, 7), Color32::from_rgb(255, 0, 0), "{:?}", texel(100, 7));
+        assert_eq!(texel(900, 7), Color32::from_rgb(0, 0, 255), "{:?}", texel(900, 7));
+    }
+
+    /// The reduction is checked after snapping to blocks: a box from x = 1 to 2049 needs 2 at a
+    /// 1024 side by its width, but its blocks of 2 run from 0 to 2050, 1025 texels; 3 fits.
+    #[test]
+    fn overlay_blocks_fit_the_side_after_snapping() {
+        let rect = DRect::new(1, 0, 2049, 10);
+        let (k, snapped, reduced) = overlay_blocks(rect, 2048u32.div_ceil(1024), 1024);
+        assert_eq!(snap_to_blocks(rect, 2).width() / 2, 1025, "blocks of 2 are one texel too many");
+        assert_eq!(k, 3);
+        assert!(snapped.contains(1, 0) && snapped.contains(2048, 9), "{snapped:?} covers the box");
+        assert!(reduced.width() <= 1024 && reduced.height() <= 1024, "{reduced:?}");
+        assert_eq!((reduced.width() * k, reduced.height() * k), (snapped.width(), snapped.height()));
+        assert_eq!(overlay_blocks(DRect::new(0, 0, 100, 100), 1, 1024).0, 1, "a box that fits keeps its reduction");
+    }
+
+    /// The renderer spreads the document over `⌈W/k⌉` pixels, `W / ⌈W/k⌉` document pixels each,
+    /// not `k`: a 7-pixel-wide source at `k` = 3 is three pixels of 7/3. Each pixel's own colour
+    /// shows at its centre, out to the far edge.
+    #[test]
+    fn reduced_source_samples_at_the_renderers_scale() {
+        let px = vec![[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]];
+        let buf = photocraft_compose::Buffer { rect: DRect::new(0, 0, 3, 1), px };
+        let src = ReducedSource { key: String::new(), scale: [7.0 / 3.0, 1.0], origin: [0, 0], buf };
+        for (t, want) in [[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]].into_iter().enumerate() {
+            let got = src.at((t as f64 + 0.5) * 7.0 / 3.0, 0.5);
+            assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-5), "pixel {t}: {got:?}");
+        }
+    }
+
     /// A document much larger than the tip (600 × 600 against a 128² reduced-source budget,
     /// injected into the cache: the engine's own test constants don't reach this crate's tests):
     /// the full-resolution overlay is over its budget and the source needs more reduction than
@@ -7695,9 +7793,10 @@ mod tests {
         let src = cache.reduced.last().expect("built from the reduced source");
         let (sw, sh) = (src.buf.rect.width(), src.buf.rect.height());
         assert!(budget.fits(sw, sh), "{sw} × {sh} within the injected source budget");
-        assert_eq!(src.k, reduced_source_factor(k_dst, DRect::new(0, 0, 600, 600), budget));
-        assert!(src.k > k_dst, "the source's own factor {} is past the overlay's stride {k_dst}", src.k);
-        assert!(src.k * sw >= 600, "its own reduction covers the document: k {}", src.k);
+        let f = reduced_source_factor(k_dst, DRect::new(0, 0, 600, 600), budget);
+        assert_eq!((sw, sh), (600u32.div_ceil(f), 600u32.div_ceil(f)), "the source is asked for at its own factor {f}");
+        assert!(f > k_dst, "the source's own factor {f} is past the overlay's stride {k_dst}");
+        assert!((src.scale[0] * f64::from(sw) - 600.0).abs() < 1e-9, "its pixels cover the document: scale {:?}", src.scale);
         let centre = image.pixels[(image.height() / 2) * image.width() + image.width() / 2];
         assert!(centre.g() > 250 && centre.a() > 200, "the source's green under the tip's centre: {centre:?}");
     }
