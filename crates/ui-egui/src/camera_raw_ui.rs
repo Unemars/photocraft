@@ -102,6 +102,8 @@ pub struct CameraRawDialog {
     pub(crate) float: bool,
     pub(crate) tex: Option<TextureHandle>,
     before_tex: Option<TextureHandle>,
+    /// The Before view's developed proxy (`before_params`), for the scopes and readouts.
+    pub(crate) before_processed: Vec<[f32; 4]>,
     before_display_key: Option<u64>,
     pub(crate) before_histogram: RgbHistogram,
     pub(crate) processed: Vec<[f32; 4]>,
@@ -230,14 +232,21 @@ impl CameraRawDialog {
             let mut bp = self.before_params.clone();
             bp.pixel_scale = (self.pw as f32 / self.full_w.max(1) as f32).min(1.0);
             bp.encoding_gamma = self.params.encoding_gamma;
-            let mut before = self.proxy.to_vec();
-            photocraft_algo::camera_raw::develop(&mut before, self.pw, self.ph, &bp, self.float);
+            let before = develop_proxy(
+                &self.proxy,
+                self.selection.as_deref().map(Vec::as_slice),
+                self.raw_curve.as_deref().map(Vec::as_slice),
+                bp,
+                self.float,
+                (self.pw, self.ph),
+            );
             self.before_histogram = RgbHistogram::from_rgba(&before);
             let img = Self::image(&before, self.pw, self.ph, &frame.display);
             match &mut self.before_tex {
                 Some(t) => t.set(img, egui::TextureOptions::LINEAR),
                 None => self.before_tex = Some(ctx.load_texture("camera-raw-before", img, egui::TextureOptions::LINEAR)),
             }
+            self.before_processed = before;
             self.before_dirty = false;
             self.before_display_key = Some(frame.display.key);
         }
@@ -327,28 +336,45 @@ impl ProxyJob {
     fn run(self) -> ProxyFrame {
         let t0 = crate::gpu_canvas::now_ms();
         let (pw, ph) = self.size;
-        let mut px = self.proxy.to_vec();
         let mut p = self.params;
         p.pixel_scale = (pw as f32 / self.full_w.max(1) as f32).min(1.0);
-        if let Some(curve) = &self.raw_curve {
-            let tone = raw_stage(&p);
-            photocraft_io::raw::retone(&mut px, pw, ph, curve, tone);
-            (p.shadows, p.highlights, p.clarity, p.texture, p.dehaze) = (0.0, 0.0, 0.0, 0.0, 0.0);
-        }
-        photocraft_algo::camera_raw::develop(&mut px, pw, ph, &p, self.float);
-        if let Some(mask) = &self.selection {
-            for ((out, original), coverage) in px.iter_mut().zip(self.proxy.iter()).zip(mask.iter()) {
-                for (out, original) in out.iter_mut().zip(original) {
-                    *out = *original + (*out - *original) * coverage;
-                }
-            }
-        }
+        let px =
+            develop_proxy(&self.proxy, self.selection.as_deref().map(Vec::as_slice), self.raw_curve.as_deref().map(Vec::as_slice), p, self.float, self.size);
         let histogram_start = crate::gpu_canvas::now_ms();
         let histogram = RgbHistogram::from_rgba(&px);
         let histogram_ms = crate::gpu_canvas::now_ms() - histogram_start;
         let image = CameraRawDialog::image(&px, pw, ph, &self.display);
         ProxyFrame { px, histogram, histogram_ms, image, display: self.display, ms: crate::gpu_canvas::now_ms() - t0 }
     }
+}
+
+/// Develops the proxy with `p` as the preview shows it: on a raw open the raw-stage sliders retone
+/// it through the camera curve first, then the rest of the pipeline runs, and a selection blends
+/// the result over the original by its coverage. The After and the Before view both develop
+/// through this, so the same settings show the same pixels in both.
+fn develop_proxy(
+    proxy: &[[f32; 4]],
+    selection: Option<&[f32]>,
+    raw_curve: Option<&[[f32; 2]]>,
+    mut p: CameraRaw,
+    float: bool,
+    (pw, ph): (usize, usize),
+) -> Vec<[f32; 4]> {
+    let mut px = proxy.to_vec();
+    if let Some(curve) = raw_curve {
+        let tone = raw_stage(&p);
+        photocraft_io::raw::retone(&mut px, pw, ph, curve, tone);
+        (p.shadows, p.highlights, p.clarity, p.texture, p.dehaze) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    }
+    photocraft_algo::camera_raw::develop(&mut px, pw, ph, &p, float);
+    if let Some(mask) = selection {
+        for ((out, original), coverage) in px.iter_mut().zip(proxy).zip(mask) {
+            for (out, original) in out.iter_mut().zip(original) {
+                *out = *original + (*out - *original) * coverage;
+            }
+        }
+    }
+    px
 }
 
 /// Opens the dialog on the active layer.
@@ -810,6 +836,7 @@ fn open_pixels(
         float,
         tex: None,
         before_tex: None,
+        before_processed: Vec::new(),
         before_display_key: None,
         dirty: true,
         show_before: false,
@@ -1336,7 +1363,11 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
             preview.painter().with_clip_rect(after_view).image(tex.id(), r, uv, Color32::WHITE);
             if mode == BeforeAfter::Off {
                 // Raw-stage sliders included: the worker retones the full frame as Open does.
-                let detail_needed = r.width() * ctx.pixels_per_point() > d.pw as f32 || r.height() * ctx.pixels_per_point() > d.ph as f32;
+                // The full-resolution Before is the original: Before settings copied from After show
+                // on the proxy (developed with them) rather than as the unedited original.
+                let before_is_original = !d.show_before || d.before_params.is_identity();
+                let detail_needed =
+                    before_is_original && (r.width() * ctx.pixels_per_point() > d.pw as f32 || r.height() * ctx.pixels_per_point() > d.ph as f32);
                 d.detail.paint(&preview, r, d.preview_revision, d.show_before, &shown, detail_needed, &d.display);
                 if d.detail.pending() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -1645,18 +1676,13 @@ fn preview_bar(
         // Right to left: Copy Before to After, Swap, Copy After to Before (Camera Raw's order
         // reads ⇤ ⇄ ⇥ from the left).
         if crate::icons::button(&mut right, "chevrons-right", 30.0, false, tl!("Copy Before settings to After (Alt+Shift+P)")).clicked() {
-            d.params = CameraRaw { pixel_scale: d.params.pixel_scale, encoding_gamma: d.params.encoding_gamma, ..d.before_params.clone() };
-            d.dirty = true;
+            d.compare(Compare::BeforeToAfter);
         }
         if crate::icons::button(&mut right, "arrow-left-right", 30.0, false, tl!("Swap Before and After settings (Ctrl+Alt+Shift+P)")).clicked() {
-            let after = d.params.clone();
-            d.params = CameraRaw { pixel_scale: after.pixel_scale, encoding_gamma: after.encoding_gamma, ..d.before_params.clone() };
-            d.before_params = after;
-            (d.dirty, d.before_dirty) = (true, true);
+            d.compare(Compare::Swap);
         }
         if crate::icons::button(&mut right, "chevrons-left", 30.0, false, tl!("Copy After settings to Before (Ctrl+Alt+P)")).clicked() {
-            d.before_params = d.params.clone();
-            (d.dirty, d.before_dirty) = (true, true);
+            d.compare(Compare::AfterToBefore);
         }
     }
     if d.detail.pending() {
@@ -1667,9 +1693,33 @@ fn preview_bar(
     }
 }
 
+/// The Before/After bar's settings actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Compare {
+    BeforeToAfter,
+    Swap,
+    AfterToBefore,
+}
+
+impl CameraRawDialog {
+    fn compare(&mut self, action: Compare) {
+        let after = self.params.clone();
+        let before = CameraRaw { pixel_scale: after.pixel_scale, encoding_gamma: after.encoding_gamma, ..self.before_params.clone() };
+        match action {
+            Compare::BeforeToAfter => self.params = before,
+            Compare::Swap => (self.params, self.before_params) = (before, after),
+            Compare::AfterToBefore => self.before_params = after,
+        }
+        self.dirty = true;
+        self.before_dirty |= action != Compare::BeforeToAfter;
+    }
+}
+
 /// Camera Raw's keys (not while a text field has focus): Q cycles Before/After, Y shows Left /
-/// Right, P (or \) toggles the original, V B&W, E B M Shift+E Shift+P pick the tool, Ctrl+U Auto,
-/// Ctrl+K Preferences, Esc cancels and Enter is OK.
+/// Right, P (or \) toggles the original, Alt+Shift+P / Ctrl+Alt+Shift+P / Ctrl+Alt+P copy or swap
+/// the Before/After settings, V B&W, E B M Shift+E Shift+P pick the tool, Ctrl+U Auto,
+/// Ctrl+K Preferences, Esc cancels and Enter is OK (unless a menu or Preferences is open: Esc
+/// closes that).
 fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&str>) {
     let Some(d) = app.camera_raw.as_mut() else { return };
     let focused = ctx.text_edit_focused();
@@ -1679,6 +1729,9 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
     }
     use egui::{Key, Modifiers};
     let layout = &mut app.ui.camera_raw_layout;
+    // A menu shown this frame (zoom, More, Before/After) already closed itself on that Esc; the
+    // key is not the dialog's.
+    let menu_open = ctx.any_popup_open() || egui::Popup::is_any_open(ctx);
     ctx.input_mut(|i| {
         if i.consume_key(Modifiers::NONE, Key::Q) {
             d.before_after = d.before_after.next();
@@ -1692,9 +1745,21 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
         if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G) {
             layout.grid = !layout.grid;
         }
-        // A pattern without Shift also matches the key with Shift (`Modifiers::matches_logically`),
-        // so the Shift shortcuts go first: Shift+E (Red Eye) before E (Edit), Shift+P (Presets)
-        // before P (toggle Before).
+        // A pattern also matches the key with extra Shift or Alt (`Modifiers::matches_logically`),
+        // so the most specific shortcuts go first: the Before/After bar's Ctrl+Alt+Shift+P (swap)
+        // before Ctrl+Alt+P (After to Before), and Alt+Shift+P (Before to After) before Shift+P.
+        // They act only while Before/After is shown, as the bar's buttons do, but are always taken
+        // so they never fall through to Presets or the Before toggle.
+        for (mods, action) in [
+            (Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT, Compare::Swap),
+            (Modifiers::COMMAND | Modifiers::ALT, Compare::AfterToBefore),
+            (Modifiers::ALT | Modifiers::SHIFT, Compare::BeforeToAfter),
+        ] {
+            if i.consume_key(mods, Key::P) && d.before_after != BeforeAfter::Off {
+                d.compare(action);
+            }
+        }
+        // Then Shift+E (Red Eye) before E (Edit), Shift+P (Presets) before P (toggle Before).
         for (key, mods, tool) in [
             (Key::E, Modifiers::SHIFT, "redEye"),
             (Key::P, Modifiers::SHIFT, "presets"),
@@ -1709,7 +1774,7 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
         if i.consume_key(Modifiers::NONE, Key::P) || i.consume_key(Modifiers::NONE, Key::Backslash) {
             d.show_before = !d.show_before;
         }
-        if i.consume_key(Modifiers::NONE, Key::Escape) {
+        if i.consume_key(Modifiers::NONE, Key::Escape) && !menu_open {
             // Esc closes what is open on top of the dialog first; only the bare dialog cancels.
             if d.prefs_open {
                 d.prefs_open = false;
@@ -1719,7 +1784,7 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
                 *action = Some("cancel");
             }
         }
-        if i.consume_key(Modifiers::NONE, Key::Enter) && !d.prefs_open {
+        if i.consume_key(Modifiers::NONE, Key::Enter) && !d.prefs_open && !menu_open {
             *action = Some("ok");
         }
     });
@@ -1981,6 +2046,30 @@ mod tests {
         finish_worker(app.camera_raw.as_mut().unwrap(), &ctx);
         frame(&mut app);
         assert!(app.ui.status_error && app.ui.status == "something else failed", "{}", app.ui.status);
+    }
+
+    /// Before settings copied from After show exactly the After pixels, on a raw open too: both
+    /// views develop through `develop_proxy` (the raw-stage retone, then the selection's coverage).
+    #[test]
+    fn copied_before_settings_show_the_after_pixels() {
+        let (mut app, ctx) = worker_app();
+        let d = app.camera_raw.as_mut().unwrap();
+        assert!(d.selection.is_some());
+        d.raw_curve = Some(std::sync::Arc::new(vec![[0.0, 0.0], [0.18, 0.3], [1.0, 1.0]]));
+        (d.params.shadows, d.params.exposure) = (40.0, 0.5);
+        d.compare(Compare::AfterToBefore);
+        d.render(&ctx);
+        assert!(!d.before_dirty);
+        assert_eq!(d.before_processed, d.processed);
+        assert_eq!(d.before_histogram.channels, d.after_histogram.channels);
+        assert_ne!(d.before_processed, *d.proxy, "the settings do change the pixels");
+        // The scopes read the Before view's own pixels.
+        d.show_before = true;
+        let p = [0.25, 0.25];
+        assert_eq!(d.readout(p, false), {
+            d.show_before = false;
+            d.readout(p, false)
+        });
     }
 
     #[test]

@@ -277,7 +277,7 @@ pub(crate) fn slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, spec: 
             changed = true;
         }
     }
-    if enabled && (resp.double_clicked() || label_resp.double_clicked()) && *value != spec.default {
+    if enabled && (reset_click(&resp) || reset_click(&label_resp)) && *value != spec.default {
         *value = spec.default;
         changed = true;
     }
@@ -287,6 +287,13 @@ pub(crate) fn slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, spec: 
     let x = track.left() + f * track.width();
     knob(p, pos2(x, track.top() - 3.0), if enabled { c.knob } else { c.knob.gamma_multiply(0.55) }, c.knob_edge);
     SliderResponse { changed, alt_drag: resp.dragged() && ui.input(|i| i.modifiers.alt) }
+}
+
+/// A double-click that resets a control. egui counts a click within 0.6 s of two earlier ones as
+/// a triple click, not a double one, so a double-click soon after a click or a drag on the same
+/// control (#5691: "sometimes works and sometimes doesn't") counts too.
+pub(crate) fn reset_click(r: &egui::Response) -> bool {
+    r.double_clicked() || r.triple_clicked()
 }
 
 /// A track and knob without label or value box (luminance under the 3-way colour wheels).
@@ -310,7 +317,7 @@ pub(crate) fn bare_slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, s
             changed = true;
         }
     }
-    if resp.double_clicked() && *value != spec.default {
+    if reset_click(&resp) && *value != spec.default {
         *value = spec.default;
         changed = true;
     }
@@ -351,6 +358,13 @@ pub(crate) fn knob(p: &egui::Painter, top: Pos2, fill: Color32, edge: Color32) {
     p.add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, edge)));
 }
 
+/// Drops the typed, not yet committed text of slider `id`'s value box (see [`slider`]), so it
+/// can't commit into a value the row shows next (the Color Mixer's rows switch colour).
+pub(crate) fn forget_typed_value(ui: &Ui, id: &str) {
+    let editing_id = ui.id().with((id, "field")).with("text");
+    ui.data_mut(|d| d.remove::<String>(editing_id));
+}
+
 /// The value box of a slider row. Returns whether the value changed.
 fn value_box(ui: &mut Ui, id: egui::Id, rect: Rect, value: &mut f32, spec: &Spec, enabled: bool) -> bool {
     let c = Acr::get(ui.ctx());
@@ -371,7 +385,9 @@ fn value_box(ui: &mut Ui, id: egui::Id, rect: Rect, value: &mut f32, spec: &Spec
                 .font(label_font())
                 .margin(vec2(3.0, 1.0))
                 .desired_width(rect.width());
-            let r = ui.put(rect, edit);
+            // Not `ui.put`: it moves the layout cursor back up to the box's bottom, so the next row
+            // would be laid out over this one while the box is open.
+            let r = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::centered_and_justified(egui::Direction::TopDown))).add(edit);
             if !r.has_focus() && !r.lost_focus() {
                 r.request_focus();
             }
