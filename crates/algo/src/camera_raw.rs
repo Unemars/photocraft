@@ -575,6 +575,74 @@ pub fn white_balance_gains(temperature: f32, tint: f32) -> [f32; 3] {
 /// Runs the Camera Raw pipeline on straight RGBA pixels (`w × h`, display-encoded RGB).
 /// `float` keeps values above 1 (32-bit documents).
 pub fn develop(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, float: bool) {
+    develop_tonal(px, w, h, p);
+    develop_colour(px, w, h, p, float);
+}
+
+/// `p` without the settings of [`develop_colour`]'s stages (the per-pixel colour stages, Detail
+/// and Effects): what [`develop_tonal`]'s result depends on, so a preview can keep that result
+/// while only those settings change.
+pub fn tonal_part(p: &CameraRaw) -> CameraRaw {
+    let d = CameraRaw::default();
+    CameraRaw {
+        vibrance: d.vibrance,
+        saturation: d.saturation,
+        curve_highlights: d.curve_highlights,
+        curve_lights: d.curve_lights,
+        curve_darks: d.curve_darks,
+        curve_shadows: d.curve_shadows,
+        curve_splits: d.curve_splits,
+        point_curve: d.point_curve.clone(),
+        point_curve_red: d.point_curve_red.clone(),
+        point_curve_green: d.point_curve_green.clone(),
+        point_curve_blue: d.point_curve_blue.clone(),
+        hsl_hue: d.hsl_hue,
+        hsl_sat: d.hsl_sat,
+        hsl_lum: d.hsl_lum,
+        grade_shadows: d.grade_shadows,
+        grade_midtones: d.grade_midtones,
+        grade_highlights: d.grade_highlights,
+        grade_global: d.grade_global,
+        grade_blending: d.grade_blending,
+        grade_balance: d.grade_balance,
+        sharpen_amount: d.sharpen_amount,
+        sharpen_radius: d.sharpen_radius,
+        sharpen_detail: d.sharpen_detail,
+        sharpen_masking: d.sharpen_masking,
+        noise_luminance: d.noise_luminance,
+        noise_luminance_detail: d.noise_luminance_detail,
+        noise_color: d.noise_color,
+        noise_color_detail: d.noise_color_detail,
+        grain_amount: d.grain_amount,
+        grain_size: d.grain_size,
+        grain_roughness: d.grain_roughness,
+        vignette_amount: d.vignette_amount,
+        vignette_midpoint: d.vignette_midpoint,
+        vignette_roundness: d.vignette_roundness,
+        vignette_feather: d.vignette_feather,
+        vignette_highlights: d.vignette_highlights,
+        vignette_style: d.vignette_style.clone(),
+        seed: d.seed,
+        ..p.clone()
+    }
+}
+
+/// The first half of [`develop`]: White Balance and Exposure, Dehaze and the tone stages up to
+/// Whites and Blacks (no clamping).
+pub fn develop_tonal(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw) {
+    develop_tonal_with(px, w, h, p, &mut DevelopCache::default());
+}
+
+/// What [`develop_tonal_with`] keeps between calls for a preview: Shadows and Highlights' filter
+/// split into parts that any slider value combines, for the pixels it last saw (see
+/// `local_tone`).
+#[derive(Default)]
+pub struct DevelopCache {
+    local_tone: local_tone::Kept,
+}
+
+/// [`develop_tonal`], reusing `cache` when a stage sees exactly the pixels it saw last time.
+pub fn develop_tonal_with(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, cache: &mut DevelopCache) {
     if px.is_empty() || p.is_identity() {
         return;
     }
@@ -599,7 +667,7 @@ pub fn develop(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, float: bo
     }
     // 3. Tone. Highlights and Shadows: a local Laplacian filter (see `local_tone`).
     if p.highlights != 0.0 || p.shadows != 0.0 {
-        local_tone::apply(px, w, h, p.shadows, p.highlights, Encoding::of(p.encoding_gamma));
+        local_tone::apply_with(px, w, h, p.shadows, p.highlights, Encoding::of(p.encoding_gamma), &mut cache.local_tone);
     }
     if !p.local_tone_neutral() && [p.contrast, p.texture, p.clarity].iter().any(|v| *v != 0.0) {
         let l: Vec<f32> = px.iter().map(|q| luma([q[0], q[1], q[2]]).max(0.0)).collect();
@@ -639,6 +707,15 @@ pub fn develop(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, float: bo
         let (xw, xb) = whites_blacks::amounts(p.whites.clamp(-100.0, 100.0), p.blacks.clamp(-100.0, 100.0), bp, wp);
         whites_blacks::apply(px, w, xw, xb, enc);
     }
+}
+
+/// The second half of [`develop`], after [`develop_tonal`]: the per-pixel colour stages, Detail
+/// and Effects, then the clamp to 0…1 unless `float`.
+pub fn develop_colour(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, float: bool) {
+    if px.is_empty() || p.is_identity() {
+        return;
+    }
+    let ps = p.pixel_scale.clamp(0.01, 1.0);
     // 4–7: per-pixel colour stages.
     let need_color = p.vibrance != 0.0 || p.saturation != 0.0 || !p.curves_neutral() || !p.hsl_neutral() || !p.grade_neutral();
     if need_color {
@@ -1150,5 +1227,49 @@ mod tests {
         let mut a = vec![[2.0f32, 1.5, 0.5, 1.0]; 16];
         develop(&mut a, 4, 4, &CameraRaw { exposure: 0.5, ..Default::default() }, true);
         assert!(a[0][0] > 2.0);
+    }
+
+    /// The tonal half from [`tonal_part`] and the colour half give exactly [`develop`]'s
+    /// result, for every stage on at once (a preview keeps the tonal half while colours change).
+    #[test]
+    fn tonal_then_colour_is_develop() {
+        let (w, h) = (40, 30);
+        let mut src = img(w, h);
+        for (i, q) in src.iter_mut().enumerate() {
+            q[0] *= 1.0 + 0.4 * ((i * 7919) % 13) as f32 / 13.0;
+        }
+        let wheel = |hue, sat, lum| Wheel { hue, sat, lum };
+        let p = CameraRaw {
+            temperature: 12.0,
+            tint: -4.0,
+            exposure: 0.4,
+            contrast: 15.0,
+            highlights: -30.0,
+            shadows: 35.0,
+            whites: 10.0,
+            blacks: -12.0,
+            texture: 20.0,
+            clarity: 25.0,
+            dehaze: 10.0,
+            vibrance: 25.0,
+            saturation: 10.0,
+            curve_lights: 15.0,
+            point_curve: vec![[0.0, 0.0], [64.0, 50.0], [192.0, 205.0], [255.0, 255.0]],
+            hsl_sat: [0.0, 20.0, 0.0, 0.0, 0.0, -15.0, 0.0, 0.0],
+            grade_shadows: wheel(220.0, 20.0, 5.0),
+            sharpen_amount: 40.0,
+            noise_luminance: 20.0,
+            grain_amount: 20.0,
+            vignette_amount: -20.0,
+            pixel_scale: 0.5,
+            ..Default::default()
+        };
+        let mut whole = src.clone();
+        develop(&mut whole, w, h, &p, false);
+        let mut halves = src.clone();
+        develop_tonal(&mut halves, w, h, &tonal_part(&p));
+        develop_colour(&mut halves, w, h, &p, false);
+        assert_eq!(whole, halves);
+        assert_ne!(whole, src);
     }
 }

@@ -60,6 +60,7 @@ struct Side {
 }
 
 /// One channel, `w × h`.
+#[derive(Clone)]
 struct Plane {
     w: usize,
     h: usize,
@@ -226,26 +227,30 @@ fn gaussian(p: Plane, n: usize) -> Vec<Plane> {
     g
 }
 
-/// The local Laplacian filter of `u` with `remap(value, reference)`; the coarsest level is kept.
-fn llf(u: &Plane, remap: impl Fn(f32, f32) -> f32 + Sync) -> Plane {
+/// The local Laplacian filter of `u` for remappings `x + amount · change(x, reference)`, split
+/// in two: `(base, detail)` with the filter's output `base + amount · detail` for any amount (the
+/// pyramids, the Laplacian levels and the reference weights are all linear in the remapped
+/// values, and the weights sum to 1). `base` is the identity's output (`u` rebuilt from its
+/// pyramid); `detail`, the change's, whose coarsest level is 0 (the coarsest level is kept).
+fn llf_parts(u: &Plane, change: impl Fn(f32, f32) -> f32 + Sync) -> (Plane, Plane) {
     let n = depth(u.w, u.h);
-    let g = gaussian(Plane { w: u.w, h: u.h, v: u.v.clone() }, n);
+    let g = gaussian(u.clone(), n);
     // References span the image's tones; the deepest 0.1 % (noise down to the floor) share the
     // lowest reference instead of stretching the spacing.
     let hi = u.v.iter().fold(f32::NEG_INFINITY, |a, &v| a.max(v));
     let lo = quantile(&u.v, 0.001).min(hi);
     if hi - lo <= 1e-6 || (hi - lo).is_nan() {
-        return Plane { w: u.w, h: u.h, v: u.v.clone() };
+        return (u.clone(), Plane { w: u.w, h: u.h, v: vec![0.0; u.v.len()] });
     }
     let refs = (((hi - lo) / REF_STEP).ceil() as usize + 1).clamp(2, 96);
     let step = (hi - lo) / (refs - 1) as f32;
     let mut lap: Vec<Vec<f32>> = g[..n - 1].iter().map(|p| vec![0.0; p.v.len()]).collect();
     for k in 0..refs {
         let r = lo + step * k as f32;
-        let mut m = Plane { w: u.w, h: u.h, v: u.v.clone() };
+        let mut m = u.clone();
         rows(&mut m.v, u.w, |_, row| {
             for v in row.iter_mut() {
-                *v = remap(*v, r);
+                *v = change(*v, r);
             }
         });
         let gr = gaussian(m, n);
@@ -263,15 +268,29 @@ fn llf(u: &Plane, remap: impl Fn(f32, f32) -> f32 + Sync) -> Plane {
             });
         }
     }
-    let mut o = Plane { w: g[n - 1].w, h: g[n - 1].h, v: g[n - 1].v.clone() };
-    for l in (0..n - 1).rev() {
-        let mut next = up(&o, g[l].w, g[l].h);
-        for (a, b) in next.v.iter_mut().zip(&lap[l]) {
-            *a += b;
+    let rebuild = |coarsest: Plane, levels: &dyn Fn(usize) -> Vec<f32>| {
+        let mut o = coarsest;
+        for l in (0..n - 1).rev() {
+            let mut next = up(&o, g[l].w, g[l].h);
+            for (a, b) in next.v.iter_mut().zip(levels(l)) {
+                *a += b;
+            }
+            o = next;
         }
-        o = next;
-    }
-    o
+        o
+    };
+    let top = &g[n - 1];
+    let base = rebuild(top.clone(), &|l| {
+        let coarse = up(&g[l + 1], g[l].w, g[l].h);
+        g[l].v.iter().zip(&coarse.v).map(|(a, b)| a - b).collect()
+    });
+    let detail = rebuild(Plane { w: top.w, h: top.h, v: vec![0.0; top.v.len()] }, &|l| lap[l].clone());
+    (base, detail)
+}
+
+/// `base + amount · detail`.
+fn combine(base: &Plane, detail: &Plane, amount: f32) -> Plane {
+    Plane { w: base.w, h: base.h, v: base.v.iter().zip(&detail.v).map(|(b, d)| b + amount * d).collect() }
 }
 
 /// The `q` quantile (0 … 1) of `v`.
@@ -310,59 +329,114 @@ fn knot(t: f32, k: &[f32; KNOTS]) -> f32 {
     k[i] + (k[i + 1] - k[i]) * (x - i as f32)
 }
 
-/// The Highlights pass on the log luminance `u` (`amount` −1 … 1): pixels brighter than their
-/// surroundings move toward them (or away, for positive values) by the part of the difference
-/// past `sigma`, then the darkest content is put back where it was.
-fn highlights_pass(u: &Plane, amount: f32, side: &Side) -> Plane {
+/// The Highlights pass's parts on the log luminance `u` for lowering (`up` false) or raising:
+/// pixels brighter than their surroundings move toward them (or away) by the part of the
+/// difference past `sigma`, per unit of the slider (see [`llf_parts`]).
+fn highlights_parts(u: &Plane, up: bool, side: &Side) -> (Plane, Plane) {
     let (lo, hi) = range(u);
     let span = (hi - lo).max(1.0);
-    let strengths = if amount < 0.0 { &side.pull } else { &side.push };
-    let o = llf(u, |x, g| x + knot((g - lo) / span, strengths) * amount * excess((x - g).max(0.0), side.sigma));
-    let shift = quantile(&u.v, 0.01) - quantile(&o.v, 0.01);
+    let strengths = if up { &side.push } else { &side.pull };
+    llf_parts(u, |x, g| knot((g - lo) / span, strengths) * excess((x - g).max(0.0), side.sigma))
+}
+
+/// The Shadows pass's parts on the log luminance `u`: pixels darker than their surroundings
+/// rise per unit of the slider (lowering is [`SHADOWS`]`.down` times as strong).
+fn shadows_parts(u: &Plane) -> (Plane, Plane) {
+    let (lo, hi) = range(u);
+    let span = (hi - lo).max(1.0);
+    llf_parts(u, |x, g| {
+        let below = ((g - x) / SHADOWS.sigma).clamp(0.0, 1.0);
+        if below == 0.0 {
+            return 0.0;
+        }
+        let w = below * below * (3.0 - 2.0 * below);
+        knot((x - lo) / span, &SHADOWS.own) * knot((g - lo) / span, &SHADOWS.around) * w
+    })
+}
+
+/// A pass's output from its parts: `amount` (−1 … 1) of the change, then the content at the
+/// quantile `q` of the output put back at `anchor`, the input's value there.
+fn pass(parts: &(Plane, Plane), amount: f32, q: f32, anchor: f32) -> Plane {
+    let o = combine(&parts.0, &parts.1, amount);
+    let shift = anchor - quantile(&o.v, q);
     Plane { w: o.w, h: o.h, v: o.v.iter().map(|v| v + shift).collect() }
 }
 
-/// The Shadows pass on the log luminance `u` (`amount` −1 … 1).
-fn shadows_pass(u: &Plane, amount: f32) -> Plane {
-    let (lo, hi) = range(u);
-    let span = (hi - lo).max(1.0);
-    let k = if amount > 0.0 { amount } else { amount * SHADOWS.down };
-    let o = llf(u, |x, g| {
-        let below = ((g - x) / SHADOWS.sigma).clamp(0.0, 1.0);
-        if below == 0.0 {
-            return x;
-        }
-        let w = below * below * (3.0 - 2.0 * below);
-        x + k * knot((x - lo) / span, &SHADOWS.own) * knot((g - lo) / span, &SHADOWS.around) * w
-    });
-    // Keep the brightest content.
-    let shift = quantile(&u.v, 0.99) - quantile(&o.v, 0.99);
-    Plane { w: o.w, h: o.h, v: o.v.iter().map(|v| v + shift).collect() }
+/// Highlights keeps the darkest content (this quantile), Shadows the brightest.
+const HIGHLIGHTS_ANCHOR: f32 = 0.01;
+const SHADOWS_ANCHOR: f32 = 0.99;
+
+/// The pass inputs [`apply_with`] keeps for the pixels it last saw (`hash`, see [`content_hash`]):
+/// the log luminance, its work copy with its [`HIGHLIGHTS_ANCHOR`] quantile, the Highlights pass's
+/// parts for lowering and raising, and the Shadows pass's parts with the Highlights amount its
+/// input had and that input's [`SHADOWS_ANCHOR`] quantile. Dragging one slider then costs a
+/// weighted sum, not a filter.
+#[derive(Default)]
+pub(crate) struct Kept {
+    hash: u64,
+    planes: Option<Planes>,
+    highlights: [Option<(Plane, Plane)>; 2],
+    shadows: Option<(f32, f32, (Plane, Plane))>,
+}
+
+/// The log luminance at full size, its work copy, the copy's reduction factor and its
+/// [`HIGHLIGHTS_ANCHOR`] quantile.
+struct Planes {
+    u: Plane,
+    small: Plane,
+    f: usize,
+    anchor: f32,
 }
 
 /// Applies Shadows and Highlights (−100 … 100) to straight RGBA pixels encoded with `enc`.
+#[cfg(test)]
 pub(crate) fn apply(px: &mut [[f32; 4]], w: usize, h: usize, shadows: f32, highlights: f32, enc: Encoding) {
-    if (shadows == 0.0 && highlights == 0.0) || w < 2 || h < 2 {
+    apply_with(px, w, h, shadows, highlights, enc, &mut Kept::default());
+}
+
+/// [`apply`], keeping in `kept` what does not depend on the sliders' values for these pixels.
+/// `kept` is reused only for exactly the pixels (and encoding) it was filled from: every pixel
+/// is hashed, so a change anywhere upstream (one hue band, one corner) fills it again.
+pub(crate) fn apply_with(px: &mut [[f32; 4]], w: usize, h: usize, shadows: f32, highlights: f32, enc: Encoding, kept: &mut Kept) {
+    if (shadows == 0.0 && highlights == 0.0) || w < 2 || h < 2 || px.len() < w * h {
         return;
     }
-    const FLOOR: f32 = 1.0 / 65536.0;
-    let u = Plane { w, h, v: px.iter().map(|q| (luma([0, 1, 2].map(|c| enc.decode(q[c]))).max(0.0) + FLOOR).log2()).collect() };
-    // The filter on a copy at most WORK_SIDE across (box-averaged in log).
-    let f = w.max(h).div_ceil(WORK_SIDE).max(1);
-    let small = if f == 1 { Plane { w, h, v: u.v.clone() } } else { shrink(&u, f) };
-    let mut o = Plane { w: small.w, h: small.h, v: small.v.clone() };
-    if highlights != 0.0 {
-        o = highlights_pass(&o, highlights.clamp(-100.0, 100.0) / 100.0, &HIGHLIGHTS);
+    let px = &mut px[..w * h];
+    let hash = content_hash(px, w, enc);
+    if kept.hash != hash || kept.planes.is_none() {
+        const FLOOR: f32 = 1.0 / 65536.0;
+        let u = Plane { w, h, v: px.iter().map(|q| (luma([0, 1, 2].map(|c| enc.decode(q[c]))).max(0.0) + FLOOR).log2()).collect() };
+        // The filter on a copy at most WORK_SIDE across (box-averaged in log).
+        let f = w.max(h).div_ceil(WORK_SIDE).max(1);
+        let small = if f == 1 { u.clone() } else { shrink(&u, f) };
+        let anchor = quantile(&small.v, HIGHLIGHTS_ANCHOR);
+        *kept = Kept { hash, planes: Some(Planes { u, small, f, anchor }), ..Kept::default() };
     }
-    if shadows != 0.0 {
-        o = shadows_pass(&o, shadows.clamp(-100.0, 100.0) / 100.0);
+    let Some(Planes { u, small, f, anchor }) = &kept.planes else { return };
+    let mut o = small.clone();
+    let hl = highlights.clamp(-100.0, 100.0) / 100.0;
+    if hl != 0.0 {
+        let side = usize::from(hl > 0.0);
+        let parts = kept.highlights[side].get_or_insert_with(|| highlights_parts(small, hl > 0.0, &HIGHLIGHTS));
+        o = pass(parts, hl, HIGHLIGHTS_ANCHOR, *anchor);
+    }
+    let sh = shadows.clamp(-100.0, 100.0) / 100.0;
+    if sh != 0.0 {
+        if kept.shadows.as_ref().is_none_or(|(k, _, _)| *k != hl) {
+            let input_anchor = quantile(&o.v, SHADOWS_ANCHOR);
+            kept.shadows = Some((hl, input_anchor, shadows_parts(&o)));
+        }
+        if let Some((_, input_anchor, parts)) = &kept.shadows {
+            let k = if sh > 0.0 { sh } else { sh * SHADOWS.down };
+            o = pass(parts, k, SHADOWS_ANCHOR, *input_anchor);
+        }
     }
     // The change in log luminance, at full size.
-    let change: Vec<f32> = if f == 1 {
+    let change: Vec<f32> = if *f == 1 {
         o.v.iter().zip(&u.v).map(|(a, b)| a - b).collect()
     } else {
         let d: Vec<f32> = o.v.iter().zip(&small.v).map(|(a, b)| a - b).collect();
-        guided_upsample(&small, &d, &u)
+        guided_upsample(small, &d, u)
     };
     par_rows(px, w, 1, |y, row| {
         for (x, q) in row.iter_mut().enumerate() {
@@ -372,6 +446,27 @@ pub(crate) fn apply(px: &mut [[f32; 4]], w: usize, h: usize, shadows: f32, highl
             }
         }
     });
+}
+
+/// A hash of every pixel's colour (and the size and encoding): what [`Kept`] was filled from.
+/// Rows are hashed in parallel and combined in order; a few milliseconds for a preview proxy,
+/// against hundreds for the filter it saves.
+fn content_hash(px: &[[f32; 4]], w: usize, enc: Encoding) -> u64 {
+    const PRIME: u64 = 0x0100_0000_01b3;
+    let rows: Vec<u64> = crate::par::map(px.len().div_ceil(w.max(1)), px.len() >= 1 << 16, |y| {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for p in px[y * w..((y + 1) * w).min(px.len())].iter() {
+            for v in &p[..3] {
+                h = (h ^ u64::from(v.to_bits())).wrapping_mul(PRIME);
+            }
+        }
+        h
+    });
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ (px.len() as u64) ^ ((w as u64) << 32) ^ u64::from(enc.0.to_bits());
+    for r in rows {
+        h = (h ^ r).wrapping_mul(PRIME).rotate_left(29);
+    }
+    h.max(1)
 }
 
 /// `u` averaged over `f × f` blocks.
@@ -593,5 +688,49 @@ mod tests {
         };
         let (a, b) = (at(96), at(384));
         assert!((a[0] - b[0]).abs() < 0.02 && (a[1] - b[1]).abs() < 0.02, "{a:?} {b:?}");
+    }
+
+    /// Dragging either slider through the kept parts gives exactly what a fresh call gives, and
+    /// other pixels are not mistaken for the kept ones.
+    #[test]
+    fn kept_parts_give_the_fresh_result() {
+        let (w, h) = (120, 90);
+        let px = grey(w, h, |x, y| 0.05 + 0.8 * (x as f32 / w as f32) * if (x / 9 + y / 7) % 3 == 0 { 0.4 } else { 1.0 });
+        let mut kept = Kept::default();
+        for (s, hl) in [(40.0, 0.0), (70.0, 0.0), (70.0, -30.0), (70.0, -60.0), (-50.0, -60.0), (0.0, 45.0), (20.0, 45.0)] {
+            let (mut a, mut b) = (px.clone(), px.clone());
+            apply_with(&mut a, w, h, s, hl, SRGB, &mut kept);
+            apply(&mut b, w, h, s, hl, SRGB);
+            assert_eq!(a, b, "{s} {hl}");
+        }
+        let mut other: Vec<[f32; 4]> = px.iter().map(|q| [q[0] * 0.5, q[1] * 0.5, q[2] * 0.5, 1.0]).collect();
+        let mut fresh = other.clone();
+        apply_with(&mut other, w, h, 40.0, 0.0, SRGB, &mut kept);
+        apply(&mut fresh, w, h, 40.0, 0.0, SRGB);
+        assert_eq!(other, fresh);
+    }
+
+    /// An upstream stage that changes only a few pixels (one hue band, one corner) still fills
+    /// the kept parts again: no pixel's change goes unseen (#3817 review, a sampled fingerprint
+    /// missed them).
+    #[test]
+    fn a_change_to_a_few_pixels_refills_the_kept_parts() {
+        let (w, h) = (300, 200);
+        let px = grey(w, h, |x, y| 0.05 + 0.8 * (x as f32 / w as f32) * if (x / 9 + y / 7) % 3 == 0 { 0.4 } else { 1.0 });
+        let mut kept = Kept::default();
+        let mut first = px.clone();
+        apply_with(&mut first, w, h, 60.0, -40.0, SRGB, &mut kept);
+        // Every pixel but a 3 × 3 patch the same; the patch much darker.
+        let mut edited = px.clone();
+        for y in 101..104 {
+            for x in 151..154 {
+                edited[y * w + x] = [0.01, 0.01, 0.01, 1.0];
+            }
+        }
+        let (mut a, mut b) = (edited.clone(), edited);
+        apply_with(&mut a, w, h, 60.0, -40.0, SRGB, &mut kept);
+        apply(&mut b, w, h, 60.0, -40.0, SRGB);
+        assert_eq!(a, b);
+        assert_ne!(a[102 * w + 152], first[102 * w + 152]);
     }
 }

@@ -192,6 +192,22 @@ pub(crate) fn resolve_neutral(s: &Sensor, opts: &DevelopOptions, sc: &Scale, war
     })
 }
 
+/// The white-balance multipliers [`develop_sensor`] applies to the camera channels for `opts`
+/// (smallest 1) and the matrix from the white-balanced camera values to linear ProPhoto RGB
+/// (before exposure), with the same look or calibration: what a preview needs to redo a
+/// white-balance change on developed pixels.
+pub fn white_balance_of(s: &Sensor, opts: &DevelopOptions) -> Result<([f64; 3], Mat3)> {
+    let sc = Scale::new(s);
+    let neutral = resolve_neutral(s, opts, &sc, &mut Vec::new())?;
+    let look = opts.camera_look.as_ref().filter(|l| l.is_usable());
+    let to_xyz = match (look, s.color.balanced_to_xyz_d50(neutral)) {
+        (Some(l), _) => l.to_xyz,
+        (None, Some(m)) => m,
+        (None, None) => color::srgb_to_xyz_d50(),
+    };
+    Ok((neutral.map(|v| 1.0 / v), color::mul(&color::xyz_d50_to_prophoto(), &to_xyz)))
+}
+
 /// Develops sensor data.
 pub fn develop_sensor(s: &Sensor, opts: &DevelopOptions) -> Result<Developed> {
     let c = s.crop;

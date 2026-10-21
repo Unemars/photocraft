@@ -544,50 +544,448 @@ fn guided(i: &[f32], p: &[f32], w: usize, h: usize, r: usize, eps: f32) -> Vec<f
 /// carry the black point, so the change's map is computed from the luminance after it rather
 /// than before; that only differs in the deepest shadows.
 pub fn retone(px: &mut [[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], tone: Tone) {
-    if tone.is_neutral() || w == 0 || h == 0 || px.len() < w * h {
+    retone_with(px, w, h, curve, tone, None, None);
+}
+
+/// [`retone`] with `pre`, when set, a linear ProPhoto 3×3 applied first, as the develop stage
+/// applies Exposure and the white balance before the tone stage (see `white_balance_of`). With
+/// `cache`, keeps there what does not depend on the sliders' values, for previews that retone the
+/// same pixels again: it is used only for exactly the pixels, size and curve it was filled from
+/// (every pixel is hashed) and filled again otherwise. Without, nothing outlives the call and no
+/// linear copy of the image is made (full-size previews of 16–60 MP frames).
+pub fn retone_with(
+    px: &mut [[f32; 4]],
+    w: usize,
+    h: usize,
+    curve: &[[f32; 2]],
+    tone: Tone,
+    pre: Option<[[f32; 3]; 3]>,
+    cache: Option<&mut Option<RetoneCache>>,
+) {
+    if (tone.is_neutral() && pre.is_none()) || w == 0 || h == 0 || px.len() < w * h {
         return;
     }
-    let forward = |v: f32| crate::develop::tone(curve, v.clamp(0.0, 1.0)).clamp(0.0, 1.0).powf(1.0 / 1.8);
-    // The inverse from a table over s = √v (the encoding is steep near 0).
-    const N: usize = 4096;
-    let table: Vec<f32> = (0..=N).map(|i| forward((i as f32 / N as f32).powi(2))).collect();
-    let inverse = |e: f32| {
-        let i = table.partition_point(|t| *t < e).clamp(1, N);
-        let (a, b) = (table[i - 1], table[i]);
-        let f = if b > a { ((e - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
-        (((i - 1) as f32 + f) / N as f32).powi(2)
+    let px = &mut px[..w * h];
+    let mut once;
+    let c = match cache {
+        Some(slot) => {
+            let hash = content_hash(px, w);
+            if slot.as_ref().is_none_or(|c| c.w != w || c.h != h || c.curve != curve || c.hash != Some(hash)) {
+                *slot = Some(RetoneCache::new(px, w, h, curve, Some(hash)));
+            }
+            let Some(c) = slot.as_mut() else { return };
+            c
+        }
+        None => {
+            once = RetoneCache::new(px, w, h, curve, None);
+            &mut once
+        }
     };
-    let linear = |p: &[f32; 4]| [inverse(p[0]), inverse(p[1]), inverse(p[2])];
-    // Full-size images (the detail preview develops 16–45 MP): rows in parallel, and the linear
-    // colours recomputed where needed instead of kept as a second copy of the image.
-    let haze = Haze::new(w, h, |i| linear(&px[i]), tone.dehaze);
-    let y = crate::color::rgb_to_xyz(crate::color::ROMM, crate::color::D50_XY)[1].map(|v| v as f32);
-    let lum_of = |c: &[f32; 3]| y[0] * c[0] + y[1] * c[1] + y[2] * c[2];
-    let dehazed = |i: usize| {
-        let l = linear(&px[i]);
-        haze.as_ref().map_or(l, |hz| hz.apply(i % w, i / w, l))
-    };
+    c.set_pre(pre);
+    c.analyse(px, tone);
+    let c = &*c;
+    let haze = c.haze_map(tone.dehaze);
+    let work = c.work_change(tone);
+    let texture = c.texture_change(tone);
     let rows = crate::par::band_rows(w);
-    let lum: Vec<f32> = crate::par::map(h.div_ceil(rows), |band| {
-        let (y0, y1) = (band * rows, ((band + 1) * rows).min(h));
-        (y0 * w..y1 * w).map(|i| lum_of(&dehazed(i))).collect::<Vec<_>>()
-    })
-    .concat();
-    let map = ToneMap::new(w, h, |i| lum[i], tone, 0.0);
-    let haze = haze.as_ref();
-    crate::par::chunks_mut(&mut px[..w * h], rows * w, |band, chunk| {
+    crate::par::chunks_mut(px, rows * w, |band, chunk| {
         for (j, p) in chunk.iter_mut().enumerate() {
             let i = band * rows * w + j;
-            let mut l = [inverse(p[0]), inverse(p[1]), inverse(p[2])];
-            if let Some(hz) = haze {
-                l = hz.apply(i % w, i / w, l);
+            let (x, y) = (i % w, i / w);
+            // Each pixel reads only itself, before it is written.
+            let mut l = c.lin(i, p);
+            if let Some(hz) = &haze {
+                l = hz.apply(x, y, l);
             }
-            let g = map.as_ref().map_or(1.0, |m| m.gain(i % w, i / w, lum[i]));
+            let change = [&work, &texture].iter().filter_map(|u| u.as_ref()).map(|u| u.change(w, h, x, y, c.lum[i])).sum::<f32>();
+            let g = change.clamp(-6.0, 6.0).exp2();
             for k in 0..3 {
-                p[k] = forward(l[k] * g);
+                p[k] = encode(&c.forward, l[k] * g);
             }
         }
     });
+}
+
+/// A hash of every pixel's colour and the size: what a kept [`RetoneCache`] was filled from. Rows
+/// in parallel bands, combined in order.
+fn content_hash(px: &[[f32; 4]], w: usize) -> u64 {
+    const PRIME: u64 = 0x0100_0000_01b3;
+    let rows = crate::par::band_rows(w);
+    let h = px.len().div_ceil(w.max(1));
+    let bands = crate::par::map(h.div_ceil(rows), |band| {
+        let mut x: u64 = 0xcbf2_9ce4_8422_2325;
+        for p in &px[band * rows * w..((band + 1) * rows * w).min(px.len())] {
+            for v in &p[..3] {
+                x = (x ^ u64::from(v.to_bits())).wrapping_mul(PRIME);
+            }
+        }
+        x
+    });
+    let mut x: u64 = 0xcbf2_9ce4_8422_2325 ^ (px.len() as u64) ^ ((w as u64) << 32);
+    for b in bands {
+        x = (x ^ b).wrapping_mul(PRIME).rotate_left(29);
+    }
+    x
+}
+
+/// Steps of [`RetoneCache::forward`], over `s = √v`.
+const FORWARD_STEPS: usize = 4096;
+
+/// The gamma-1.8 code of linear `v` through the curve, from the table over `√v`.
+fn encode(table: &[f32], v: f32) -> f32 {
+    let t = v.clamp(0.0, 1.0).sqrt() * FORWARD_STEPS as f32;
+    let i = (t as usize).min(FORWARD_STEPS - 1);
+    let f = t - i as f32;
+    table[i] + (table[i + 1] - table[i]) * f
+}
+
+/// The slider-independent part of [`retone`] for one image (see [`retone_with`]).
+pub struct RetoneCache {
+    w: usize,
+    h: usize,
+    curve: Vec<[f32; 2]>,
+    /// [`content_hash`] of the pixels it was filled from; `None` for one call's use.
+    hash: Option<u64>,
+    /// The pixels' linear values (the curve undone), before `pre`, when kept; empty for one
+    /// call's use, which undoes the curve from each pixel as it reads it.
+    undone: Vec<[f32; 3]>,
+    pre: Option<[[f32; 3]; 3]>,
+    /// Linear → gamma-1.8 code through the curve, [`FORWARD_STEPS`] + 2 entries over `√v` (the
+    /// first [`FORWARD_STEPS`] + 1 also invert it).
+    forward: Vec<f32>,
+    haze: Option<HazeBase>,
+    /// The Dehaze amount `lum`, `work` and `texture` are for (`None`: no `lum` yet).
+    dehaze: Option<f32>,
+    /// Linear luminance per pixel after Dehaze, only while Shadows, Highlights, Clarity or Texture
+    /// is set.
+    lum: Vec<f32>,
+    work: Option<WorkBase>,
+    texture: Option<TextureBase>,
+}
+
+/// Dehaze's work copy: airlight and, for raising it, the smoothed dark channel (each pixel's
+/// transmission is `1 − weight · smooth`).
+struct HazeBase {
+    sw: usize,
+    sh: usize,
+    air: [f32; 3],
+    smooth: Option<Vec<f32>>,
+}
+
+/// One slider direction's change at ±100, as a fit carried to full size (see [`Upsampled`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Unit {
+    ShadowsUp,
+    ShadowsDown,
+    HighlightsUp,
+    HighlightsDown,
+    ClarityUp,
+    ClarityDown,
+}
+
+/// A fit `change ≈ a · l + b` on a work copy (see [`linear_fit`]).
+type Fit = (Vec<f32>, Vec<f32>);
+
+/// The work copy of [`ToneMap`]: log₂ luminance and its statistics, the bases, and the unit fits.
+struct WorkBase {
+    sw: usize,
+    sh: usize,
+    l: Vec<f32>,
+    p01: f32,
+    geo: f32,
+    pm: f32,
+    scale: f32,
+    base: Option<Vec<f32>>,
+    fits: Vec<(Unit, Fit)>,
+}
+
+/// Texture's copy, its Gaussian bases and the unit fits for +100 and −100.
+struct TextureBase {
+    sw: usize,
+    sh: usize,
+    l: Vec<f32>,
+    p01: f32,
+    bases: Vec<Vec<f32>>,
+    fits: [Option<Fit>; 2],
+}
+
+/// Dehaze for one amount: per work-copy pixel transmission, or the veil.
+struct HazeMap<'a> {
+    base: &'a HazeBase,
+    w: usize,
+    h: usize,
+    t: Vec<f32>,
+    veil: f32,
+}
+
+impl HazeMap<'_> {
+    fn apply(&self, x: usize, y: usize, v: [f32; 3]) -> [f32; 3] {
+        let air = self.base.air;
+        if self.t.is_empty() {
+            return [0, 1, 2].map(|c| v[c] * (1.0 - self.veil) + air[c] * self.veil);
+        }
+        let t = bilinear(&self.t, self.base.sw, self.base.sh, self.w, self.h, x, y).max(HAZE_T0);
+        [0, 1, 2].map(|c| ((v[c] - air[c]) / t + air[c]).max(0.0))
+    }
+}
+
+impl RetoneCache {
+    /// For `px`; `hash` set keeps the linear values for later calls.
+    fn new(px: &[[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], hash: Option<u64>) -> Self {
+        let forward_of = |v: f32| crate::develop::tone(curve, v.clamp(0.0, 1.0)).clamp(0.0, 1.0).powf(1.0 / 1.8);
+        let forward: Vec<f32> = (0..=FORWARD_STEPS + 1).map(|i| forward_of((i.min(FORWARD_STEPS) as f32 / FORWARD_STEPS as f32).powi(2))).collect();
+        let mut c = RetoneCache {
+            w,
+            h,
+            curve: curve.to_vec(),
+            hash,
+            undone: Vec::new(),
+            pre: None,
+            forward,
+            haze: None,
+            dehaze: None,
+            lum: Vec::new(),
+            work: None,
+            texture: None,
+        };
+        if hash.is_some() {
+            let rows = crate::par::band_rows(w);
+            let this = &c;
+            let undone = crate::par::map(h.div_ceil(rows), |band| {
+                let (y0, y1) = (band * rows, ((band + 1) * rows).min(h));
+                px[y0 * w..y1 * w].iter().map(|p| this.undo(p)).collect::<Vec<_>>()
+            })
+            .concat();
+            c.undone = undone;
+        }
+        c
+    }
+
+    /// The curve undone: linear values of a developed pixel, from the table over `s = √v` (the
+    /// encoding is steep near 0).
+    fn undo(&self, p: &[f32; 4]) -> [f32; 3] {
+        let table = &self.forward[..=FORWARD_STEPS];
+        let inverse = |e: f32| {
+            let i = table.partition_point(|t| *t < e).clamp(1, FORWARD_STEPS);
+            let (a, b) = (table[i - 1], table[i]);
+            let f = if b > a { ((e - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
+            (((i - 1) as f32 + f) / FORWARD_STEPS as f32).powi(2)
+        };
+        [inverse(p[0]), inverse(p[1]), inverse(p[2])]
+    }
+
+    /// Pixel `i`'s linear ProPhoto RGB after `pre` (`p` its developed value).
+    fn lin(&self, i: usize, p: &[f32; 4]) -> [f32; 3] {
+        let v = if self.undone.is_empty() { self.undo(p) } else { self.undone[i] };
+        match &self.pre {
+            Some(m) => [0, 1, 2].map(|r| (m[r][0] * v[0] + m[r][1] * v[1] + m[r][2] * v[2]).max(0.0)),
+            None => v,
+        }
+    }
+
+    /// Takes `pre`; a change drops everything computed from the linear values.
+    fn set_pre(&mut self, pre: Option<[[f32; 3]; 3]>) {
+        if self.pre == pre {
+            return;
+        }
+        self.pre = pre;
+        (self.haze, self.dehaze, self.lum, self.work, self.texture) = (None, None, Vec::new(), None, None);
+    }
+
+    /// Fills in what `tone` needs for `px` (the pixels it was made for): the haze base, the
+    /// luminance for its Dehaze (only when a luminance slider is set), the bases and the unit fits
+    /// of the sliders it sets.
+    fn analyse(&mut self, px: &[[f32; 4]], tone: Tone) {
+        let (w, h) = (self.w, self.h);
+        let smooth = tone.dehaze > 0.0 && self.haze.as_ref().is_none_or(|hz| hz.smooth.is_none());
+        if (tone.dehaze != 0.0 && self.haze.is_none()) || smooth {
+            // One work copy for both the airlight and the dark channel.
+            let (sw, sh, small) = reduce(w, h, WORK_SIDE, |i| self.lin(i, &px[i]));
+            let hz = self.haze.get_or_insert_with(|| HazeBase { sw, sh, air: airlight(&small), smooth: None });
+            if smooth {
+                hz.smooth = Some(haze_smooth(&small, hz.sw, hz.sh, hz.air));
+            }
+        }
+        if tone.work_neutral() && tone.texture == 0.0 {
+            // Only `pre` and Dehaze: no luminance map to make.
+            return;
+        }
+        let dehaze = tone.dehaze.clamp(-100.0, 100.0);
+        if self.dehaze != Some(dehaze) {
+            let haze = self.haze_map(dehaze);
+            let y = crate::color::rgb_to_xyz(crate::color::ROMM, crate::color::D50_XY)[1].map(|v| v as f32);
+            let rows = crate::par::band_rows(w);
+            let this = &*self;
+            let lum = crate::par::map(h.div_ceil(rows), |band| {
+                let (y0, y1) = (band * rows, ((band + 1) * rows).min(h));
+                (y0 * w..y1 * w)
+                    .map(|i| {
+                        let l = this.lin(i, &px[i]);
+                        let l = haze.as_ref().map_or(l, |hz| hz.apply(i % w, i / w, l));
+                        y[0] * l[0] + y[1] * l[1] + y[2] * l[2]
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .concat();
+            drop(haze);
+            self.lum = lum;
+            self.dehaze = Some(dehaze);
+            self.work = None;
+            self.texture = None;
+        }
+        let lum = &self.lum;
+        if !tone.work_neutral() {
+            let work = self.work.get_or_insert_with(|| {
+                let (sw, sh, y) = reduce(w, h, WORK_SIDE, |i| [lum[i]]);
+                let y: Vec<f32> = y.into_iter().map(|[v]| v).collect();
+                let p01 = quantile(&y, 0.001).max(2f32.powi(-20));
+                let l: Vec<f32> = y.iter().map(|v| v.max(p01).log2()).collect();
+                let n = l.len() as f64;
+                let geo = (l.iter().map(|v| f64::from(*v)).sum::<f64>() / n) as f32;
+                let pm = ((l.iter().map(|v| f64::from(v.exp2()).powf(1.5)).sum::<f64>() / n).log2() / 1.5) as f32;
+                let scale = sw.max(sh) as f32 / WORK_SIDE as f32;
+                WorkBase { sw, sh, l, p01, geo, pm, scale, base: None, fits: Vec::new() }
+            });
+            for unit in work_units(tone) {
+                if work.fits.iter().any(|(u, _)| *u == unit) {
+                    continue;
+                }
+                let (sw, sh) = (work.sw, work.sh);
+                let mut change = vec![0.0f32; work.l.len()];
+                match unit {
+                    Unit::ShadowsUp | Unit::ShadowsDown | Unit::HighlightsUp | Unit::HighlightsDown => {
+                        let r = ((BASE_RADIUS * work.scale).round() as usize).max(1);
+                        let l = &work.l;
+                        let base = work.base.get_or_insert_with(|| guided(l, l, sw, sh, r, BASE_EPS));
+                        for (c, b) in change.iter_mut().zip(base.iter()) {
+                            *c = match unit {
+                                Unit::ShadowsUp => shadows(100.0, b - work.pm),
+                                Unit::ShadowsDown => shadows(-100.0, b - work.pm),
+                                Unit::HighlightsUp => highlights(100.0, b - work.geo),
+                                _ => highlights(-100.0, b - work.geo),
+                            };
+                        }
+                    }
+                    Unit::ClarityUp | Unit::ClarityDown => {
+                        clarity(&mut change, &work.l, sw, sh, work.geo, work.scale, if unit == Unit::ClarityUp { 100.0 } else { -100.0 })
+                    }
+                }
+                let fit = linear_fit(&work.l, &change, sw, sh, 2, UPSAMPLE_EPS);
+                work.fits.push((unit, fit));
+            }
+        }
+        if tone.texture != 0.0 {
+            let tex = self.texture.get_or_insert_with(|| {
+                let (sw, sh, y) = reduce(w, h, TEXTURE_SIDE, |i| [lum[i]]);
+                let y: Vec<f32> = y.into_iter().map(|[v]| v).collect();
+                let p01 = quantile(&y, 0.001).max(2f32.powi(-20));
+                let l: Vec<f32> = y.iter().map(|v| v.max(p01).log2()).collect();
+                let scale = sw.max(sh) as f32 / TEXTURE_SIDE as f32;
+                let bases = TEXTURE_SIGMAS.iter().map(|sigma| gauss(&l, sw, sh, sigma * scale)).collect();
+                TextureBase { sw, sh, l, p01, bases, fits: [None, None] }
+            });
+            let side = usize::from(tone.texture < 0.0);
+            if tex.fits[side].is_none() {
+                let (k, t) = direction(if side == 0 { 100.0 } else { -100.0 }, &tables::TEXTURE_UP, &tables::TEXTURE_DOWN);
+                let mut change = vec![0.0f32; tex.l.len()];
+                let mut prev = &tex.l;
+                for (band, base) in tex.bases.iter().enumerate() {
+                    let zero = knots(&t[band], 0.0);
+                    for ((c, p), b) in change.iter_mut().zip(prev).zip(base) {
+                        *c += k * (knots(&t[band], p - b) - zero);
+                    }
+                    prev = base;
+                }
+                tex.fits[side] = Some(linear_fit(&tex.l, &change, tex.sw, tex.sh, 2, TEXTURE_UPSAMPLE_EPS));
+            }
+        }
+    }
+
+    /// Dehaze at `amount` (−100…100), from the haze base; `None` at 0.
+    fn haze_map(&self, amount: f32) -> Option<HazeMap<'_>> {
+        let amount = amount.clamp(-100.0, 100.0) / 100.0;
+        let base = self.haze.as_ref().filter(|_| amount != 0.0)?;
+        if amount < 0.0 {
+            return Some(HazeMap { base, w: self.w, h: self.h, t: Vec::new(), veil: HAZE_DOWN * -amount });
+        }
+        let wgt = HAZE_UP * amount;
+        let t = base.smooth.as_ref()?.iter().map(|d| (1.0 - wgt * d).max(HAZE_T0)).collect();
+        Some(HazeMap { base, w: self.w, h: self.h, t, veil: 0.0 })
+    }
+
+    /// Shadows, Highlights and Clarity: the weighted sum of their unit fits.
+    fn work_change(&self, tone: Tone) -> Option<Upsampled> {
+        let work = self.work.as_ref().filter(|_| !tone.work_neutral())?;
+        let n = work.l.len();
+        let (mut a, mut b) = (vec![0.0f32; n], vec![0.0f32; n]);
+        for (unit, weight) in work_weights(tone) {
+            let Some((_, (ua, ub))) = work.fits.iter().find(|(u, _)| *u == unit) else { continue };
+            for k in 0..n {
+                a[k] += weight * ua[k];
+                b[k] += weight * ub[k];
+            }
+        }
+        Some(Upsampled { sw: work.sw, sh: work.sh, a, b, floor: work.p01.log2() })
+    }
+
+    /// Texture: its unit fit times the slider's weight.
+    fn texture_change(&self, tone: Tone) -> Option<Upsampled> {
+        let tex = self.texture.as_ref().filter(|_| tone.texture != 0.0)?;
+        let (ua, ub) = tex.fits[usize::from(tone.texture < 0.0)].as_ref()?;
+        let k = tone.texture.clamp(-100.0, 100.0).abs() / 100.0;
+        Some(Upsampled { sw: tex.sw, sh: tex.sh, a: ua.iter().map(|v| v * k).collect(), b: ub.iter().map(|v| v * k).collect(), floor: tex.p01.log2() })
+    }
+}
+
+/// The unit fits `tone` uses and their weights (each slider's change is linear in its value).
+fn work_weights(tone: Tone) -> Vec<(Unit, f32)> {
+    let side = |v: f32, up: Unit, down: Unit| {
+        let v = v.clamp(-100.0, 100.0) / 100.0;
+        (v != 0.0).then(|| if v > 0.0 { (up, v) } else { (down, -v) })
+    };
+    [
+        side(tone.shadows, Unit::ShadowsUp, Unit::ShadowsDown),
+        side(tone.highlights, Unit::HighlightsUp, Unit::HighlightsDown),
+        side(tone.clarity, Unit::ClarityUp, Unit::ClarityDown),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn work_units(tone: Tone) -> Vec<Unit> {
+    work_weights(tone).into_iter().map(|(u, _)| u).collect()
+}
+
+/// Airlight of a work copy (linear ProPhoto): the mean colour of the 0.1 % of pixels with the
+/// brightest dark channel in Display P3 (see [`Haze`]).
+fn airlight(small: &[[f32; 3]]) -> [f32; 3] {
+    let p3 = |v: &[f32; 3]| PRO_TO_P3.map(|row| (row[0] * v[0] + row[1] * v[1] + row[2] * v[2]).max(0.0));
+    let dc: Vec<f32> = small.iter().map(p3).map(|c| c[0].min(c[1]).min(c[2])).collect();
+    let top = (dc.len() / 1000).max(1);
+    let mut idx: Vec<usize> = (0..dc.len()).collect();
+    idx.select_nth_unstable_by(top - 1, |a, b| dc[*b].total_cmp(&dc[*a]));
+    let mut air = [0.0f32; 3];
+    for i in &idx[..top] {
+        for c in 0..3 {
+            air[c] += small[*i][c] / top as f32;
+        }
+    }
+    air.map(|v| v.max(1e-6))
+}
+
+/// Dehaze's smoothed dark channel on a work copy (see [`Haze::new`]).
+fn haze_smooth(small: &[[f32; 3]], sw: usize, sh: usize, air: [f32; 3]) -> Vec<f32> {
+    let p3 = |v: &[f32; 3]| PRO_TO_P3.map(|row| (row[0] * v[0] + row[1] * v[1] + row[2] * v[2]).max(0.0));
+    let air_p3 = p3(&air).map(|v| v.max(1e-6));
+    let scale = sw.max(sh) as f32 / WORK_SIDE as f32;
+    let dark0: Vec<f32> = small.iter().map(p3).map(|c| (0..3).map(|k| c[k] / air_p3[k]).fold(f32::MAX, f32::min)).collect();
+    let dark = min_filter(&dark0, sw, sh, ((HAZE_RADIUS * scale).round() as usize).max(1));
+    let y = crate::color::rgb_to_xyz(crate::color::ROMM, crate::color::D50_XY)[1].map(|v| v as f32);
+    let lum = |c: &[f32; 3]| y[0] * c[0] + y[1] * c[1] + y[2] * c[2];
+    let air_y = lum(&air).max(1e-6);
+    let guide: Vec<f32> = small.iter().map(|c| lum(c) / air_y).collect();
+    guided(&guide, &dark, sw, sh, ((HAZE_SMOOTH * scale).round() as usize).max(1), HAZE_EPS)
 }
 
 #[cfg(test)]
@@ -755,5 +1153,132 @@ mod tests {
         for i in [60 * w + 50, 60 * w + 150, 60 * w + 250] {
             assert!((out[i][0] - enc(y[i] * g[i])).abs() < 0.003, "{i}: {} vs {}", out[i][0], enc(y[i] * g[i]));
         }
+    }
+
+    /// The old, uncached retone: [`ToneMap`] and [`Haze`] as the develop stage computes them.
+    fn reference(px: &mut [[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], tone: Tone) {
+        let forward = |v: f32| crate::develop::tone(curve, v.clamp(0.0, 1.0)).clamp(0.0, 1.0).powf(1.0 / 1.8);
+        const N: usize = 4096;
+        let table: Vec<f32> = (0..=N).map(|i| forward((i as f32 / N as f32).powi(2))).collect();
+        let inverse = |e: f32| {
+            let i = table.partition_point(|t| *t < e).clamp(1, N);
+            let (a, b) = (table[i - 1], table[i]);
+            let f = if b > a { ((e - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
+            (((i - 1) as f32 + f) / N as f32).powi(2)
+        };
+        let lin: Vec<[f32; 3]> = px.iter().map(|p| [inverse(p[0]), inverse(p[1]), inverse(p[2])]).collect();
+        let haze = Haze::new(w, h, |i| lin[i], tone.dehaze);
+        let y = crate::color::rgb_to_xyz(crate::color::ROMM, crate::color::D50_XY)[1].map(|v| v as f32);
+        let dehazed: Vec<[f32; 3]> = (0..w * h).map(|i| haze.as_ref().map_or(lin[i], |hz| hz.apply(i % w, i / w, lin[i]))).collect();
+        let lum: Vec<f32> = dehazed.iter().map(|l| y[0] * l[0] + y[1] * l[1] + y[2] * l[2]).collect();
+        let map = ToneMap::new(w, h, |i| lum[i], tone, 0.0);
+        for (i, p) in px.iter_mut().enumerate() {
+            let g = map.as_ref().map_or(1.0, |m| m.gain(i % w, i / w, lum[i]));
+            for k in 0..3 {
+                p[k] = forward(dehazed[i][k] * g);
+            }
+        }
+    }
+
+    fn scene(w: usize, h: usize) -> Vec<[f32; 4]> {
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32, (i / w) as f32);
+                let v =
+                    0.15 + 0.6 * (x / w as f32) * (0.5 + 0.5 * (y * 0.21).sin()) + if (x as usize / 7 + y as usize / 5).is_multiple_of(2) { 0.08 } else { 0.0 };
+                [v, v * 0.9, v * 0.8 + 0.05, 1.0]
+            })
+            .collect()
+    }
+
+    /// The decomposed retone (each slider's change a weighted unit fit) matches the develop
+    /// stage's maps within a fraction of a code value, for every slider at once.
+    #[test]
+    fn retone_matches_the_develop_stage_maps() {
+        let (w, h) = (180, 120);
+        let curve = [[0.01, 0.03], [0.1, 0.27], [0.5, 0.75], [1.0, 1.0]];
+        let px = scene(w, h);
+        for tone in [
+            Tone { shadows: 60.0, highlights: -45.0, clarity: 30.0, texture: 25.0, dehaze: 20.0 },
+            Tone { shadows: -40.0, highlights: 70.0, clarity: -50.0, texture: -30.0, dehaze: -35.0 },
+        ] {
+            let (mut a, mut b) = (px.clone(), px.clone());
+            retone(&mut a, w, h, &curve, tone);
+            reference(&mut b, w, h, &curve, tone);
+            let worst = a.iter().zip(&b).flat_map(|(p, q)| (0..3).map(move |k| (p[k] - q[k]).abs())).fold(0.0f32, f32::max);
+            assert!(worst < 2e-3, "{tone:?}: {worst}");
+            assert_ne!(a, px);
+        }
+    }
+
+    /// A preview retoning the same pixels again through the cache gets exactly what a fresh
+    /// retone gets, whatever the sliders did in between.
+    #[test]
+    fn retone_from_the_cache_is_a_fresh_retone() {
+        let (w, h) = (150, 100);
+        let curve = [[0.01, 0.03], [0.1, 0.27], [0.5, 0.75], [1.0, 1.0]];
+        let px = scene(w, h);
+        let mut cache = None;
+        for tone in [
+            Tone { shadows: 40.0, ..Tone::NEUTRAL },
+            Tone { shadows: 80.0, highlights: -30.0, ..Tone::NEUTRAL },
+            Tone { shadows: -20.0, highlights: -30.0, clarity: 25.0, ..Tone::NEUTRAL },
+            Tone { shadows: -20.0, highlights: -30.0, clarity: 25.0, texture: 40.0, dehaze: 15.0 },
+            Tone { shadows: -20.0, highlights: 10.0, clarity: 25.0, texture: -40.0, dehaze: -15.0 },
+            Tone { shadows: 0.0, highlights: 10.0, clarity: 0.0, texture: 0.0, dehaze: 15.0 },
+        ] {
+            let (mut kept, mut fresh) = (px.clone(), px.clone());
+            retone_with(&mut kept, w, h, &curve, tone, None, Some(&mut cache));
+            retone(&mut fresh, w, h, &curve, tone);
+            assert_eq!(kept, fresh, "{tone:?}");
+        }
+        // Other pixels refill the cache instead of reusing it.
+        let mut other: Vec<[f32; 4]> = px.iter().map(|p| [p[0] * 0.5, p[1] * 0.5, p[2] * 0.5, 1.0]).collect();
+        let mut fresh = other.clone();
+        let tone = Tone { shadows: 50.0, ..Tone::NEUTRAL };
+        retone_with(&mut other, w, h, &curve, tone, None, Some(&mut cache));
+        retone(&mut fresh, w, h, &curve, tone);
+        assert_eq!(other, fresh);
+        // A linear matrix first (Exposure and the white balance): kept and fresh agree, and with
+        // no slider set it is exactly the matrix applied in linear light.
+        let pre = Some([[2.0, 0.0, 0.0], [0.0, 1.5, 0.1], [0.0, 0.0, 1.2]]);
+        for tone in [Tone { shadows: 50.0, ..Tone::NEUTRAL }, Tone::NEUTRAL, Tone { shadows: 50.0, dehaze: 20.0, ..Tone::NEUTRAL }] {
+            let (mut kept, mut fresh) = (px.clone(), px.clone());
+            retone_with(&mut kept, w, h, &curve, tone, pre, Some(&mut cache));
+            retone_with(&mut fresh, w, h, &curve, tone, pre, None);
+            assert_eq!(kept, fresh, "{tone:?}");
+        }
+        let mut gained = px.clone();
+        retone_with(&mut gained, w, h, &curve, Tone::NEUTRAL, Some([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]), None);
+        let enc = |v: f32| crate::develop::tone(&curve, v.clamp(0.0, 1.0)).clamp(0.0, 1.0).powf(1.0 / 1.8);
+        let dark = px.iter().position(|p| p[0] < 0.3).unwrap();
+        // Undo the curve by search, then double.
+        let undo = |e: f32| (0..=100_000).map(|i| (i as f32 / 100_000.0).powi(2)).min_by(|a, b| (enc(*a) - e).abs().total_cmp(&(enc(*b) - e).abs())).unwrap();
+        let want = enc(2.0 * undo(px[dark][0]));
+        assert!((gained[dark][0] - want).abs() < 2e-3, "{} vs {want}", gained[dark][0]);
+    }
+
+    /// Pixels changed upstream in one small patch (a hue band, a corner) fill the cache again:
+    /// every pixel counts, not a sample of them (#3817 review).
+    #[test]
+    fn a_change_to_a_few_pixels_refills_the_retone_cache() {
+        let (w, h) = (300, 200);
+        let curve = [[0.01, 0.03], [0.1, 0.27], [0.5, 0.75], [1.0, 1.0]];
+        let px = scene(w, h);
+        let tone = Tone { shadows: 60.0, clarity: 30.0, ..Tone::NEUTRAL };
+        let mut cache = None;
+        let mut first = px.clone();
+        retone_with(&mut first, w, h, &curve, tone, None, Some(&mut cache));
+        let mut edited = px.clone();
+        for y in 101..104 {
+            for x in 151..154 {
+                edited[y * w + x] = [0.9, 0.2, 0.1, 1.0];
+            }
+        }
+        let (mut kept, mut fresh) = (edited.clone(), edited);
+        retone_with(&mut kept, w, h, &curve, tone, None, Some(&mut cache));
+        retone(&mut fresh, w, h, &curve, tone);
+        assert_eq!(kept, fresh);
+        assert_ne!(kept[102 * w + 152], first[102 * w + 152]);
     }
 }
