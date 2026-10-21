@@ -179,3 +179,101 @@ fn every_panel_and_tool_draws_without_editing_the_document() {
     assert_eq!(inspect(&h)["params"], before);
     assert!(std::sync::Arc::ptr_eq(&doc, &h.state().session.active().unwrap().doc));
 }
+
+/// A click focuses a slider; then the arrow keys and the wheel over it step its value (Shift: ten),
+/// the wheel elsewhere does not, and Tab moves to the next slider.
+#[test]
+fn a_focused_slider_steps_with_the_keys_and_the_wheel() {
+    let mut h = fixture();
+    // Enough open panels for the settings to scroll.
+    ui(&mut h, json!({"layout":{"open":["light","color","effects","detail","optics","geometry"]}})).unwrap();
+    let key = |h: &mut Harness<'_, PhotocraftApp>, key: egui::Key, modifiers: Modifiers| {
+        h.event(Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers });
+        h.event(Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers });
+        h.run_steps(2);
+    };
+    let wheel = |h: &mut Harness<'_, PhotocraftApp>, at: Pos2, notches: f32| {
+        h.event(Event::PointerMoved(at));
+        h.event(Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: vec2(0.0, notches), modifiers: Modifiers::NONE, phase: egui::TouchPhase::Move });
+        h.run_steps(2);
+    };
+    let contrast = h.get_by_role_and_label(Role::Slider, "Contrast").rect();
+    click(&mut h, contrast.center(), 1);
+    let start = inspect(&h)["params"]["contrast"].as_f64().unwrap();
+    for _ in 0..3 {
+        key(&mut h, egui::Key::ArrowUp, Modifiers::NONE);
+    }
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 3.0);
+    key(&mut h, egui::Key::ArrowRight, Modifiers::SHIFT);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 13.0);
+    key(&mut h, egui::Key::ArrowLeft, Modifiers::NONE);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 12.0);
+    let row = contrast.center() - vec2(0.0, 12.0);
+    wheel(&mut h, row, 2.0);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 14.0, "the wheel over the row");
+    wheel(&mut h, row, -4.0);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 10.0);
+    // egui spreads a notch over several frames: none of it scrolls the panels under the slider.
+    h.run_steps(30);
+    assert_eq!(h.get_by_role_and_label(Role::Slider, "Contrast").rect(), contrast, "the panels did not scroll");
+    // Elsewhere over the panels the wheel scrolls them and leaves the focused slider alone.
+    wheel(&mut h, row + vec2(0.0, 120.0), -3.0);
+    h.run_steps(30);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 10.0, "not the wheel elsewhere");
+    assert!(h.get_by_role_and_label(Role::Slider, "Contrast").rect().top() < contrast.top() - 10.0, "the panels scrolled");
+    key(&mut h, egui::Key::ArrowUp, Modifiers::NONE);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 11.0, "still focused");
+    // The pointer leaving the panels takes the focus away: the keys and the wheel are free again.
+    let preview = pos2(300.0, 400.0);
+    wheel(&mut h, preview, 3.0);
+    key(&mut h, egui::Key::ArrowUp, Modifiers::NONE);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 11.0, "unfocused");
+    // Tab: the next slider (Highlights) takes the keys.
+    // A click on the label focuses the slider again without moving it.
+    let contrast = h.get_by_role_and_label(Role::Slider, "Contrast").rect();
+    click(&mut h, contrast.center() - vec2(0.0, 13.0), 1);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 11.0);
+    key(&mut h, egui::Key::Tab, Modifiers::NONE);
+    key(&mut h, egui::Key::ArrowDown, Modifiers::NONE);
+    let p = inspect(&h)["params"].clone();
+    assert_eq!(p["contrast"].as_f64().unwrap(), start + 11.0);
+    assert_eq!(p["highlights"], -1.0, "{p}");
+    // Exposure steps by 0.05.
+    let exposure = h.get_by_role_and_label(Role::Slider, "Exposure").rect();
+    click(&mut h, exposure.center(), 1);
+    let e0 = inspect(&h)["params"]["exposure"].as_f64().unwrap();
+    key(&mut h, egui::Key::ArrowUp, Modifiers::NONE);
+    assert!((inspect(&h)["params"]["exposure"].as_f64().unwrap() - (e0 + 0.05)).abs() < 1e-6);
+}
+
+/// The arrow keys and the wheel on a focused slider are undoable: a run of them is one step
+/// (#3817 review: they changed the settings without an undo step).
+#[test]
+fn a_run_of_slider_nudges_is_one_undo_step() {
+    let mut h = fixture();
+    let key = |h: &mut Harness<'_, PhotocraftApp>, key: egui::Key, modifiers: Modifiers| {
+        h.event(Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers });
+        h.event(Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers });
+        h.run_steps(2);
+    };
+    let rect = h.get_by_role_and_label(Role::Slider, "Contrast").rect();
+    click(&mut h, rect.center(), 1);
+    let start = inspect(&h)["params"]["contrast"].as_f64().unwrap();
+    for _ in 0..3 {
+        key(&mut h, egui::Key::ArrowUp, Modifiers::NONE);
+    }
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 3.0);
+    key(&mut h, egui::Key::Z, Modifiers::COMMAND);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start, "one Ctrl+Z undoes the run");
+    key(&mut h, egui::Key::Z, Modifiers::COMMAND | Modifiers::SHIFT);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 3.0, "and redo brings it back");
+    // A later turn of the wheel over the row is a step of its own.
+    h.run_steps(90);
+    let row = rect.center() - vec2(0.0, 12.0);
+    h.event(Event::PointerMoved(row));
+    h.event(Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: vec2(0.0, 2.0), modifiers: Modifiers::NONE, phase: egui::TouchPhase::Move });
+    h.run_steps(2);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 5.0);
+    key(&mut h, egui::Key::Z, Modifiers::COMMAND);
+    assert_eq!(inspect(&h)["params"]["contrast"].as_f64().unwrap(), start + 3.0);
+}

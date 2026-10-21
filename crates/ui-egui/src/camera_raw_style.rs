@@ -247,7 +247,8 @@ pub(crate) struct SliderResponse {
 
 /// One Camera Raw slider row: `Label ……… [value]` with the track and knob below it. Drag or
 /// click the track to set, double-click the knob or the label to reset, type in the box (Enter /
-/// Tab commit, Esc reverts, ↑/↓ step by one, Shift ×10).
+/// Tab commit, Esc reverts, ↑/↓ step by one, Shift ×10). A click on the track or the label
+/// focuses the slider for the keyboard and the wheel (see [`nudge`]); Tab moves to the next one.
 pub(crate) fn slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, spec: &Spec) -> SliderResponse {
     let c = Acr::get(ui.ctx());
     let width = ui.available_width();
@@ -256,7 +257,8 @@ pub(crate) fn slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, spec: 
     let text_color = if enabled { c.label } else { c.faint.gamma_multiply(0.6) };
     let label_pos = pos2(row.left() + INSET_L + 2.0, row.top() + 9.0);
     let label_rect = Rect::from_min_size(row.min + vec2(INSET_L, 0.0), vec2((width - INSET_L - INSET_R - FIELD_W - 6.0).max(10.0), 18.0));
-    let label_resp = ui.interact(label_rect, ui.id().with((id, "label")), if enabled { Sense::click() } else { Sense::hover() });
+    // The label clicks (double-click resets) but does not take focus: the track does.
+    let label_resp = ui.interact(label_rect, ui.id().with((id, "label")), if enabled { Sense::CLICK } else { Sense::hover() });
     ui.painter().text(label_pos, Align2::LEFT_CENTER, label, label_font(), text_color);
     let field = Rect::from_min_size(pos2(row.right() - INSET_R - FIELD_W, row.top()), vec2(FIELD_W, FIELD_H));
     let mut changed = value_box(ui, ui.id().with((id, "field")), field, value, spec, enabled);
@@ -264,6 +266,13 @@ pub(crate) fn slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, spec: 
     let hit = Rect::from_min_max(pos2(track.left() - 6.0, track.top() - 7.0), pos2(track.right() + 6.0, track.bottom() + 6.0));
     let resp = ui.interact(hit, ui.id().with((id, "track")), if enabled { Sense::click_and_drag() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::slider(enabled, *value as f64, label));
+    if enabled && (resp.clicked() || resp.drag_started() || label_resp.clicked()) {
+        resp.request_focus();
+    }
+    if enabled && let Some(nv) = nudge(ui, &resp, row, *value, spec) {
+        *value = nv;
+        changed = true;
+    }
     let span = (spec.max - spec.min).max(f32::EPSILON);
     if enabled
         && (resp.dragged() || resp.clicked())
@@ -286,7 +295,84 @@ pub(crate) fn slider(ui: &mut Ui, id: &str, label: &str, value: &mut f32, spec: 
     let f = ((*value - spec.min) / span).clamp(0.0, 1.0);
     let x = track.left() + f * track.width();
     knob(p, pos2(x, track.top() - 3.0), if enabled { c.knob } else { c.knob.gamma_multiply(0.55) }, c.knob_edge);
+    if resp.has_focus() {
+        // The focused slider's value box, as Camera Raw marks the field the keys change.
+        p.rect_stroke(field, 0.0, Stroke::new(1.0, c.accent), StrokeKind::Inside);
+    }
     SliderResponse { changed, alt_drag: resp.dragged() && ui.input(|i| i.modifiers.alt) }
+}
+
+/// The keyboard and the wheel on a focused slider (`resp` its track, `row` its whole row): ↑ / →
+/// and the wheel up (or tilted right) raise it, ↓ / ← and the wheel down (or left) lower it, one
+/// step per key press or wheel notch (Shift: ten). The step is 1, or 0.1 / 0.05 for one or two
+/// decimals (Exposure). The wheel acts while the pointer is over the row, and then does not also
+/// scroll the panels; elsewhere it scrolls them. A press outside the row, or the pointer leaving
+/// the panels (the slider's scroll area), takes the focus away. Returns the new value when it
+/// changed.
+fn nudge(ui: &Ui, resp: &egui::Response, row: Rect, value: f32, spec: &Spec) -> Option<f32> {
+    if !resp.has_focus() {
+        return None;
+    }
+    let (pointer, pressed) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.any_pressed()));
+    let inside_id = resp.id.with("pointer-in-panels");
+    let inside = pointer.is_some_and(|p| ui.clip_rect().contains(p));
+    let was_inside = ui.data(|d| d.get_temp::<bool>(inside_id)).unwrap_or(inside);
+    ui.data_mut(|d| d.insert_temp(inside_id, inside));
+    if (pressed && pointer.is_some_and(|p| !row.contains(p))) || (was_inside && !inside) {
+        ui.memory_mut(|m| m.surrender_focus(resp.id));
+        return None;
+    }
+    // Arrow keys belong to the slider, not to focus moves; Tab still moves on.
+    ui.memory_mut(|m| m.set_focus_lock_filter(resp.id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() }));
+    let over = ui.rect_contains_pointer(row);
+    let remainder_id = resp.id.with("wheel-remainder");
+    // Steps (Shift: ten) per key press and per wheel notch, each with its own modifiers.
+    let ten = |m: &egui::Modifiers| if m.shift { 10.0 } else { 1.0 };
+    let (keys, wheel) = ui.input(|i| {
+        let mut keys = 0.0f32;
+        let mut wheel = 0.0f32;
+        for e in &i.events {
+            match e {
+                egui::Event::Key { key: egui::Key::ArrowUp | egui::Key::ArrowRight, pressed: true, modifiers, .. } => keys += ten(modifiers),
+                egui::Event::Key { key: egui::Key::ArrowDown | egui::Key::ArrowLeft, pressed: true, modifiers, .. } => keys -= ten(modifiers),
+                // Positive y moves the content down (the wheel turned up); positive x moves it
+                // right (the wheel tilted left).
+                egui::Event::MouseWheel { unit, delta, modifiers, .. } if over => {
+                    let notches = delta.y - delta.x;
+                    wheel += ten(modifiers)
+                        * match unit {
+                            egui::MouseWheelUnit::Line => notches,
+                            egui::MouseWheelUnit::Point => notches / 50.0,
+                            egui::MouseWheelUnit::Page => notches * 3.0,
+                        };
+                }
+                _ => {}
+            }
+        }
+        (keys, wheel)
+    });
+    if over {
+        // Don't scroll the panels under the slider as well. egui spreads a wheel notch over
+        // several frames, so the scroll is taken every frame the pointer is over the row, not
+        // only in the notch's own.
+        ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+    }
+    // Trackpads send fractions of a notch: keep what is left for the next frame.
+    let wheel = wheel + ui.data(|d| d.get_temp::<f32>(remainder_id)).unwrap_or(0.0);
+    let whole = wheel.trunc();
+    ui.data_mut(|d| d.insert_temp(remainder_id, wheel - whole));
+    let steps = keys + whole;
+    if steps == 0.0 {
+        return None;
+    }
+    let unit = match spec.decimals {
+        0 => 1.0,
+        1 => 0.1,
+        _ => 0.05,
+    };
+    let scale = 10f32.powi(spec.decimals as i32);
+    let nv = (((value + steps * unit) * scale).round() / scale).clamp(spec.min, spec.max);
+    (nv != value).then_some(nv)
 }
 
 /// A track and knob without label or value box (luminance under the 3-way colour wheels).
@@ -420,7 +506,8 @@ fn value_box(ui: &mut Ui, id: egui::Id, rect: Rect, value: &mut f32, spec: &Spec
             }
         }
         None => {
-            let r = ui.interact(rect, id, Sense::click()).on_hover_cursor(CursorIcon::Text);
+            // Clicks start typing; keyboard focus stays with the tracks, so Tab goes slider to slider.
+            let r = ui.interact(rect, id, Sense::CLICK).on_hover_cursor(CursorIcon::Text);
             p.text(rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, spec.text(*value), label_font(), c.text);
             if r.clicked() {
                 ui.data_mut(|d| d.insert_temp(editing_id, spec.text(*value)));

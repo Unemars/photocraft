@@ -211,3 +211,33 @@ fn asynchronous_refinement_completes_for_the_latest_edit_and_before_keeps_naviga
     h.run_steps(2);
     assert_eq!(inspect(&h)["samplerReadouts"][0]["values"][0].as_f64().unwrap(), developed);
 }
+
+/// Below 1:1 the sharp preview is the frame developed at its size on screen, not the full frame;
+/// at 100% it is the full-size pixels again.
+#[test]
+fn fit_view_refines_at_the_screen_size_and_actual_pixels_at_full_size() {
+    let mut h = fixture(1.0);
+    let wait = |h: &mut Harness<'_, PhotocraftApp>| {
+        h.run_steps(2);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while (inspect(h)["previewApproximate"] != false || inspect(h)["detailPending"] != false) && std::time::Instant::now() < deadline {
+            h.run_steps(1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    menu(&mut h, json!({"set":{"exposure":0.5,"clarity":20},"scope":{"samplers":[[0.5,0.5]]}})).unwrap();
+    wait(&mut h);
+    let v = inspect(&h);
+    assert_eq!(v["detailError"], Value::Null);
+    assert_eq!(v["previewApproximate"], false);
+    let shown = v["detailScreenSize"].as_array().unwrap_or_else(|| panic!("{v}")).iter().map(|n| n.as_u64().unwrap()).collect::<Vec<_>>();
+    let proxy = v["proxy"].as_array().unwrap()[0].as_u64().unwrap();
+    assert!(shown[0] > proxy && shown[0] < 1200, "{shown:?} (proxy {proxy})");
+    let at_fit = v["samplerReadouts"][0]["values"][0].as_f64().unwrap();
+    menu(&mut h, json!({"view":{"zoom":1.0}})).unwrap();
+    wait(&mut h);
+    let v = inspect(&h);
+    assert_eq!(v["detailScreenSize"], Value::Null, "100% shows the full-size pixels");
+    assert_eq!(v["previewApproximate"], false);
+    assert!((v["samplerReadouts"][0]["values"][0].as_f64().unwrap() - at_fit).abs() <= 2.0);
+}

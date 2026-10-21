@@ -134,7 +134,11 @@ fn valid_floating_rect(r: [f32; 4]) -> bool {
 
 impl CameraRawDialog {
     fn pixels(&self) -> &[[f32; 4]] {
-        if self.show_before { &self.proxy } else { &self.processed }
+        match self.show_before {
+            true if !self.before_processed.is_empty() => &self.before_processed,
+            true => &self.proxy,
+            false => &self.processed,
+        }
     }
     fn pixel(&self, p: [f32; 2]) -> Option<[f32; 4]> {
         if !p.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)) || self.pw == 0 || self.ph == 0 {
@@ -142,10 +146,8 @@ impl CameraRawDialog {
         }
         let x = ((p[0] * self.pw as f32) as usize).min(self.pw - 1);
         let y = ((p[1] * self.ph as f32) as usize).min(self.ph - 1);
-        let q = self
-            .detail
-            .sample(p, self.preview_revision, self.show_before, &self.params)
-            .or_else(|| self.pixels().get(y.checked_mul(self.pw)?.checked_add(x)?).copied())?;
+        let (revision, original, params) = self.detail_view();
+        let q = self.detail.sample(p, revision, original, &params).or_else(|| self.pixels().get(y.checked_mul(self.pw)?.checked_add(x)?).copied())?;
         (q[3] > 0.0 && q.iter().all(|v| v.is_finite())).then_some(q)
     }
     pub(crate) fn readout(&self, p: [f32; 2], lab: bool) -> Option<Value> {
@@ -614,7 +616,7 @@ pub(crate) fn preview(ui: &mut egui::Ui, d: &mut CameraRawDialog, view: &mut Cam
         ClippingMode::None
     };
     let key = (d.preview_revision, d.show_before, mode, t.kind);
-    if mode != ClippingMode::None && d.detail.overlay(ui, rect, d.preview_revision, mode) {
+    if mode != ClippingMode::None && d.detail.overlay(ui, rect, d.detail_view().0, mode) {
         d.scope.overlay_key = Some(key);
         d.scope.overlay_detail = true;
     } else if mode != ClippingMode::None {

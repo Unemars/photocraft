@@ -18,13 +18,82 @@ pub(crate) enum Coverage {
 }
 
 type DetailResult = Result<(u64, Surface), String>;
-type OverlayKey = (u64, bool, PixelRect, crate::camera_raw_scope_ui::ClippingMode, crate::theme::ThemeKind);
+
+/// What a screen-size develop is for: the settings' revision (0 for the original), the size and
+/// whether it is the original (Before, or every setting at its default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScreenKey {
+    revision: u64,
+    size: (usize, usize),
+    original: bool,
+}
+
+/// Pixels (straight RGBA, row-major) shared between the dialog and its workers.
+type Pixels = Arc<Vec<[f32; 4]>>;
+
+type ScreenResult = Result<(ScreenKey, Pixels), String>;
+
+/// Largest frame (pixels) the screen-size preview develops whole: about a 4K screen's preview
+/// area twice over. Past it (a large frame just under 100 %), the preview develops the full
+/// frame and shows the visible part, as at 1:1, within that path's limits.
+const SCREEN_MAX_PIXELS: usize = 12_000_000;
+
+/// The raw stage of a raw open: its five sliders, and Exposure / Temperature / Tint as a linear
+/// matrix applied before them (see [`raw_stage_split`]).
+type RawStage = (photocraft_io::raw::Tone, Option<[[f32; 3]; 3]>);
+
+/// Splits `p` for a raw being opened (`raw`): the raw stage, which Open applies to the sensor data
+/// (Shadows, Highlights, Clarity, Texture, Dehaze, Exposure, and Temperature / Tint when the file
+/// has an as-shot white balance), and the settings left for the pipeline after it. Without `raw`
+/// everything is left for the pipeline.
+pub(crate) fn raw_stage_split(p: &CameraRaw, raw: Option<&photocraft_io::raw::RawPreview>) -> (CameraRaw, Option<RawStage>) {
+    let Some(raw) = raw else { return (p.clone(), None) };
+    let tone = photocraft_io::raw::Tone { shadows: p.shadows, highlights: p.highlights, clarity: p.clarity, texture: p.texture, dehaze: p.dehaze };
+    let (pre, white_balance) = raw.stage_matrix(p.exposure, p.temperature, p.tint);
+    let mut rest = p.clone();
+    (rest.shadows, rest.highlights, rest.clarity, rest.texture, rest.dehaze, rest.exposure) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    if white_balance {
+        (rest.temperature, rest.tint) = (0.0, 0.0);
+    }
+    (rest, Some((tone, pre)))
+}
+
+/// Results of [`tonal_stage`] kept for the settings they were made with: the raw stage's (for
+/// its five sliders and its matrix) and the tonal stages' after it. A clone shares the
+/// slider-independent caches.
+#[derive(Clone, Default)]
+pub(crate) struct TonalCache {
+    raw: Option<(RawStage, Pixels)>,
+    tonal: Option<(CameraRaw, Pixels)>,
+    /// The raw stage's slider-independent part, so dragging one of its sliders is cheap.
+    retone: Arc<std::sync::Mutex<Option<photocraft_io::raw::RetoneCache>>>,
+    /// The same for the tonal stages (Shadows and Highlights of the filter).
+    develop: Arc<std::sync::Mutex<photocraft_algo::camera_raw::DevelopCache>>,
+}
+
+/// The worker's caches for screen-size develops of one size: the frame reduced to it, and its
+/// tonal stages.
+#[derive(Default)]
+struct ScreenCache {
+    source: Option<((usize, usize), Pixels)>,
+    tonal: Option<((usize, usize), TonalCache)>,
+}
+
+/// What the last paint showed, for the clipping overlay: a crop of the full-size pixels (the key
+/// [`DetailPreview::crop`] holds), or the whole frame at a screen size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shown {
+    Crop,
+    Screen(ScreenKey),
+}
+
+type OverlayKey = (Option<ScreenKey>, u64, bool, PixelRect, crate::camera_raw_scope_ui::ClippingMode, crate::theme::ThemeKind);
 
 pub(crate) struct DetailPreview {
     source: Surface,
-    /// The open-time dialog's camera tone curve: Shadows, Highlights, Clarity, Texture and Dehaze
-    /// then act on the raw data, in linear light before it (see [`develop`]).
-    pub(crate) raw_curve: Option<Arc<Vec<[f32; 2]>>>,
+    /// How the open-time dialog's raw was developed: its raw-stage settings then act on the raw
+    /// data, in linear light before the camera's tone curve (see [`develop`]).
+    raw: Option<Arc<photocraft_io::raw::RawPreview>>,
     area: PixelRect,
     coverage: Coverage,
     result: Option<(u64, Surface)>,
@@ -37,6 +106,14 @@ pub(crate) struct DetailPreview {
     overlay_texture: Option<TextureHandle>,
     overlay_key: Option<OverlayKey>,
     pub(crate) ready: bool,
+    shown: Option<Shown>,
+    /// Below 1:1 the preview develops the whole frame at the size it has on screen instead.
+    screen_result: Option<(ScreenKey, Pixels)>,
+    screen_pending: Option<(ScreenKey, Receiver<ScreenResult>)>,
+    /// A screen-size develop that failed: not asked for again.
+    screen_failed: Option<ScreenKey>,
+    screen_texture: Option<((ScreenKey, u64), TextureHandle)>,
+    screen_cache: Arc<std::sync::Mutex<ScreenCache>>,
 }
 
 impl Drop for DetailPreview {
@@ -49,7 +126,7 @@ impl DetailPreview {
     pub(crate) fn new(source: Surface, area: PixelRect, coverage: Coverage) -> Self {
         Self {
             source,
-            raw_curve: None,
+            raw: None,
             area,
             coverage,
             result: None,
@@ -62,11 +139,176 @@ impl DetailPreview {
             overlay_texture: None,
             overlay_key: None,
             ready: false,
+            shown: None,
+            screen_result: None,
+            screen_pending: None,
+            screen_failed: None,
+            screen_texture: None,
+            screen_cache: Arc::default(),
+        }
+    }
+
+    /// The raw the open-time dialog develops: everything made for another one is dropped.
+    pub(crate) fn set_raw(&mut self, raw: Option<Arc<photocraft_io::raw::RawPreview>>) {
+        self.raw = raw;
+        (self.result, self.crop, self.failed_revision, self.shown) = (None, None, None, None);
+        (self.screen_result, self.screen_failed, self.screen_texture) = (None, None, None);
+        // A worker still running keeps the old cache to itself.
+        self.screen_cache = Arc::default();
+        self.screen_pending = None;
+        self.pending = None;
+    }
+
+    /// Bench only: what the screen-size worker develops for `params` at `size`, now (through its caches).
+    #[cfg(test)]
+    pub(crate) fn develop_screen_now(&self, params: &CameraRaw, size: (usize, usize), revision: u64) -> Pixels {
+        let mut params = params.clone();
+        params.pixel_scale = (size.0 as f32 / self.area.width().max(1) as f32).min(1.0);
+        let key = ScreenKey { revision, size, original: false };
+        develop_screen(&self.source, self.area, self.raw.as_deref(), &self.screen_cache, key, &params, false)
+    }
+
+    /// Bench only: what the background worker develops for `params`, now.
+    #[cfg(test)]
+    pub(crate) fn develop_now(&self, params: &CameraRaw) -> Surface {
+        let mut params = params.clone();
+        params.pixel_scale = 1.0;
+        develop(&self.source, self.raw.as_deref(), self.area, &params, &self.coverage)
+    }
+
+    /// The size of the screen-size develop the preview shows (`None`: the proxy or 1:1 pixels).
+    pub(crate) fn screen_size(&self) -> Option<(usize, usize)> {
+        match self.shown {
+            Some(Shown::Screen(key)) if self.ready => Some(key.size),
+            _ => None,
         }
     }
 
     pub(crate) fn pending(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.screen_pending.is_some()
+    }
+
+    fn poll_screen(&mut self) {
+        let Some((key, rx)) = &self.screen_pending else { return };
+        let key = *key;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("Camera Raw preview worker stopped".into()),
+        };
+        self.screen_pending = None;
+        match result {
+            Ok(done) => {
+                self.screen_result = Some(done);
+                self.error = None;
+            }
+            Err(e) => {
+                self.error = Some(e);
+                self.screen_failed = Some(key);
+            }
+        }
+    }
+
+    /// Develops the frame at `key.size` in the background (one at a time; a newer request waits
+    /// for the running one and then replaces it).
+    fn request_screen(&mut self, ctx: &Context, key: ScreenKey, params: &CameraRaw) {
+        if self.screen_pending.is_some() || self.screen_failed == Some(key) {
+            return;
+        }
+        let (source, area, raw, cache, cancel, ctx) =
+            (self.source.clone(), self.area, self.raw.clone(), self.screen_cache.clone(), self.cancel.clone(), ctx.clone());
+        let mut params = params.clone();
+        params.pixel_scale = (key.size.0 as f32 / area.width().max(1) as f32).min(1.0);
+        let float = source.format().sample == photocraft_color::SampleType::F32;
+        let (tx, rx) = std::sync::mpsc::channel::<ScreenResult>();
+        let work = move || {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| develop_screen(&source, area, raw.as_deref(), &cache, key, &params, float)))
+                .map(|px| (key, px))
+                .map_err(|_| "Camera Raw preview failed; the proxy remains available".to_string());
+            if !cancel.load(Ordering::Relaxed) {
+                let _ = tx.send(result);
+                ctx.request_repaint();
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match std::thread::Builder::new().name("camera-raw-screen".into()).spawn(work) {
+                Ok(_) => self.screen_pending = Some((key, rx)),
+                Err(e) => {
+                    self.error = Some(format!("Cannot start Camera Raw preview: {e}"));
+                    self.screen_failed = Some(key);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // No worker here: the proxy stays.
+            drop(work);
+            drop(rx);
+            self.screen_failed = Some(key);
+        }
+    }
+
+    /// The size the whole frame has on screen at `scale` (screen pixels per image pixel), when
+    /// the screen-size preview takes it: below 1:1, within the device's texture side and
+    /// [`SCREEN_MAX_PIXELS`]. `None`: the full-size path's crop instead.
+    fn screen_size_for(&self, scale: f32, max_side: usize) -> Option<(usize, usize)> {
+        if scale.is_nan() || scale >= 0.99 || !matches!(self.coverage, Coverage::None) {
+            return None;
+        }
+        let size = |n: u32| ((n as f32 * scale).round() as usize).clamp(1, n.max(1) as usize);
+        let (w, h) = (size(self.area.width()), size(self.area.height()));
+        (w <= max_side && h <= max_side && w.saturating_mul(h) <= SCREEN_MAX_PIXELS).then_some((w, h))
+    }
+
+    /// Below 1:1: the frame developed at its size on screen, sharp where the proxy is soft and a
+    /// fraction of the full frame's work.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_screen(
+        &mut self,
+        ui: &egui::Ui,
+        image: Rect,
+        revision: u64,
+        before: bool,
+        params: &CameraRaw,
+        size: (usize, usize),
+        display: &photocraft_engine::display_color::CanvasDisplay,
+    ) -> bool {
+        let original = before || params.is_identity();
+        let key = ScreenKey { revision: if original { 0 } else { revision }, size, original };
+        if self.screen_result.as_ref().is_none_or(|(k, _)| *k != key) {
+            self.request_screen(ui.ctx(), key, params);
+            self.poll_screen();
+        }
+        let Some((done, px)) = &self.screen_result else { return false };
+        if *done != key {
+            return false;
+        }
+        let shown = (key, display.key);
+        if self.screen_texture.as_ref().is_none_or(|(k, _)| *k != shown) {
+            let color = display_image(PixelRect::new(0, 0, size.0 as i32, size.1 as i32), display, |r, out| {
+                let start = (r.y0.max(0) as usize).saturating_mul(size.0);
+                if let Some(src) = px.get(start..start.saturating_add(out.len())) {
+                    out.copy_from_slice(src);
+                }
+            });
+            match &mut self.screen_texture {
+                Some((k, t)) => {
+                    t.set(color, TextureOptions::LINEAR);
+                    *k = shown;
+                }
+                None => self.screen_texture = Some((shown, ui.ctx().load_texture("cr-screen-preview", color, TextureOptions::LINEAR))),
+            }
+        }
+        if let Some((_, texture)) = &self.screen_texture {
+            ui.painter().image(texture.id(), image, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
+            self.ready = true;
+            self.shown = Some(Shown::Screen(key));
+        }
+        true
     }
 
     fn poll(&mut self, revision: u64) {
@@ -109,7 +351,7 @@ impl DetailPreview {
             return;
         }
         let source = self.source.clone();
-        let raw_curve = self.raw_curve.clone();
+        let raw = self.raw.clone();
         let area = self.area;
         let coverage = self.coverage.clone();
         let mut params = params.clone();
@@ -121,10 +363,9 @@ impl DetailPreview {
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
-            let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| develop(&source, raw_curve.as_deref().map(Vec::as_slice), area, &params, &coverage)))
-                    .map(|surface| (revision, surface))
-                    .map_err(|_| "Camera Raw detail preview failed; the proxy remains available".into());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| develop(&source, raw.as_deref(), area, &params, &coverage)))
+                .map(|surface| (revision, surface))
+                .map_err(|_| "Camera Raw detail preview failed; the proxy remains available".into());
             if !cancel.load(Ordering::Relaxed) {
                 let _ = tx.send(result);
                 ctx.request_repaint();
@@ -171,9 +412,17 @@ impl DetailPreview {
         display: &photocraft_engine::display_color::CanvasDisplay,
     ) -> bool {
         self.ready = false;
+        self.shown = None;
         self.poll(revision);
+        self.poll_screen();
         if !needed {
             return false;
+        }
+        // Smaller than 1:1 on screen: develop the frame at the screen's size, not the full frame.
+        let max_side = ui.input(|i| i.max_texture_side);
+        let scale = image.width() * ui.ctx().pixels_per_point() / self.area.width().max(1) as f32;
+        if let Some(size) = self.screen_size_for(scale, max_side) {
+            return self.paint_screen(ui, image, revision, before, params, size, display);
         }
         let Some(crop) = visible_pixels(image, ui.clip_rect(), self.area, ui.input(|i| i.max_texture_side)) else { return false };
         let original = before || params.is_identity();
@@ -208,6 +457,7 @@ impl DetailPreview {
             );
             ui.painter().image(texture.id(), screen, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
             self.ready = true;
+            self.shown = Some(Shown::Crop);
         }
         true
     }
@@ -234,87 +484,230 @@ impl DetailPreview {
         if !self.ready {
             return false;
         }
-        let Some((r, original, crop, _display_key)) = self.crop else { return false };
         let t = crate::theme::Tokens::get(ui.ctx());
-        let key = (r, original, crop, mode, t.kind);
-        if self.overlay_key != Some(key) {
-            let surface = if original {
-                &self.source
-            } else if let Some((r, surface)) = &self.result
-                && *r == revision
-            {
-                surface
-            } else {
-                return false;
-            };
-            let mut row = vec![[0.0; 4]; crop.width() as usize];
-            let mut pixels = Vec::with_capacity(crop.width() as usize * crop.height() as usize);
-            for y in crop.y0..crop.y1 {
-                surface.read_rgba_into(PixelRect::new(crop.x0, y, crop.x1, y + 1), &mut row);
-                pixels.extend(row.iter().map(|p| {
-                    if p[3] <= 0.0 || !p.iter().all(|v| v.is_finite()) {
-                        return Color32::TRANSPARENT;
-                    }
-                    let (lo, hi) = photocraft_algo::histogram::clipping(*p);
-                    match mode {
-                        ClippingMode::ShadowChannels => t.histogram_color(7 ^ lo),
-                        ClippingMode::HighlightChannels => {
-                            if hi == 0 {
-                                t.histogram_background()
-                            } else {
-                                t.histogram_color(hi)
-                            }
-                        }
-                        ClippingMode::Warnings(w) => {
-                            if w & 2 != 0 && hi != 0 {
-                                t.histogram_color(1)
-                            } else if w & 1 != 0 && lo != 0 {
-                                t.histogram_color(4)
-                            } else {
-                                Color32::TRANSPARENT
-                            }
-                        }
-                        ClippingMode::None => Color32::TRANSPARENT,
-                    }
-                }));
+        let clip_color = |p: &[f32; 4]| {
+            if p[3] <= 0.0 || !p.iter().all(|v| v.is_finite()) {
+                return Color32::TRANSPARENT;
             }
-            let color = ColorImage::new([crop.width() as usize, crop.height() as usize], pixels);
-            match &mut self.overlay_texture {
-                Some(t) => t.set(color, TextureOptions::NEAREST),
-                None => self.overlay_texture = Some(ui.ctx().load_texture("cr-detail-clipping", color, TextureOptions::NEAREST)),
+            let (lo, hi) = photocraft_algo::histogram::clipping(*p);
+            match mode {
+                ClippingMode::ShadowChannels => t.histogram_color(7 ^ lo),
+                ClippingMode::HighlightChannels => {
+                    if hi == 0 {
+                        t.histogram_background()
+                    } else {
+                        t.histogram_color(hi)
+                    }
+                }
+                ClippingMode::Warnings(w) => {
+                    if w & 2 != 0 && hi != 0 {
+                        t.histogram_color(1)
+                    } else if w & 1 != 0 && lo != 0 {
+                        t.histogram_color(4)
+                    } else {
+                        Color32::TRANSPARENT
+                    }
+                }
+                ClippingMode::None => Color32::TRANSPARENT,
             }
-            self.overlay_key = Some(key);
-        }
+        };
+        // Where the overlay goes on screen, and its pixels: over what the last paint showed (a
+        // crop of the full-size pixels, or the whole frame at the screen's size).
+        let screen = match self.shown {
+            Some(Shown::Screen(key)) => {
+                let Some((done, px)) = self.screen_result.as_ref().filter(|(k, _)| *k == key) else { return false };
+                let overlay_key = (Some(*done), key.revision, key.original, PixelRect::new(0, 0, key.size.0 as i32, key.size.1 as i32), mode, t.kind);
+                if self.overlay_key != Some(overlay_key) {
+                    let color = ColorImage::new([key.size.0, key.size.1], px.iter().map(clip_color).collect());
+                    self.set_overlay(ui, color);
+                    self.overlay_key = Some(overlay_key);
+                }
+                image
+            }
+            Some(Shown::Crop) => {
+                let Some((r, original, crop, _display_key)) = self.crop else { return false };
+                let overlay_key = (None, r, original, crop, mode, t.kind);
+                if self.overlay_key != Some(overlay_key) {
+                    let surface = if original {
+                        &self.source
+                    } else if let Some((r, surface)) = &self.result
+                        && *r == revision
+                    {
+                        surface
+                    } else {
+                        return false;
+                    };
+                    let mut row = vec![[0.0; 4]; crop.width() as usize];
+                    let mut pixels = Vec::with_capacity(crop.width() as usize * crop.height() as usize);
+                    for y in crop.y0..crop.y1 {
+                        surface.read_rgba_into(PixelRect::new(crop.x0, y, crop.x1, y + 1), &mut row);
+                        pixels.extend(row.iter().map(clip_color));
+                    }
+                    self.set_overlay(ui, ColorImage::new([crop.width() as usize, crop.height() as usize], pixels));
+                    self.overlay_key = Some(overlay_key);
+                }
+                let scale = image.size() / vec2(self.area.width() as f32, self.area.height() as f32);
+                Rect::from_min_size(
+                    image.min + vec2((crop.x0 - self.area.x0) as f32, (crop.y0 - self.area.y0) as f32) * scale,
+                    vec2(crop.width() as f32, crop.height() as f32) * scale,
+                )
+            }
+            None => return false,
+        };
         if let Some(texture) = &self.overlay_texture {
-            let scale = image.size() / vec2(self.area.width() as f32, self.area.height() as f32);
-            let screen = Rect::from_min_size(
-                image.min + vec2((crop.x0 - self.area.x0) as f32, (crop.y0 - self.area.y0) as f32) * scale,
-                vec2(crop.width() as f32, crop.height() as f32) * scale,
-            );
             ui.painter().image(texture.id(), screen, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
         }
         true
     }
+
+    fn set_overlay(&mut self, ui: &egui::Ui, color: ColorImage) {
+        match &mut self.overlay_texture {
+            Some(t) => t.set(color, TextureOptions::NEAREST),
+            None => self.overlay_texture = Some(ui.ctx().load_texture("cr-detail-clipping", color, TextureOptions::NEAREST)),
+        }
+    }
 }
 
-/// The full-size result of `params` over `area`. With a raw file's tone `curve`, the raw-stage
-/// sliders are applied first to the whole area, from the whole frame's maps as Open computes them
-/// ([`photocraft_io::raw::retone`]), then the rest of the pipeline: at 1:1 the preview shows what
-/// Open will make.
-fn develop(source: &Surface, curve: Option<&[[f32; 2]]>, area: PixelRect, params: &CameraRaw, coverage: &Coverage) -> Surface {
-    let tone = photocraft_io::raw::Tone {
-        shadows: params.shadows,
-        highlights: params.highlights,
-        clarity: params.clarity,
-        texture: params.texture,
-        dehaze: params.dehaze,
+/// The raw stage of a raw open (see [`raw_stage_split`]; on developed pixels through
+/// [`photocraft_io::raw::retone_with`]) and the tonal stages of `p` on `source`, or `cache` when it
+/// holds them for the same settings. Returns the settings left for
+/// [`photocraft_algo::camera_raw::develop_colour`] and the tonal result.
+pub(crate) fn tonal_stage(
+    source: &[[f32; 4]],
+    w: usize,
+    h: usize,
+    p: &CameraRaw,
+    raw: Option<&photocraft_io::raw::RawPreview>,
+    cache: &mut TonalCache,
+) -> (CameraRaw, Pixels) {
+    let (colour, stage) = raw_stage_split(p, raw);
+    let key = photocraft_algo::camera_raw::tonal_part(p);
+    if let Some((k, px)) = cache.tonal.as_ref()
+        && *k == key
+    {
+        return (colour, px.clone());
+    }
+    // The raw stage only changes with its own settings.
+    let staged = match (raw, stage) {
+        (Some(raw), Some(stage)) if !stage.0.is_neutral() || stage.1.is_some() => match cache.raw.as_ref() {
+            Some((s, px)) if *s == stage => Some(px.clone()),
+            _ => {
+                let mut px = source.to_vec();
+                let (tone, pre) = stage;
+                match cache.retone.lock() {
+                    Ok(mut kept) => photocraft_io::raw::retone_with(&mut px, w, h, &raw.curve, tone, pre, Some(&mut kept)),
+                    Err(_) => photocraft_io::raw::retone_with(&mut px, w, h, &raw.curve, tone, pre, None),
+                }
+                let px = Arc::new(px);
+                cache.raw = Some((stage, px.clone()));
+                Some(px)
+            }
+        },
+        _ => None,
     };
-    let (retoned, params) = match curve {
-        Some(curve) if !tone.is_neutral() => {
+    let mut px = staged.map_or_else(|| source.to_vec(), |r| r.to_vec());
+    let tonal = photocraft_algo::camera_raw::tonal_part(&colour);
+    match cache.develop.lock() {
+        Ok(mut kept) => photocraft_algo::camera_raw::develop_tonal_with(&mut px, w, h, &tonal, &mut kept),
+        Err(_) => photocraft_algo::camera_raw::develop_tonal(&mut px, w, h, &tonal),
+    }
+    let px = Arc::new(px);
+    cache.tonal = Some((key, px.clone()));
+    (colour, px)
+}
+
+/// `area` of `source` developed at `key.size` with `params` (whose `pixel_scale` is that
+/// size's), through `cache`.
+fn develop_screen(
+    source: &Surface,
+    area: PixelRect,
+    raw: Option<&photocraft_io::raw::RawPreview>,
+    cache: &std::sync::Mutex<ScreenCache>,
+    key: ScreenKey,
+    params: &CameraRaw,
+    float: bool,
+) -> Pixels {
+    let (w, h) = key.size;
+    let cached = cache.lock().ok().and_then(|c| c.source.as_ref().filter(|(s, _)| *s == key.size).map(|(_, px)| px.clone()));
+    let reduced = cached.unwrap_or_else(|| {
+        let px = Arc::new(reduce(source, area, w, h));
+        if let Ok(mut c) = cache.lock() {
+            // One size at a time: a new one replaces the frame and its stages.
+            *c = ScreenCache { source: Some((key.size, px.clone())), tonal: None };
+        }
+        px
+    });
+    if key.original {
+        return reduced;
+    }
+    let mut tonal = cache.lock().ok().and_then(|c| c.tonal.as_ref().filter(|(s, _)| *s == key.size).map(|(_, t)| t.clone())).unwrap_or_default();
+    let (colour, base) = tonal_stage(&reduced, w, h, params, raw, &mut tonal);
+    if let Ok(mut c) = cache.lock() {
+        c.tonal = Some((key.size, tonal));
+    }
+    let mut px = base.to_vec();
+    photocraft_algo::camera_raw::develop_colour(&mut px, w, h, &colour, float);
+    Arc::new(px)
+}
+
+/// `area` of `source` reduced to `tw × th` (each output pixel the mean of the source pixels it
+/// covers, by area).
+fn reduce(source: &Surface, area: PixelRect, tw: usize, th: usize) -> Vec<[f32; 4]> {
+    let (w, h) = (area.width() as usize, area.height() as usize);
+    let mut out = vec![[0.0f32; 4]; tw * th];
+    if w == 0 || h == 0 || tw == 0 || th == 0 {
+        return out;
+    }
+    // Per output column (row): the source columns (rows) it covers and their share of it.
+    let spans = |n: usize, m: usize| -> Vec<Vec<(usize, f32)>> {
+        (0..m)
+            .map(|o| {
+                let (a, b) = (o as f64 * n as f64 / m as f64, (o + 1) as f64 * n as f64 / m as f64);
+                (a.floor() as usize..(b.ceil() as usize).min(n)).map(|i| (i, ((b.min(i as f64 + 1.0) - a.max(i as f64)) / (b - a)) as f32)).collect()
+            })
+            .collect()
+    };
+    let (xs, ys) = (spans(w, tw), spans(h, th));
+    let fill = |(orow, rows): (&mut [[f32; 4]], &Vec<(usize, f32)>)| {
+        let mut row = vec![[0.0f32; 4]; w];
+        for &(iy, wy) in rows {
+            let y = area.y0 + iy as i32;
+            source.read_rgba_into(PixelRect::new(area.x0, y, area.x1, y + 1), &mut row);
+            for (o, cols) in orow.iter_mut().zip(&xs) {
+                for &(ix, wx) in cols {
+                    let k = wx * wy;
+                    for c in 0..4 {
+                        o[c] += row[ix][c] * k;
+                    }
+                }
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        out.par_chunks_mut(tw).zip(ys.par_iter()).for_each(fill);
+    }
+    #[cfg(target_arch = "wasm32")]
+    out.chunks_mut(tw).zip(ys.iter()).for_each(fill);
+    out
+}
+
+/// The full-size result of `params` over `area`. For a raw being opened (`raw`), the raw stage
+/// (see [`raw_stage_split`]) is applied first to the whole area, from the whole frame's maps as
+/// Open computes them ([`photocraft_io::raw::retone_with`]), then the rest of the pipeline. Open
+/// develops from the sensor data, the preview from the developed pixels, which are clipped at
+/// white: at 1:1 the preview is close to what Open makes, except where highlights were clipped
+/// (lowering Exposure or Highlights there recovers detail in Open only) and in the deepest
+/// shadows (see [`photocraft_io::raw::retone`]).
+fn develop(source: &Surface, raw: Option<&photocraft_io::raw::RawPreview>, area: PixelRect, params: &CameraRaw, coverage: &Coverage) -> Surface {
+    let (rest, stage) = raw_stage_split(params, raw);
+    let (retoned, params) = match (raw, stage) {
+        (Some(raw), Some((tone, pre))) if !tone.is_neutral() || pre.is_some() => {
             let (w, h) = (area.width() as usize, area.height() as usize);
             let mut px = vec![[0.0f32; 4]; w * h];
             source.read_rgba_into(area, &mut px);
-            photocraft_io::raw::retone(&mut px, w, h, curve, tone);
+            photocraft_io::raw::retone_with(&mut px, w, h, &raw.curve, tone, pre, None);
             let fmt = source.format();
             let n = fmt.channels();
             let mut data = source.read_region(area);
@@ -327,10 +720,9 @@ fn develop(source: &Surface, curve: Option<&[[f32; 2]]>, area: PixelRect, params
             }
             let mut out = source.clone();
             out.write_region(area, &data);
-            let rest = CameraRaw { shadows: 0.0, highlights: 0.0, clarity: 0.0, texture: 0.0, dehaze: 0.0, ..params.clone() };
             (Some(out), rest)
         }
-        _ => (None, params.clone()),
+        _ => (None, rest),
     };
     let base = retoned.as_ref().unwrap_or(source);
     let mut result = photocraft_engine::lens_cmds::camera_raw_surface(base, area, &params);
@@ -450,8 +842,9 @@ mod tests {
     }
     #[test]
     fn a_raw_open_refines_raw_stage_sliders_from_the_whole_frame() {
-        // Shadows on a raw being opened: the full-size refinement retones the whole frame (as
-        // Open does) and runs the rest of the pipeline after, instead of the filter's Shadows.
+        // Shadows and Exposure on a raw being opened: the full-size refinement retones the whole
+        // frame (as Open does, the exposure gain first) and runs the rest of the pipeline after,
+        // instead of the filter's Shadows and Exposure.
         let area = PixelRect::new(0, 0, 96, 64);
         let mut source = Surface::new(PixelFormat::RGBA16);
         let mut values = vec![0.0; 96 * 64 * 4];
@@ -462,15 +855,18 @@ mod tests {
         source.write_region(area, &values);
         let curve = [[0.01, 0.01], [0.05, 0.12], [0.3, 0.6], [1.0, 1.0]];
         let params = CameraRaw { shadows: 80.0, exposure: 0.25, ..Default::default() };
-        let refined = develop(&source, Some(&curve), area, &params, &Coverage::None);
+        let raw = photocraft_io::raw::RawPreview::with_curve(curve.to_vec());
+        let refined = develop(&source, Some(&raw), area, &params, &Coverage::None);
         let mut px = vec![[0.0f32; 4]; 96 * 64];
         source.read_rgba_into(area, &mut px);
         let tone = photocraft_io::raw::Tone { shadows: 80.0, ..Default::default() };
-        photocraft_io::raw::retone(&mut px, 96, 64, &curve, tone);
+        let gain = 2f32.powf(0.25);
+        let pre = [[gain, 0.0, 0.0], [0.0, gain, 0.0], [0.0, 0.0, gain]];
+        photocraft_io::raw::retone_with(&mut px, 96, 64, &curve, tone, Some(pre), None);
         let mut retoned = source.clone();
         let flat: Vec<f32> = px.iter().flatten().copied().collect();
         retoned.write_region(area, &flat);
-        let expected = photocraft_engine::lens_cmds::camera_raw_surface(&retoned, area, &CameraRaw { exposure: 0.25, ..Default::default() });
+        let expected = photocraft_engine::lens_cmds::camera_raw_surface(&retoned, area, &CameraRaw::default());
         let (a, b) = (refined.rgba(10, 30), expected.rgba(10, 30));
         assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 2e-4), "{a:?} vs {b:?}");
         assert!(
@@ -621,5 +1017,117 @@ mod tests {
             .size,
             [0, 4]
         );
+    }
+
+    fn ramp(w: u32, h: u32) -> (Surface, PixelRect) {
+        let area = PixelRect::new(0, 0, w as i32, h as i32);
+        let mut source = Surface::new(PixelFormat::RGBA16);
+        let values: Vec<f32> = (0..(w * h) as usize)
+            .flat_map(|i| {
+                let v = (i % w as usize) as f32 / w as f32;
+                [v, v * 0.8 + 0.1, 1.0 - v, 1.0]
+            })
+            .collect();
+        source.write_region(area, &values);
+        (source, area)
+    }
+
+    fn sdisplay() -> Arc<photocraft_engine::display_color::CanvasDisplay> {
+        let doc = photocraft_doc::Document::new("t", photocraft_geom::Size::new(1, 1), photocraft_doc::ColorMode::Rgb, photocraft_doc::SampleType::U8);
+        photocraft_engine::color_cmds::ColorState::default().canvas_display(&doc).unwrap()
+    }
+
+    /// Below 1:1 the whole frame is developed at the screen's size only within the device's
+    /// texture side and [`SCREEN_MAX_PIXELS`]; past them (a panorama just under 100 %), and with a
+    /// selection or mask, the full-size path's crop takes over (#3817 review).
+    #[test]
+    fn the_screen_size_preview_stays_within_the_texture_side_and_its_pixel_budget() {
+        let (source, area) = ramp(20_000, 4_000);
+        let d = DetailPreview::new(source, area, Coverage::None);
+        assert_eq!(d.screen_size_for(0.1, 8192), Some((2000, 400)));
+        assert_eq!(d.screen_size_for(0.5, 8192), None, "10000 px wide is past the texture side");
+        assert_eq!(d.screen_size_for(0.35, 8192), Some((7000, 1400)));
+        assert_eq!(d.screen_size_for(0.35, 4096), None);
+        assert_eq!(d.screen_size_for(0.99, 1 << 16), None, "1:1 and above");
+        let (source, area) = ramp(8_000, 6_000);
+        let d = DetailPreview::new(source, area, Coverage::None);
+        assert_eq!(d.screen_size_for(0.6, 16_384), None, "4800 × 3600 is past the pixel budget");
+        assert_eq!(d.screen_size_for(0.5, 16_384), Some((4000, 3000)));
+        let (source, area) = ramp(800, 600);
+        let mask = Surface::with_default(PixelFormat::GRAY8, &[1.0]);
+        assert_eq!(DetailPreview::new(source, area, Coverage::Selection(mask)).screen_size_for(0.5, 8192), None);
+    }
+
+    /// A failed screen-size develop is reported once and not asked for again every frame; a
+    /// later success takes the error down (#3817 review).
+    #[test]
+    fn a_failed_screen_develop_is_not_retried_and_a_later_frame_clears_its_error() {
+        let (source, area) = ramp(64, 48);
+        let mut d = DetailPreview::new(source, area, Coverage::None);
+        let key = ScreenKey { revision: 3, size: (32, 24), original: false };
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Err("Camera Raw preview failed; the proxy remains available".to_string())).unwrap();
+        d.screen_pending = Some((key, rx));
+        d.poll_screen();
+        assert!(d.error.is_some() && d.screen_failed == Some(key) && d.screen_pending.is_none());
+        d.request_screen(&Context::default(), key, &CameraRaw { exposure: 0.5, ..Default::default() });
+        assert!(d.screen_pending.is_none(), "the failed key is not asked for again");
+        let next = ScreenKey { revision: 4, ..key };
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok((next, Arc::new(vec![[0.5; 4]; 32 * 24])))).unwrap();
+        d.screen_pending = Some((next, rx));
+        d.poll_screen();
+        assert_eq!(d.error, None);
+    }
+
+    /// After 1:1, a Fit view's clipping overlay is made from the screen-size frame it shows, not
+    /// from the last 1:1 crop (#3817 review: it covered the old 1:1 rectangle).
+    #[test]
+    fn the_clipping_overlay_follows_the_screen_size_frame() {
+        let (source, area) = ramp(400, 300);
+        let mut d = DetailPreview::new(source, area, Coverage::None);
+        let ctx = Context::default();
+        let display = sdisplay();
+        let params = CameraRaw { exposure: 1.5, ..Default::default() };
+        let mode = crate::camera_raw_scope_ui::ClippingMode::Warnings(3);
+        let frame = |d: &mut DetailPreview, image: Rect| {
+            let mut painted = false;
+            for _ in 0..2000 {
+                ctx.run_ui(egui::RawInput::default(), |ui| {
+                    painted = d.paint(ui, image, 1, false, &params, true, &display) && d.ready && d.overlay(ui, image, 1, mode);
+                })
+                .textures_delta
+                .clear();
+                if painted {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            panic!("the detail preview never painted");
+        };
+        // 1:1: a crop of the full-size result.
+        frame(&mut d, Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0)));
+        assert!(matches!(d.shown, Some(Shown::Crop)) && d.overlay_key.is_some_and(|k| k.0.is_none()));
+        // Fit at half size: the screen-size frame, and its overlay.
+        frame(&mut d, Rect::from_min_size(Pos2::ZERO, vec2(200.0, 150.0)));
+        assert_eq!(d.screen_size(), Some((200, 150)));
+        let key = d.overlay_key.unwrap();
+        assert_eq!(key.0.map(|k| k.size), Some((200, 150)));
+        assert_eq!(key.3, PixelRect::new(0, 0, 200, 150));
+    }
+
+    /// A new raw for the open-time dialog drops what was developed for the old one.
+    #[test]
+    fn a_new_raw_drops_the_screen_size_frames() {
+        let (source, area) = ramp(64, 48);
+        let mut d = DetailPreview::new(source, area, Coverage::None);
+        let key = ScreenKey { revision: 1, size: (32, 24), original: false };
+        d.screen_result = Some((key, Arc::new(vec![[0.5; 4]; 32 * 24])));
+        if let Ok(mut c) = d.screen_cache.lock() {
+            c.source = Some(((32, 24), Arc::new(vec![[0.5; 4]; 32 * 24])));
+        }
+        d.set_raw(Some(Arc::new(photocraft_io::raw::RawPreview::with_curve(vec![[0.5, 0.6]]))));
+        assert!(d.screen_result.is_none());
+        assert!(d.screen_cache.lock().unwrap().source.is_none());
     }
 }
