@@ -849,7 +849,6 @@ fn open_pixels(
         params,
         target,
         before_histogram: RgbHistogram::from_rgba(&proxy),
-        before_processed: Vec::new(),
         processed: Vec::new(),
         lab_transform,
         scope_transform,
@@ -880,6 +879,7 @@ fn open_pixels(
         float,
         tex: None,
         before_tex: None,
+        before_processed: Vec::new(),
         before_display_key: None,
         dirty: true,
         show_before: false,
@@ -1735,18 +1735,13 @@ fn preview_bar(
         // Right to left: Copy Before to After, Swap, Copy After to Before (Camera Raw's order
         // reads ⇤ ⇄ ⇥ from the left).
         if crate::icons::button(&mut right, "chevrons-right", 30.0, false, tl!("Copy Before settings to After (Alt+Shift+P)")).clicked() {
-            d.params = CameraRaw { pixel_scale: d.params.pixel_scale, encoding_gamma: d.params.encoding_gamma, ..d.before_params.clone() };
-            d.dirty = true;
+            d.compare(Compare::BeforeToAfter);
         }
         if crate::icons::button(&mut right, "arrow-left-right", 30.0, false, tl!("Swap Before and After settings (Ctrl+Alt+Shift+P)")).clicked() {
-            let after = d.params.clone();
-            d.params = CameraRaw { pixel_scale: after.pixel_scale, encoding_gamma: after.encoding_gamma, ..d.before_params.clone() };
-            d.before_params = after;
-            (d.dirty, d.before_dirty) = (true, true);
+            d.compare(Compare::Swap);
         }
         if crate::icons::button(&mut right, "chevrons-left", 30.0, false, tl!("Copy After settings to Before (Ctrl+Alt+P)")).clicked() {
-            d.before_params = d.params.clone();
-            (d.dirty, d.before_dirty) = (true, true);
+            d.compare(Compare::AfterToBefore);
         }
     }
     if d.detail.pending() {
@@ -1757,9 +1752,33 @@ fn preview_bar(
     }
 }
 
+/// The Before/After bar's settings actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Compare {
+    BeforeToAfter,
+    Swap,
+    AfterToBefore,
+}
+
+impl CameraRawDialog {
+    fn compare(&mut self, action: Compare) {
+        let after = self.params.clone();
+        let before = CameraRaw { pixel_scale: after.pixel_scale, encoding_gamma: after.encoding_gamma, ..self.before_params.clone() };
+        match action {
+            Compare::BeforeToAfter => self.params = before,
+            Compare::Swap => (self.params, self.before_params) = (before, after),
+            Compare::AfterToBefore => self.before_params = after,
+        }
+        self.dirty = true;
+        self.before_dirty |= action != Compare::BeforeToAfter;
+    }
+}
+
 /// Camera Raw's keys (not while a text field has focus): Q cycles Before/After, Y shows Left /
-/// Right, P (or \) toggles the original, V B&W, E B M Shift+E Shift+P pick the tool, Ctrl+U Auto,
-/// Ctrl+K Preferences, Esc cancels and Enter is OK.
+/// Right, P (or \) toggles the original, Alt+Shift+P / Ctrl+Alt+Shift+P / Ctrl+Alt+P copy or swap
+/// the Before/After settings, V B&W, E B M Shift+E Shift+P pick the tool, Ctrl+U Auto,
+/// Ctrl+K Preferences, Esc cancels and Enter is OK (unless a menu or Preferences is open: Esc
+/// closes that).
 fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&str>) {
     let Some(d) = app.camera_raw.as_mut() else { return };
     let focused = ctx.text_edit_focused();
@@ -1769,6 +1788,9 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
     }
     use egui::{Key, Modifiers};
     let layout = &mut app.ui.camera_raw_layout;
+    // A menu shown this frame (zoom, More, Before/After) already closed itself on that Esc; the
+    // key is not the dialog's.
+    let menu_open = ctx.any_popup_open() || egui::Popup::is_any_open(ctx);
     ctx.input_mut(|i| {
         if i.consume_key(Modifiers::NONE, Key::Q) {
             d.before_after = d.before_after.next();
@@ -1782,9 +1804,21 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
         if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G) {
             layout.grid = !layout.grid;
         }
-        // A pattern without Shift also matches the key with Shift (`Modifiers::matches_logically`),
-        // so the Shift shortcuts go first: Shift+E (Red Eye) before E (Edit), Shift+P (Presets)
-        // before P (toggle Before).
+        // A pattern also matches the key with extra Shift or Alt (`Modifiers::matches_logically`),
+        // so the most specific shortcuts go first: the Before/After bar's Ctrl+Alt+Shift+P (swap)
+        // before Ctrl+Alt+P (After to Before), and Alt+Shift+P (Before to After) before Shift+P.
+        // They act only while Before/After is shown, as the bar's buttons do, but are always taken
+        // so they never fall through to Presets or the Before toggle.
+        for (mods, action) in [
+            (Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT, Compare::Swap),
+            (Modifiers::COMMAND | Modifiers::ALT, Compare::AfterToBefore),
+            (Modifiers::ALT | Modifiers::SHIFT, Compare::BeforeToAfter),
+        ] {
+            if i.consume_key(mods, Key::P) && d.before_after != BeforeAfter::Off {
+                d.compare(action);
+            }
+        }
+        // Then Shift+E (Red Eye) before E (Edit), Shift+P (Presets) before P (toggle Before).
         for (key, mods, tool) in [
             (Key::E, Modifiers::SHIFT, "redEye"),
             (Key::P, Modifiers::SHIFT, "presets"),
@@ -1799,7 +1833,7 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
         if i.consume_key(Modifiers::NONE, Key::P) || i.consume_key(Modifiers::NONE, Key::Backslash) {
             d.show_before = !d.show_before;
         }
-        if i.consume_key(Modifiers::NONE, Key::Escape) {
+        if i.consume_key(Modifiers::NONE, Key::Escape) && !menu_open {
             // Esc closes what is open on top of the dialog first; only the bare dialog cancels.
             if d.prefs_open {
                 d.prefs_open = false;
@@ -1809,7 +1843,7 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
                 *action = Some("cancel");
             }
         }
-        if i.consume_key(Modifiers::NONE, Key::Enter) && !d.prefs_open {
+        if i.consume_key(Modifiers::NONE, Key::Enter) && !d.prefs_open && !menu_open {
             *action = Some("ok");
         }
     });
@@ -2071,6 +2105,31 @@ mod tests {
         finish_worker(app.camera_raw.as_mut().unwrap(), &ctx);
         frame(&mut app);
         assert!(app.ui.status_error && app.ui.status == "something else failed", "{}", app.ui.status);
+    }
+
+    /// Before settings copied from After show exactly the After pixels, on a raw open too: both
+    /// views develop through the same proxy job (the raw stage, the tonal and colour halves, then
+    /// the selection's coverage).
+    #[test]
+    fn copied_before_settings_show_the_after_pixels() {
+        let (mut app, ctx) = worker_app();
+        let d = app.camera_raw.as_mut().unwrap();
+        assert!(d.selection.is_some());
+        d.raw = Some(std::sync::Arc::new(photocraft_io::raw::RawPreview::with_curve(vec![[0.0, 0.0], [0.18, 0.3], [1.0, 1.0]])));
+        (d.params.shadows, d.params.exposure) = (40.0, 0.5);
+        d.compare(Compare::AfterToBefore);
+        d.render(&ctx);
+        assert!(!d.before_dirty);
+        assert_eq!(d.before_processed, d.processed);
+        assert_eq!(d.before_histogram.channels, d.after_histogram.channels);
+        assert_ne!(d.before_processed, *d.proxy, "the settings do change the pixels");
+        // The scopes read the Before view's own pixels.
+        d.show_before = true;
+        let p = [0.25, 0.25];
+        assert_eq!(d.readout(p, false), {
+            d.show_before = false;
+            d.readout(p, false)
+        });
     }
 
     #[test]

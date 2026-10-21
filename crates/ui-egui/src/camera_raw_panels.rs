@@ -562,6 +562,13 @@ fn parametric_preview(p: &CameraRaw) -> Vec<f32> {
 }
 
 /// The strip under the parametric curve: a gray ramp with the three region split handles.
+/// Split `k` moved to `v`, kept at least 5 from its neighbours (and from 0 and 100).
+fn split_within_neighbours(splits: &[f32; 3], k: usize, v: f32) -> f32 {
+    let lo = if k == 0 { 5.0 } else { splits[k - 1] + 5.0 };
+    let hi = if k == 2 { 95.0 } else { splits[k + 1] - 5.0 };
+    v.clamp(lo, hi.max(lo))
+}
+
 fn splits(ui: &mut Ui, rect: Rect, e: &mut Edit) {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
@@ -577,21 +584,21 @@ fn splits(ui: &mut Ui, rect: Rect, e: &mut Edit) {
     for k in 0..3 {
         let x = strip.left() + e.p.curve_splits[k] / 100.0 * strip.width();
         let hit = Rect::from_center_size(pos2(x, strip.center().y), vec2(12.0, 16.0));
-        let r = ui.interact(hit, ui.id().with(("cr-split", k)), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-        if r.dragged()
-            && let Some(p) = r.interact_pointer_pos()
-        {
-            let lo = if k == 0 { 5.0 } else { e.p.curve_splits[k - 1] + 5.0 };
-            let hi = if k == 2 { 95.0 } else { e.p.curve_splits[k + 1] - 5.0 };
-            let v = ((p.x - strip.left()) / strip.width().max(1.0) * 100.0).round().clamp(lo, hi.max(lo));
+        let r = ui.interact(hit, ui.id().with(("cr-split", k)), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        // A split stays at least 5 from its neighbours, dragged or reset by a double-click.
+        let target = if st::reset_click(&r) {
+            Some([25.0, 50.0, 75.0][k])
+        } else if r.dragged() {
+            r.interact_pointer_pos().map(|p| ((p.x - strip.left()) / strip.width().max(1.0) * 100.0).round())
+        } else {
+            None
+        };
+        if let Some(v) = target {
+            let v = split_within_neighbours(&e.p.curve_splits, k, v);
             if v != e.p.curve_splits[k] {
                 e.p.curve_splits[k] = v;
                 e.dirty = true;
             }
-        }
-        if r.double_clicked() {
-            e.p.curve_splits[k] = [25.0, 50.0, 75.0][k];
-            e.dirty = true;
         }
         let center = pos2(x, strip.center().y);
         ui.painter().circle_filled(center, 4.5, Color32::WHITE);
@@ -656,20 +663,26 @@ fn mixer(ui: &mut Ui, e: &mut Edit) {
         for (k, band) in BANDS.iter().enumerate() {
             let r = Rect::from_center_size(pos2(row.left() + st::INSET_L + w * (k as f32 + 0.5), row.center().y), vec2(16.0, 16.0));
             let resp = ui.interact(r, ui.id().with(("cr-swatch", k)), Sense::click()).on_hover_text(tr(band));
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, e.layout.mixer_color == k, tr(band)));
             let col = st::hsv(photocraft_algo::camera_raw::HSL_BANDS[k], 0.85, 0.85);
             ui.painter().circle_filled(r.center(), 7.0, col);
             if e.layout.mixer_color == k {
                 ui.painter().circle_stroke(r.center(), 9.5, Stroke::new(1.5, c.text));
             }
-            if resp.clicked() {
+            if resp.clicked() && e.layout.mixer_color != k {
+                // Text typed into the previous colour's boxes must not land in this one.
+                for id in COLOR_ROWS {
+                    st::forget_typed_value(ui, id);
+                }
                 e.layout.mixer_color = k;
             }
         }
         let k = e.layout.mixer_color.min(7);
-        slider(ui, &mut e.dirty, "colorHue", "Hue", &mut e.p.hsl_hue[k], &Spec::centred(100.0).colors(st::band_stops(k)));
+        let [hue, sat, lum] = COLOR_ROWS;
+        slider(ui, &mut e.dirty, hue, "Hue", &mut e.p.hsl_hue[k], &Spec::centred(100.0).colors(st::band_stops(k)));
         let base = st::hsv(photocraft_algo::camera_raw::HSL_BANDS[k], 0.85, 0.85);
-        slider(ui, &mut e.dirty, "colorSat", "Saturation", &mut e.p.hsl_sat[k], &Spec::centred(100.0).colors(vec![Color32::from_gray(130), base]));
-        slider(ui, &mut e.dirty, "colorLum", "Luminance", &mut e.p.hsl_lum[k], &Spec::centred(100.0).colors(vec![Color32::BLACK, base, Color32::WHITE]));
+        slider(ui, &mut e.dirty, sat, "Saturation", &mut e.p.hsl_sat[k], &Spec::centred(100.0).colors(vec![Color32::from_gray(130), base]));
+        slider(ui, &mut e.dirty, lum, "Luminance", &mut e.p.hsl_lum[k], &Spec::centred(100.0).colors(vec![Color32::BLACK, base, Color32::WHITE]));
         return;
     }
     const TABS: [&str; 4] = ["hue", "saturation", "luminance", "all"];
@@ -695,6 +708,9 @@ fn mixer(ui: &mut Ui, e: &mut Edit) {
         }
     }
 }
+
+/// The Color Mixer's Color rows: the same three rows show whichever colour is picked.
+const COLOR_ROWS: [&str; 3] = ["colorHue", "colorSat", "colorLum"];
 
 /// Point Color (Camera Raw 15+): samples picked from the image get their own hue, saturation and
 /// luminance shifts. Not available yet: the layout is in place, the controls are disabled.
@@ -836,7 +852,7 @@ fn wheel(ui: &mut Ui, id: &str, w: &mut Wheel, radius: f32, labelled: bool) -> b
             changed = true;
         }
     }
-    if resp.double_clicked() {
+    if st::reset_click(&resp) {
         w.sat = 0.0;
         w.hue = 0.0;
         changed = true;
@@ -1012,7 +1028,8 @@ fn hue_range(ui: &mut Ui, id: &str, label: &str, v: &mut [f32; 2], hues: [f32; 2
             && let Some(q) = r.interact_pointer_pos()
         {
             let nv = ((q.x - track.left()) / track.width().max(1.0) * 100.0).round();
-            let nv = if k == 0 { nv.clamp(0.0, v[1] - gap) } else { nv.clamp(v[0] + gap, 100.0) };
+            // A stored range narrower than `gap` must not invert the bounds (`clamp` panics then).
+            let nv = if k == 0 { nv.clamp(0.0, (v[1] - gap).max(0.0)) } else { nv.clamp((v[0] + gap).min(100.0), 100.0) };
             if nv != v[k] {
                 v[k] = nv;
                 changed = true;
@@ -1162,6 +1179,17 @@ mod tests {
         // The pipeline's own bookkeeping is never part of a panel.
         let scaled = CameraRaw { pixel_scale: 0.25, encoding_gamma: 1.8, ..Default::default() };
         assert_eq!(visible(&scaled, &PANELS.map(|(id, _)| id.to_string())), scaled);
+    }
+
+    /// A double-click resets a split to its default only as far as its neighbours allow, as a
+    /// drag does: the splits stay in order.
+    #[test]
+    fn a_split_reset_stays_between_its_neighbours() {
+        let splits = [10.0, 15.0, 20.0];
+        assert_eq!(split_within_neighbours(&splits, 0, 25.0), 10.0);
+        assert_eq!(split_within_neighbours(&splits, 2, 75.0), 75.0);
+        assert_eq!(split_within_neighbours(&[25.0, 50.0, 75.0], 1, 50.0), 50.0);
+        assert_eq!(split_within_neighbours(&[40.0, 42.0, 44.0], 1, 50.0), 45.0, "too close to fit: the lower bound wins");
     }
 
     #[test]

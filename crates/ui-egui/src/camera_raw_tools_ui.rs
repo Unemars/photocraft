@@ -61,6 +61,21 @@ impl Default for ToolState {
     }
 }
 
+impl ToolState {
+    /// Forgets the preset once the settings are no longer what it made (an edit in another
+    /// panel, Ctrl+Z, the control channel): Amount and the next preset must not rebuild the
+    /// settings from the base saved before it, which would drop those edits.
+    pub(crate) fn forget_stale_preset(&mut self, params: &CameraRaw) {
+        let Some((base, preset, _)) = &self.preset else { return };
+        let mut made = blend(base, preset, self.preset_amount / 100.0);
+        (made.pixel_scale, made.encoding_gamma, made.seed) = (params.pixel_scale, params.encoding_gamma, params.seed);
+        if made != *params {
+            self.preset = None;
+            self.preset_amount = 100.0;
+        }
+    }
+}
+
 fn panel_title(ui: &mut Ui, title: &str) {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), st::ROW), Sense::hover());
@@ -248,6 +263,7 @@ pub(crate) fn presets(ui: &mut Ui, d: &mut CameraRawDialog) -> bool {
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), st::ROW), Sense::hover());
     ui.painter().text(pos2(row.left() + st::INSET_L, row.center().y), Align2::LEFT_CENTER, tr("Presets"), st::title_font(), c.text);
     st::rule(ui);
+    d.tools.forget_stale_preset(&d.params);
     let name = d.tools.preset.as_ref().map(|(_, _, n)| n.clone());
     let active = name.is_some();
     let mut amount = d.tools.preset_amount;
@@ -473,6 +489,25 @@ mod tests {
         let none = blend(&base, &preset, 0.0);
         assert_eq!((none.contrast, none.vignette_style), (0.0, CameraRaw::default().vignette_style));
         assert_eq!(blend(&base, &preset, 2.0).contrast, 80.0);
+    }
+
+    /// An edit made after a preset (another panel, Ctrl+Z, the control channel) survives a later
+    /// Amount change or preset: the preset is forgotten, so neither rebuilds from its old base.
+    #[test]
+    fn an_edit_after_a_preset_forgets_the_preset() {
+        let base = CameraRaw::default();
+        let preset = CameraRaw { contrast: 40.0, ..Default::default() };
+        let mut tools = ToolState { preset: Some((base.clone(), preset.clone(), "Vivid".into())), ..Default::default() };
+        let mut params = blend(&base, &preset, 1.0);
+        tools.forget_stale_preset(&params);
+        assert!(tools.preset.is_some(), "the settings are still the preset's");
+        tools.preset_amount = 50.0;
+        params = blend(&base, &preset, 0.5);
+        tools.forget_stale_preset(&params);
+        assert!(tools.preset.is_some(), "Amount keeps the preset");
+        params.exposure = 1.0;
+        tools.forget_stale_preset(&params);
+        assert!(tools.preset.is_none() && tools.preset_amount == 100.0, "the edit forgets the preset");
     }
 
     #[test]
