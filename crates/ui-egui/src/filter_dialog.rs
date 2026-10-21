@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use photocraft_doc::Document;
 use photocraft_engine::color_cmds::ColorSettings;
+use photocraft_engine::installed_profiles::InstalledProfile;
 use serde_json::{Map, Value, json};
 
 use crate::PhotocraftApp;
@@ -111,7 +112,8 @@ pub fn parse_spec(spec: &str) -> Vec<Param> {
             Kind::Color(crate::color_picker_ui::parse_hex(default))
         } else if v == "doc" {
             Kind::Document
-        } else if v == "json" || v.starts_with("layer id") || v.starts_with('[') || v.starts_with('{') {
+        } else if v == "json" || v.starts_with("layer id") || v.starts_with('[') || v.starts_with('{') || v.trim_end_matches('?') == "index|name" {
+            // `index|name`: a reference (an alpha channel…) the dialog sets through another control.
             Kind::Json
         } else if let Some(n) = v.strip_prefix("int[").and_then(|r| r.strip_suffix(']')).and_then(|n| n.parse().ok()) {
             Kind::Grid(n)
@@ -201,6 +203,9 @@ fn is_pixel_param_of(command: &str, key: &str) -> bool {
 /// Sharpen, Sharpen More, Sharpen Edges, Find Edges, Emboss and Despeckle use fixed one-pixel
 /// kernels with no size parameter, so a proxy changes their look: edges average away, making
 /// the sharpening and edge detection invisible. These must preview at full resolution (#3929).
+///
+/// Content-Aware Fill searches for matching patches, and the matches found on a reduced copy
+/// differ from those found at full size, so its preview would not show what OK writes (#6530).
 const FULL_RESOLUTION_PREVIEW: &[&str] = &[
     "filter.distort.ripple",
     "filter.stylize.diffuse",
@@ -223,6 +228,7 @@ const FULL_RESOLUTION_PREVIEW: &[&str] = &[
     "filter.stylize.findEdges",
     "filter.stylize.emboss",
     "filter.noise.despeckle",
+    "edit.contentAwareFill",
 ];
 
 /// Whether `command` with `params` previews at full resolution: [`FULL_RESOLUTION_PREVIEW`], every
@@ -390,6 +396,9 @@ fn apply_command_defaults(app: &PhotocraftApp, command: &str, fields: &mut Map<S
     if command == "edit.assignProfile" {
         assign_profile_defaults(app, fields);
     }
+    if command == crate::bitmap_dialog::COMMAND {
+        crate::bitmap_dialog::defaults(app, fields);
+    }
     // Photoshop's Replace Color opens with its sample eyedropper active (#6279): the first click
     // on the image picks the colour.
     if command == REPLACE_COLOR {
@@ -467,6 +476,9 @@ pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
     apply_command_defaults(app, command, &mut fields);
     if crate::blur_pins::handles(command) {
         crate::blur_pins::init(app, &mut fields);
+    }
+    if command == LENS_BLUR {
+        lens_blur_channels(app, &mut fields);
     }
     if parse_spec(spec.params).iter().any(|p| p.kind == Kind::Document) {
         // The document picker lists every open document (params refer to them by index).
@@ -594,8 +606,62 @@ fn uses_logarithmic_slider(min: f32, max: f32) -> bool {
     min > 0.0 && max / min > 500.0
 }
 
+const LENS_BLUR: &str = "filter.blur.lensBlur";
+
+/// Lens Blur's Depth Map Source lists the document's alpha channels after None, Transparency
+/// and Layer Mask, as in Photoshop (#7400): their names go to `__channels`. A `channel` source
+/// without a channel this document has (references aren't remembered) opens as None.
+fn lens_blur_channels(app: &PhotocraftApp, f: &mut Map<String, Value>) {
+    let names: Vec<String> = app.session.active().map(|d| d.doc.channels.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
+    let known = f.get("depthChannel").and_then(|v| channel_index(v, &names)).is_some();
+    if f.get("depthMap").and_then(Value::as_str) == Some("channel") && !known {
+        f.insert("depthMap".into(), json!("none"));
+        f.remove("depthChannel");
+    }
+    f.insert("__channels".into(), json!(names));
+}
+
+/// Lens Blur's Source menu entry for the alpha channel at `index`. By index, not name: two
+/// channels may share a name, and each must be choosable.
+fn channel_choice(index: usize) -> String {
+    format!("channel:{index}")
+}
+
+/// The alpha channel `v` names (an index, or a name: the first channel so named), as the
+/// engine reads `depthChannel`.
+fn channel_index(v: &Value, names: &[String]) -> Option<usize> {
+    match v {
+        Value::Number(n) => n.as_u64().and_then(|i| usize::try_from(i).ok()).filter(|i| *i < names.len()),
+        Value::String(name) => names.iter().position(|n| n == name),
+        _ => None,
+    }
+}
+
 /// Schema dialogs whose `profile` menu lists the installed profiles after the built-ins.
 const PROFILE_DIALOGS: &[&str] = &["edit.assignProfile", "edit.convertToProfile", "view.proofSetup"];
+
+/// Which installed profiles a menu of `cmd` lists after its built-ins, if it lists any: every
+/// destination profile for the `profile` menus of [`PROFILE_DIALOGS`], and for Color Settings'
+/// working spaces those of that space, as Photoshop lists them (#6323). An RGB working space is a
+/// display or colour-space profile, not a scanner's or a printer's.
+fn installed_filter(cmd: &str, key: &str) -> Option<fn(&InstalledProfile) -> bool> {
+    use photocraft_cms::{ColorSpace, ProfileClass};
+    match (cmd, key) {
+        (c, "profile") if PROFILE_DIALOGS.contains(&c) => Some(|_| true),
+        ("edit.colorSettings", "workingRgb") => {
+            Some(|i| i.color_space == ColorSpace::Rgb && matches!(i.class, ProfileClass::Display | ProfileClass::ColorSpace))
+        }
+        ("edit.colorSettings", "workingCmyk") => Some(|i| i.color_space == ColorSpace::Cmyk),
+        ("edit.colorSettings", "workingGray") => Some(|i| i.color_space == ColorSpace::Gray),
+        _ => None,
+    }
+}
+
+/// The `installed` profiles a menu of `cmd` lists (see [`installed_filter`]), by path and description.
+fn installed_choices(cmd: &str, key: &str, installed: &[InstalledProfile]) -> Vec<(String, String)> {
+    let Some(fits) = installed_filter(cmd, key) else { return Vec::new() };
+    installed.iter().filter(|i| i.is_destination() && fits(i)).map(|i| (i.path.clone(), i.description.clone())).collect()
+}
 
 /// Commands whose `angle` is a direction in document angles (counter-clockwise from three
 /// o'clock): a light or a blur direction, edited on a dial as in Photoshop's Motion Blur, Emboss
@@ -752,7 +818,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
                         ui.add_space(4.0);
                     } else {
                         // A double-click on the slider puts it back to the filter's default.
-                        let gestures = crate::widgets::RowGestures { reset: Some(default), wheel_step: None };
+                        let gestures = crate::widgets::RowGestures { reset: Some(default), wheel_step: None, ..Default::default() };
                         crate::widgets::slider_row_with(ui, &label(&p.key), &mut v, min..=max, unit, None, gestures);
                     }
                 });
@@ -767,14 +833,29 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
                     let mut cur = f.get(&p.key).and_then(Value::as_str).unwrap_or(initial).to_string();
                     let labels: Vec<String> = options.iter().map(|o| choice_label(o)).collect();
                     let mut opts: Vec<(String, &str)> = options.iter().cloned().zip(labels.iter().map(String::as_str)).collect();
-                    // Like Photoshop, the profile menus also list every profile installed in
-                    // the system (printer and paper profiles), by description.
-                    let installed = if p.key == "profile" && PROFILE_DIALOGS.contains(&cmd.as_str()) {
-                        photocraft_engine::installed_profiles::installed().into_iter().filter(|i| i.is_destination()).collect()
+                    // Lens Blur's Source: each alpha channel by its name, in place of `channel`.
+                    let depth = cmd == LENS_BLUR && p.key == "depthMap";
+                    let names: Vec<String> = if depth {
+                        f.get("__channels").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
                     } else {
                         Vec::new()
                     };
-                    opts.extend(installed.iter().map(|i| (i.path.clone(), i.description.as_str())));
+                    let channels: Vec<String> = (0..names.len()).map(channel_choice).collect();
+                    if depth {
+                        opts.retain(|(v, _)| v != "channel");
+                        opts.extend(channels.iter().cloned().zip(names.iter().map(String::as_str)));
+                        if cur == "channel"
+                            && let Some(i) = f.get("depthChannel").and_then(|v| channel_index(v, &names))
+                        {
+                            cur = channel_choice(i);
+                        }
+                    }
+                    // Like Photoshop, the profile menus also list the profiles installed in the
+                    // system (printer and paper profiles, press conditions), by description.
+                    let lists_installed = installed_filter(&cmd, &p.key).is_some();
+                    let installed =
+                        if lists_installed { installed_choices(&cmd, &p.key, &photocraft_engine::installed_profiles::installed()) } else { Vec::new() };
+                    opts.extend(installed.iter().map(|(path, description)| (path.clone(), description.as_str())));
                     // Assign Profile: only what the document's colour mode can take (#4951).
                     if p.key == "profile"
                         && let Some(allowed) = f.get("__profiles").and_then(Value::as_array)
@@ -784,10 +865,16 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
                     // A profile given by path that isn't listed (typed by an agent, or spelled with
                     // different case) still shows, by its file name, instead of a blank menu.
                     let stem = std::path::Path::new(&cur).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    if p.key == "profile" && PROFILE_DIALOGS.contains(&cmd.as_str()) && !opts.iter().any(|(v, _)| *v == cur) {
+                    if lists_installed && !opts.iter().any(|(v, _)| *v == cur) {
                         opts.push((cur.clone(), stem.as_str()));
                     }
                     crate::widgets::dropdown(ui, &format!("flt-{cmd}-{}", p.key), &mut cur, &opts, 170.0);
+                    if let Some(i) = cur.strip_prefix("channel:").filter(|_| depth).and_then(|i| i.parse::<usize>().ok()) {
+                        f.insert("depthChannel".into(), json!(i));
+                        cur = "channel".into();
+                    } else if depth {
+                        f.remove("depthChannel");
+                    }
                     f.insert(p.key.clone(), json!(cur));
                 });
             }
@@ -977,6 +1064,13 @@ pub(crate) fn preview_document_for_target(
     let doc_id = proxy.id;
     s.add_document(proxy, None);
     let mut p = params.clone();
+    // Bitmap's Output resolution resamples the image: the preview keeps the canvas's size and
+    // resolution, so its dots and halftone screen show at their printed size (#5559).
+    if command == crate::bitmap_dialog::COMMAND
+        && let Some(o) = p.as_object_mut()
+    {
+        o.remove("resolution");
+    }
     add_source_documents(&mut s, doc_id, command, &mut p, documents, run_k);
     if let Some(id) = active {
         s.select_layer(id).ok()?;
@@ -1091,6 +1185,31 @@ impl FilterPreviewKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_settings_working_spaces_list_installed_profiles_of_their_space() {
+        // #6323: a press condition installed in the system can be the CMYK working space, as in
+        // Photoshop's Color Settings; each working-space menu lists only profiles of its space.
+        use photocraft_cms::{ColorSpace, ProfileClass};
+        let p = |path: &str, class, color_space| InstalledProfile { path: path.into(), description: path.to_uppercase(), class, color_space };
+        let installed = [
+            p("gracol.icc", ProfileClass::Output, ColorSpace::Cmyk),
+            p("monitor.icc", ProfileClass::Display, ColorSpace::Rgb),
+            p("printer-rgb.icc", ProfileClass::Output, ColorSpace::Rgb),
+            p("scanner.icc", ProfileClass::Input, ColorSpace::Rgb),
+            p("gray.icc", ProfileClass::Output, ColorSpace::Gray),
+            p("link.icc", ProfileClass::DeviceLink, ColorSpace::Cmyk),
+        ];
+        let paths = |key: &str| installed_choices("edit.colorSettings", key, &installed).into_iter().map(|(path, _)| path).collect::<Vec<_>>();
+        assert_eq!(paths("workingCmyk"), ["gracol.icc"]);
+        assert_eq!(paths("workingRgb"), ["monitor.icc"]);
+        assert_eq!(paths("workingGray"), ["gray.icc"]);
+        assert!(paths("policyCmyk").is_empty() && paths("intent").is_empty());
+        assert_eq!(installed_choices("edit.colorSettings", "workingCmyk", &installed)[0].1, "GRACOL.ICC", "listed by description");
+        // The profile dialogs keep listing every destination profile.
+        assert_eq!(installed_choices("edit.convertToProfile", "profile", &installed).len(), 5);
+        assert!(installed_choices("filter.blur.gaussianBlur", "profile", &installed).is_empty());
+    }
 
     /// #5710: the seed field's Random button always gives a different seed the field can hold.
     #[test]
@@ -1466,6 +1585,38 @@ mod tests {
         let params = params_of(&fields);
         assert_eq!(params["colors"].as_u64(), Some(17));
         assert_eq!(params["amount"].as_f64(), Some(37.5));
+    }
+
+    /// #7400: Lens Blur's Source lists the document's alpha channels, by name, each choosable even
+    /// when two share a name; `depthChannel` is set through that menu, not shown as a field, and
+    /// like the other references it isn't remembered, so a remembered `channel` source opens as None.
+    #[test]
+    fn lens_blur_source_lists_the_alpha_channels() {
+        let spec = photocraft_engine::commands::find(LENS_BLUR).unwrap().params;
+        let params = parse_spec(spec);
+        assert!(params.iter().any(|p| p.key == "depthChannel" && p.kind == Kind::Json), "depthChannel is no dialog field");
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 20, "height": 10})).unwrap();
+        app.run("channel.new", json!({"name": "Depth Map", "fill": "white"})).unwrap();
+        let id = open(&mut app, LENS_BLUR).unwrap();
+        assert_eq!(app.ui.dialog_mut(id).unwrap().fields["__channels"], json!(["Depth Map"]));
+        // The menu's values are channel indices, so two channels with one name are both choosable.
+        app.run("channel.new", json!({"name": "Depth Map", "fill": "black"})).unwrap();
+        let id = open(&mut app, LENS_BLUR).unwrap();
+        let names: Vec<String> = serde_json::from_value(app.ui.dialog_mut(id).unwrap().fields["__channels"].clone()).unwrap();
+        assert_eq!(names, ["Depth Map", "Depth Map"]);
+        assert_eq!((channel_choice(0), channel_choice(1)), ("channel:0".to_string(), "channel:1".to_string()));
+        assert_eq!(channel_index(&json!(1), &names), Some(1), "the second one by its index");
+        assert_eq!(channel_index(&json!("Depth Map"), &names), Some(0), "a name is the first so named, as the engine reads it");
+        assert_eq!(channel_index(&json!(2), &names), None);
+
+        app.session.prefs.edit(|p| {
+            p.dialogs.insert(LENS_BLUR.into(), json!({"depthMap": "channel", "depthChannel": "Depth Map"}));
+        });
+        let id = open(&mut app, LENS_BLUR).unwrap();
+        let f = &app.ui.dialog_mut(id).unwrap().fields;
+        assert_eq!(f["depthMap"], "none", "no channel was remembered with it");
+        assert!(f.get("depthChannel").is_none());
     }
 
     #[test]
@@ -1955,6 +2106,15 @@ mod tests {
         // Without dithering, the colour-mode conversions keep the proxy.
         assert_eq!(preview_factor("image.mode.indexedColor", &json!({"dither": "none"}), 4), 4);
         assert_eq!(preview_factor("image.mode.bitmap", &json!({"method": "threshold"}), 4), 4);
+    }
+
+    /// #6530: the Content-Aware Fill preview runs at full resolution, for every Sampling choice,
+    /// because its patch search finds different matches on a reduced copy.
+    #[test]
+    fn content_aware_fill_previews_at_full_resolution() {
+        for params in [json!({}), json!({"sampling": "auto"}), json!({"sampling": "rectangular"})] {
+            assert_eq!(preview_factor("edit.contentAwareFill", &params, 4), 1, "{params}");
+        }
     }
 
     /// #2063: proxy previews scaled what isn't a length (Tree's canvas fraction, Lens Correction's
