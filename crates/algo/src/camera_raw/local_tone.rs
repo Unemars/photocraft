@@ -174,6 +174,39 @@ fn up(p: &Plane, w: usize, h: usize) -> Plane {
     Plane { w, h, v: out }
 }
 
+/// The source rows of [`up`]`(p, w, h)` at output row `y`, one per tap (`None` where the
+/// zero-stuffed row is all zeros).
+fn up_rows(p: &Plane, h: usize, y: usize) -> [Option<usize>; 5] {
+    let lh = p.h.min(h.div_ceil(2));
+    std::array::from_fn(|k| {
+        let m = mirror(y as isize + k as isize - 2, h);
+        (m.is_multiple_of(2) && m / 2 < lh).then_some(m / 2)
+    })
+}
+
+/// One sample of [`up`]`(p, w, h)`: column `x` of the output row whose [`up_rows`] are `rows`.
+/// It adds the same terms in the same order as `up`, so it gives the same bits.
+fn up_at(p: &Plane, w: usize, rows: &[Option<usize>; 5], x: usize) -> f32 {
+    let lw = p.w.min(w.div_ceil(2));
+    let col = |j: usize| -> f32 { (0..5).filter_map(|k| rows[k].map(|r| TAPS[k] * (p.v[r * p.w + j] * 4.0))).sum() };
+    if x >= 2 && x + 2 < w {
+        // Away from the edges no tap mirrors.
+        (0..5)
+            .filter_map(|k| {
+                let i = x + k - 2;
+                (i.is_multiple_of(2) && i / 2 < lw).then(|| TAPS[k] * col(i / 2))
+            })
+            .sum()
+    } else {
+        (0..5)
+            .filter_map(|k| {
+                let m = mirror(x as isize + k as isize - 2, w);
+                (m.is_multiple_of(2) && m / 2 < lw).then(|| TAPS[k] * col(m / 2))
+            })
+            .sum()
+    }
+}
+
 /// Levels down to about 2 pixels on the short side.
 fn depth(w: usize, h: usize) -> usize {
     let mut s = w.min(h);
@@ -222,14 +255,14 @@ fn llf_parts(u: &Plane, change: impl Fn(f32, f32) -> f32 + Sync) -> (Plane, Plan
         });
         let gr = gaussian(m, n);
         for l in 0..n - 1 {
-            let coarse = up(&gr[l + 1], gr[l].w, gr[l].h);
-            let (gl, fine, lw) = (&g[l].v, &gr[l].v, g[l].w);
+            let (gl, fine, lw, lh, coarse) = (&g[l].v, &gr[l].v, g[l].w, g[l].h, &gr[l + 1]);
             rows(&mut lap[l], lw, |y, row| {
+                let taps = up_rows(coarse, lh, y);
                 for (x, o) in row.iter_mut().enumerate() {
                     let i = y * lw + x;
                     let wgt = (1.0 - (gl[i].clamp(lo, hi) - r).abs() / step).max(0.0);
                     if wgt > 0.0 {
-                        *o += wgt * (fine[i] - coarse.v[i]);
+                        *o += wgt * (fine[i] - up_at(coarse, lw, &taps, x));
                     }
                 }
             });
@@ -263,8 +296,10 @@ fn combine(base: &Plane, detail: &Plane, amount: f32) -> Plane {
 /// The `q` quantile (0 … 1) of `v`.
 fn quantile(v: &[f32], q: f32) -> f32 {
     let mut s = v.to_vec();
-    let k = ((s.len() - 1) as f32 * q).round() as usize;
-    *s.select_nth_unstable_by(k, f32::total_cmp).1
+    // Selecting the one element is linear, a full sort is not (5 sorts of the work copy were a
+    // fifteenth of a render). `total_cmp` ties are bit-identical, so it is the sorted element.
+    let i = ((s.len() - 1) as f32 * q).round() as usize;
+    *s.select_nth_unstable_by(i, f32::total_cmp).1
 }
 
 /// 1st and 99th percentiles of the log luminance on a copy at most 256 pixels across.
@@ -319,23 +354,38 @@ fn shadows_parts(u: &Plane) -> (Plane, Plane) {
     })
 }
 
-/// A pass's output from its parts: `amount` (−1 … 1) of the change, then the content at the `q`
-/// quantile of the input put back where it was.
-fn pass(input: &Plane, parts: &(Plane, Plane), amount: f32, q: f32) -> Plane {
+/// A pass's output from its parts: `amount` (−1 … 1) of the change, then the content at the
+/// quantile `q` of the output put back at `anchor`, the input's value there.
+fn pass(parts: &(Plane, Plane), amount: f32, q: f32, anchor: f32) -> Plane {
     let o = combine(&parts.0, &parts.1, amount);
-    let shift = quantile(&input.v, q) - quantile(&o.v, q);
+    let shift = anchor - quantile(&o.v, q);
     Plane { w: o.w, h: o.h, v: o.v.iter().map(|v| v + shift).collect() }
 }
 
-/// What [`apply_with`] keeps for the pixels it last saw: the log luminance and its work copy, the
-/// Highlights pass's parts for lowering and raising, and the Shadows pass's parts with the
-/// Highlights amount its input had. Dragging one slider then costs a weighted sum, not a filter.
+/// Highlights keeps the darkest content (this quantile), Shadows the brightest.
+const HIGHLIGHTS_ANCHOR: f32 = 0.01;
+const SHADOWS_ANCHOR: f32 = 0.99;
+
+/// The pass inputs [`apply_with`] keeps for the pixels it last saw (`hash`, see [`content_hash`]):
+/// the log luminance, its work copy with its [`HIGHLIGHTS_ANCHOR`] quantile, the Highlights pass's
+/// parts for lowering and raising, and the Shadows pass's parts with the Highlights amount its
+/// input had and that input's [`SHADOWS_ANCHOR`] quantile. Dragging one slider then costs a
+/// weighted sum, not a filter.
 #[derive(Default)]
 pub(crate) struct Kept {
-    print: u64,
-    planes: Option<(Plane, Plane, usize)>,
+    hash: u64,
+    planes: Option<Planes>,
     highlights: [Option<(Plane, Plane)>; 2],
-    shadows: Option<(f32, Plane, (Plane, Plane))>,
+    shadows: Option<(f32, f32, (Plane, Plane))>,
+}
+
+/// The log luminance at full size, its work copy, the copy's reduction factor and its
+/// [`HIGHLIGHTS_ANCHOR`] quantile.
+struct Planes {
+    u: Plane,
+    small: Plane,
+    f: usize,
+    anchor: f32,
 }
 
 /// Applies Shadows and Highlights (−100 … 100) to straight RGBA pixels encoded with `enc`.
@@ -345,39 +395,40 @@ pub(crate) fn apply(px: &mut [[f32; 4]], w: usize, h: usize, shadows: f32, highl
 }
 
 /// [`apply`], keeping in `kept` what does not depend on the sliders' values for these pixels.
+/// `kept` is reused only for exactly the pixels (and encoding) it was filled from: every pixel
+/// is hashed, so a change anywhere upstream (one hue band, one corner) fills it again.
 pub(crate) fn apply_with(px: &mut [[f32; 4]], w: usize, h: usize, shadows: f32, highlights: f32, enc: Encoding, kept: &mut Kept) {
     if (shadows == 0.0 && highlights == 0.0) || w < 2 || h < 2 || px.len() < w * h {
         return;
     }
     let px = &mut px[..w * h];
-    let print = fingerprint(px, w, enc);
-    if kept.print != print || kept.planes.is_none() {
+    let hash = content_hash(px, w, enc);
+    if kept.hash != hash || kept.planes.is_none() {
         const FLOOR: f32 = 1.0 / 65536.0;
         let u = Plane { w, h, v: px.iter().map(|q| (luma([0, 1, 2].map(|c| enc.decode(q[c]))).max(0.0) + FLOOR).log2()).collect() };
         // The filter on a copy at most WORK_SIDE across (box-averaged in log).
         let f = w.max(h).div_ceil(WORK_SIDE).max(1);
         let small = if f == 1 { u.clone() } else { shrink(&u, f) };
-        *kept = Kept { print, planes: Some((u, small, f)), ..Kept::default() };
+        let anchor = quantile(&small.v, HIGHLIGHTS_ANCHOR);
+        *kept = Kept { hash, planes: Some(Planes { u, small, f, anchor }), ..Kept::default() };
     }
-    let Some((u, small, f)) = &kept.planes else { return };
+    let Some(Planes { u, small, f, anchor }) = &kept.planes else { return };
     let mut o = small.clone();
     let hl = highlights.clamp(-100.0, 100.0) / 100.0;
     if hl != 0.0 {
         let side = usize::from(hl > 0.0);
         let parts = kept.highlights[side].get_or_insert_with(|| highlights_parts(small, hl > 0.0, &HIGHLIGHTS));
-        // Keep the darkest content.
-        o = pass(small, parts, hl, 0.01);
+        o = pass(parts, hl, HIGHLIGHTS_ANCHOR, *anchor);
     }
     let sh = shadows.clamp(-100.0, 100.0) / 100.0;
     if sh != 0.0 {
         if kept.shadows.as_ref().is_none_or(|(k, _, _)| *k != hl) {
-            let parts = shadows_parts(&o);
-            kept.shadows = Some((hl, o.clone(), parts));
+            let input_anchor = quantile(&o.v, SHADOWS_ANCHOR);
+            kept.shadows = Some((hl, input_anchor, shadows_parts(&o)));
         }
-        if let Some((_, input, parts)) = &kept.shadows {
+        if let Some((_, input_anchor, parts)) = &kept.shadows {
             let k = if sh > 0.0 { sh } else { sh * SHADOWS.down };
-            // Keep the brightest content.
-            o = pass(input, parts, k, 0.99);
+            o = pass(parts, k, SHADOWS_ANCHOR, *input_anchor);
         }
     }
     // The change in log luminance, at full size.
@@ -397,14 +448,23 @@ pub(crate) fn apply_with(px: &mut [[f32; 4]], w: usize, h: usize, shadows: f32, 
     });
 }
 
-/// A cheap check that the pixels (and their encoding) are the ones [`Kept`] was filled from.
-fn fingerprint(px: &[[f32; 4]], w: usize, enc: Encoding) -> u64 {
-    let step = (px.len() / 251).max(1);
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ (px.len() as u64) ^ ((w as u64) << 32) ^ u64::from(enc.0.to_bits());
-    for p in px.iter().step_by(step) {
-        for v in &p[..3] {
-            h = (h ^ u64::from(v.to_bits())).wrapping_mul(0x0100_0000_01b3);
+/// A hash of every pixel's colour (and the size and encoding): what [`Kept`] was filled from.
+/// Rows are hashed in parallel and combined in order; a few milliseconds for a preview proxy,
+/// against hundreds for the filter it saves.
+fn content_hash(px: &[[f32; 4]], w: usize, enc: Encoding) -> u64 {
+    const PRIME: u64 = 0x0100_0000_01b3;
+    let rows: Vec<u64> = crate::par::map(px.len().div_ceil(w.max(1)), px.len() >= 1 << 16, |y| {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for p in px[y * w..((y + 1) * w).min(px.len())].iter() {
+            for v in &p[..3] {
+                h = (h ^ u64::from(v.to_bits())).wrapping_mul(PRIME);
+            }
         }
+        h
+    });
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ (px.len() as u64) ^ ((w as u64) << 32) ^ u64::from(enc.0.to_bits());
+    for r in rows {
+        h = (h ^ r).wrapping_mul(PRIME).rotate_left(29);
     }
     h.max(1)
 }
@@ -514,8 +574,30 @@ mod tests {
                 assert_eq!(blur_step(&p, step).v, blur_step_reference(&p, step).v, "blur {w}×{h} step {step}");
             }
             for (uw, uh) in [(w * 2, h * 2), (w * 2 - 1, h * 2 - 1), (w * 2, h * 2 - 1), (w.max(2) * 2 - 3, h * 2)] {
-                assert_eq!(up(&p, uw, uh).v, up_reference(&p, uw, uh).v, "up {w}×{h} → {uw}×{uh}");
+                let full = up(&p, uw, uh);
+                assert_eq!(full.v, up_reference(&p, uw, uh).v, "up {w}×{h} → {uw}×{uh}");
+                // The filter samples `up` one pixel at a time; every sample has the same bits.
+                for y in 0..uh {
+                    let taps = up_rows(&p, uh, y);
+                    for x in 0..uw {
+                        assert_eq!(up_at(&p, uw, &taps, x).to_bits(), full.v[y * uw + x].to_bits(), "up_at {w}×{h} → {uw}×{uh} at {x},{y}");
+                    }
+                }
             }
+        }
+    }
+
+    #[test]
+    fn quantile_is_the_sorted_element() {
+        let p = noise_plane(301, 211, 9);
+        let mut v = p.v.clone();
+        // Ties and signed zeros, which `total_cmp` orders by their bits.
+        v.extend([0.0, -0.0, 0.0, -0.0, 3.5, 3.5, f32::MIN_POSITIVE]);
+        let mut sorted = v.clone();
+        sorted.sort_by(f32::total_cmp);
+        for q in [0.0, 0.001, 0.01, 0.25, 0.5, 0.99, 1.0] {
+            let want = sorted[((sorted.len() - 1) as f32 * q).round() as usize];
+            assert_eq!(quantile(&v, q).to_bits(), want.to_bits(), "q {q}");
         }
     }
 
@@ -626,5 +708,29 @@ mod tests {
         apply_with(&mut other, w, h, 40.0, 0.0, SRGB, &mut kept);
         apply(&mut fresh, w, h, 40.0, 0.0, SRGB);
         assert_eq!(other, fresh);
+    }
+
+    /// An upstream stage that changes only a few pixels (one hue band, one corner) still fills
+    /// the kept parts again: no pixel's change goes unseen (#3817 review, a sampled fingerprint
+    /// missed them).
+    #[test]
+    fn a_change_to_a_few_pixels_refills_the_kept_parts() {
+        let (w, h) = (300, 200);
+        let px = grey(w, h, |x, y| 0.05 + 0.8 * (x as f32 / w as f32) * if (x / 9 + y / 7) % 3 == 0 { 0.4 } else { 1.0 });
+        let mut kept = Kept::default();
+        let mut first = px.clone();
+        apply_with(&mut first, w, h, 60.0, -40.0, SRGB, &mut kept);
+        // Every pixel but a 3 × 3 patch the same; the patch much darker.
+        let mut edited = px.clone();
+        for y in 101..104 {
+            for x in 151..154 {
+                edited[y * w + x] = [0.01, 0.01, 0.01, 1.0];
+            }
+        }
+        let (mut a, mut b) = (edited.clone(), edited);
+        apply_with(&mut a, w, h, 60.0, -40.0, SRGB, &mut kept);
+        apply(&mut b, w, h, 60.0, -40.0, SRGB);
+        assert_eq!(a, b);
+        assert_ne!(a[102 * w + 152], first[102 * w + 152]);
     }
 }

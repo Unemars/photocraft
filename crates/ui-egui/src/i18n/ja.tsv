@@ -2153,6 +2153,11 @@
 	Mixer Brush Tool	混合ブラシツール
 	Color Replacement Tool	色の置き換えツール
 	Wet	ウェット
+	Current Brush Load	現在のブラシの絵の具
+	Load Brush	ブラシに補充
+	Clean Brush	ブラシを洗浄
+	Load the brush after each stroke	ストロークごとにブラシに補充
+	Clean the brush after each stroke	ストロークごとにブラシを洗浄
 	Mix	混合
 	Wetness Jitter	ウェットのジッター
 	Mix Jitter	混合のジッター
@@ -3646,6 +3651,22 @@ cameraData	Lens	レンズ
 	Snap to Origin	原点にスナップ
 	Search settings…	設定を検索…
 	No matching settings	一致する設定はありません
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	サンプリングブラシツール
+	Sampling Area Overlay	サンプリング領域のオーバーレイ
+	Show Sampling Area	サンプリング領域を表示
+	Indicates	表示対象
+	Sampling Area	サンプリング領域
+	Excluded Area	除外された領域
+	Sampling Area Options	サンプリング領域オプション
+	Rectangular	長方形
+	Fill Settings	塗りつぶし設定
+	Rotation Adaptation	回転への適応
+	Very High	非常に高い
+	Full	フル
+	Mirror	ミラー
+	Output Settings	出力設定
+	Output To	出力先
 	Loading fonts…	フォントを読み込み中…
 	Response curve	応答カーブ
 	Simulate Pressure	筆圧をシミュレート
@@ -3689,6 +3710,10 @@ curves	Smooth	スムーズ
 	Click to place · Alt-click or drag off-canvas to remove	クリックで配置 · Alt キーを押しながらクリック、またはカンバス外へドラッグで削除
 	No document open	ドキュメントが開かれていません
 	{n} of {max} sample points	{max} 個中 {n} 個のサンプルポイント
+
+# History panel menu (#2966)
+	New Snapshot…	新規スナップショット…
+	History Options…	ヒストリーオプション…
 # Print dialog (#2697)
 	Emulsion Down	乳剤面を下
 	Functions	機能
@@ -3721,7 +3746,198 @@ curves	Smooth	スムーズ
 	Light Red	ライトレッド
 	Medium Blue	ミディアムブルー
 	Light Gray	ライトグレー
-# Camera Raw 16 layout (2026-10-11)
+	Object Finder	オブジェクトファインダー
+	No object found there — drag a rectangle around it	そこにオブジェクトが見つかりません — 周囲に矩形をドラッグしてください
+	Remove after each stroke	ストロークごとに削除
+	Apply the removal ({key})	削除を適用 ({key})
+	Strokes to remove: {n} (Enter applies, Esc cancels)	削除するストローク: {n}（Enter で適用、Esc で取り消し）
+	Show home recent files	ホーム画面に最近使ったファイルを表示
+
+# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
+	Load Actions…	アクションを読み込み…
+	Save Actions…	アクションを保存…
+	{name} (Photoshop)	{name}（Photoshop）
+	{message} ({note})	{message}（{note}）
+@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	{file} からアクション {n} 個を読み込みました
+@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} 個のステップにはまだ PhotoCraft の対応機能がありません
+@plural	Saved {n} action to {file}|Saved {n} actions to {file}	{file} にアクション {n} 個を保存しました
+@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Photoshop に対応するもののない {n} 個のステップを省きました
+
+	File Naming	ファイル名の付け方
+	Starting serial	開始番号
+# Actions panel: set folders, dialog toggle, Insert Stop
+	Insert Stop…	ストップを挿入…
+	Save Set…	セットを保存…
+	Message:	メッセージ:
+	Allow Continue	続行を許可
+	Show dialog during playback	再生中にダイアログを表示
+	Select an action first	先にアクションを選択してください
+	Action playback stopped	アクションの再生を停止しました
+	Step {step} is waiting for its dialog	ステップ {step} はダイアログを待っています
+@plural	{n} action|{n} actions	アクション {n} 個
+	Background (Default)	背景（既定）
+# Batch / Image Processor
+	Include All Subfolders	すべてのサブフォルダーを含める
+
+# Liquify tool names (shown via tl!(tool.label()) in the UI, so they are not found by the static scan)
+	Forward Warp	前方ワープ
+	Twirl Clockwise	時計回りに渦巻き
+	Twirl Counterclockwise	反時計回りに渦巻き
+	Pucker	収縮
+	Bloat	膨張
+	Push Left	ピクセル移動
+	Freeze Mask	ブラシでマスクを描画
+	Thaw Mask	ブラシでマスクを消去
+
+# Panel menu items and section labels passed to tl!() as variables (channels panel, paths panel, layer style)
+	Convert to Alpha Channel	アルファチャンネルに変換
+	Delete Channel	チャンネルを削除
+	Duplicate Channel	チャンネルを複製
+	Exit Quick Mask	クイックマスクを終了
+	Merge Channels…	チャンネルを結合…
+	Merge Spot Channel	スポットチャンネルを結合
+	New Channel…	新規チャンネル…
+	New Spot Channel…	新規スポットチャンネル…
+	Rename Channel…	チャンネル名を変更…
+	Split Channels	チャンネルを分割
+	Save Path	パスを保存
+	General Blending	通常の描画
+
+# Character panel tooltip (shown once the tooltip helpers in type_tool.rs pass their text through tl!)
+	Kerning: Metrics, Optical or a value in 1/1000 em (Alt+←/→ at the caret)	カーニング: メトリクス、オプティカル、または 1/1000 em 単位の値 (キャレット位置で Alt+←/→)
+
+# Glyphs panel "Show" categories (text/src/glyphs.rs; the dropdown passes them through tl!)
+	Basic Latin	基本ラテン文字
+	Latin 1	ラテン 1
+	Latin Extended-A	ラテン拡張 A
+	Latin Extended-B	ラテン拡張 B
+	Greek	ギリシャ文字
+	Cyrillic	キリル文字
+	Numbers	数字
+	Currency	通貨記号
+	Math Symbols	数学記号
+	Arrows	矢印
+
+# Dialog field labels generated from parameter names (Warp Text, Trim, Calculations, Apply Image; not seen by the tl! scanner)
+	Bend	曲げ
+	Horizontal Distortion	水平方向のゆがみ
+	Vertical Distortion	垂直方向のゆがみ
+	Based On	基準
+	Source Channel	ソースのチャンネル
+	Source Invert	ソースを反転
+	Mask Channel	マスクのチャンネル
+	Source1 Channel	ソース 1 のチャンネル
+	Source1 Invert	ソース 1 を反転
+	Source2 Channel	ソース 2 のチャンネル
+	Source2 Invert	ソース 2 を反転
+	R g b	RGB
+
+# Canvas background menu, Blend If labels and Advanced Blending options
+	Dark Gray	ダークグレー
+	Medium Gray	ミディアムグレー
+	Select Custom Color…	カスタムカラーを選択…
+	This Layer:	現在のレイヤー:
+	Underlying Layer:	下のレイヤー:
+	Blend Interior Effects as Group	内部効果をまとめて描画
+	Blend Clipped Layers as Group	クリップされたレイヤーをまとめて描画
+	Transparency Shapes Layer	透明シェイプレイヤー
+	Layer Mask Hides Effects	レイヤーマスクで効果を隠す
+	Vector Mask Hides Effects	ベクトルマスクで効果を隠す
+	Auto Add/Delete	自動追加・削除
+
+# Native Windows printing qualification
+	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	印刷設定の「鏡像」も有効にしないでください。2回反転すると元に戻ります。
+	Print Settings…	印刷設定…
+	Remember to turn off the printer's own colour management in Print Settings…	印刷設定でプリンター独自のカラーマネジメントを無効にしてください…
+	Sent to {printer}	{printer} に送信しました
+	set in Print Settings…	印刷設定で指定…
+# Restored rows (custom print paper #3820, brush presets, Vanishing Point help, brush panel menu)
+	Drag to pan · Scroll to zoom · Double-click to fit	ドラッグで移動 · スクロールでズーム · ダブルクリックで全体表示
+	Clear Brush Controls	ブラシのコントロールを消去
+	Reset All Locked Settings	ロックされた設定をすべて初期化
+	Copy Texture to Other Tools	テクスチャを他のツールにコピー
+	ICO is limited to 256 × 256 pixels	ICO は 256 × 256 ピクセルまでです
+# History panel › History Brush source (#2966)
+	Paints from the History panel's source state	ヒストリーパネルのソース状態からペイントします
+	Sets the source for the history brush	ヒストリーブラシのソースを設定します
+# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
+	Use the embedded profile ({profile})	埋め込みプロファイルを使用 ({profile})
+	Convert to the working space ({profile})	作業用スペースに変換 ({profile})
+	Remember this choice for future images	今後の画像でもこの選択を使用
+	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	確認を再び表示するには、編集 › カラー設定 の Ask On Mismatch をオンにします。
+	Button Mode	ボタンモード
+	Button Mode On	ボタンモード オン
+# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
+	Darken Interface	インターフェイスを暗くする
+	Lighten Interface	インターフェイスを明るくする
+# Bevel & Emboss Technique.
+	Technique	テクニック
+	Chisel Hard	チゼルハード
+	Chisel Soft	チゼルソフト
+	Open color-less EXR as ACEScg	色空間のないEXRをACEScgとして開く
+# View › Guides › right-click a guide
+	Edit Selected Guides	選択したガイドを編集
+	Clear Selected Guides	選択したガイドを消去
+	Bicubic Automatic	バイキュービック法 (自動)
+	Bicubic Smoother	バイキュービック法 - 滑らか
+	Bicubic Sharper	バイキュービック法 - シャープ
+	Pasting from other apps is unavailable	他のアプリからの貼り付けは利用できません
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	このセッションでは PhotoCraft がシステムのクリップボードにアクセスできません。Wayland では、Flatpak のサンドボックスが他のアプリの画像を読み取るためのプロトコルを隠します。
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	他のアプリから貼り付けるには、XWayland 上で PhotoCraft を起動してください: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	貼り付けるものがありません: ここでは PhotoCraft がシステムのクリップボードを読み取れません
+	Delete this set	このセットを削除
+	New Set…	新規セット…
+	PhotoCraft Defaults	PhotoCraft 初期設定
+	Save a list of these shortcuts as a web page	これらのショートカットの一覧を Web ページとして保存
+	Save the changes to this set	このセットへの変更を保存
+	Save these shortcuts as a .kys file	これらのショートカットを .kys ファイルとして保存
+	Save these shortcuts as a new set	これらのショートカットを新規セットとして保存
+	Set deleted.	セットを削除しました。
+	Set saved.	セットを保存しました。
+	Set:	セット：
+	Summarize…	概要…
+	There are too many sets: delete one first.	セットが多すぎます。先に 1 つ削除してください。
+	set name	セット名
+	{set} (modified)	{set}（変更あり）
+	Show file name in title	タイトルにファイル名を表示
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	50% しきい値
+	Pattern Dither	パターンディザ
+	Diffusion Dither	拡散ディザ
+	Halftone Screen	ハーフトーンスクリーン
+	Custom Pattern	カスタムパターン
+	Frequency:	線数:
+	Lines/Inch	線/インチ
+	Lines/Centimeter	線/センチメートル
+	Ellipse	楕円
+	Accept and Go to Conflict	適用して競合へ移動
+	Changes undone.	変更を取り消しました。
+	Choose a new shortcut for this command, or leave it without one.	このコマンドに新しいショートカットを選択するか、なしのままにしてください。
+	Put this command's shortcuts back as they were	このコマンドのショートカットを元に戻す
+	Take the shortcut from the other command and select it	もう一方のコマンドからショートカットを外して選択
+	Undo Changes	変更を取り消し
+	{shortcut} is reserved by the system and can't be assigned.	{shortcut} はシステムで予約されているため割り当てられません。
+	Low-Latency Drawing (vsync off, applies at next launch)	低遅延描画（垂直同期オフ、次回起動時に適用）
+# Free Transform: a new layer while the box is open (#5859)
+	Free Transform is still being applied; try again when it has finished.	自由変形を適用中です。完了してからもう一度お試しください。
+	The transform couldn't be applied.	変形を適用できませんでした。
+# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
+	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	レイヤーには {needed} の GPU メモリが必要ですが、予算で使えるのは {budget} です。
+	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	環境設定 › パフォーマンスの GPU メモリを、グラフィックカードが保持できる量（最大でメモリの 3/8）に設定してください。自動はメモリ使用量に従い、このコンピューターのメモリの4分の1とカードの 3/8 の範囲内で、メモリ量がわかるカードではドキュメント分を差し引きません。収まらない間、ステータスバーに「GPU メモリ不足」と表示されます。
+	GPU Memory Full	GPU メモリ不足
+	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	レイヤーには {needed} の GPU メモリが必要ですが、使えるのは {budget} のため、ドキュメント全体を再描画する編集は CPU で行われます。クリックして GPU メモリを設定します。
+	GPU memory budget: {budget}	GPU メモリ予算: {budget}
+	This document's layers: {needed} of {budget} for layers	このドキュメントのレイヤー: レイヤー用 {budget} のうち {needed}
+	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	このドキュメントのレイヤーには {needed} が必要ですが、使えるのは {budget} です: ドキュメント全体の再描画は CPU で行われます
+	GPU Memory (MB, 0 = Automatic)	GPU メモリ（MB、0 = 自動）
+	Replace	置き換え
+	{name} was changed by another app after it was opened or saved here.	{name} は、ここで開くか保存した後に別のアプリで変更されました。
+	Replace it with this document, or cancel and use File › Save As to keep both.	この書類で置き換えるか、キャンセルしてファイル › 名前を付けて保存で両方を残してください。
+	Decrease Brush Size	ブラシサイズを小さく
+	Increase Brush Size	ブラシサイズを大きく
+	Decrease Brush Hardness	ブラシの硬さを下げる
+	Increase Brush Hardness	ブラシの硬さを上げる
 cameraRaw	Adjust	調整
 cameraRaw	Apply Favorite Preset	お気に入りのプリセットを適用
 cameraRaw	Apply Previous Settings	前回の設定を適用
@@ -3860,173 +4076,20 @@ cameraRaw	Zoom and Pan	ズームとパン
 	White Balance tool (I): click a neutral area	ホワイトバランスツール(I): ニュートラルな部分をクリック
 	Zoom Tool (Z)	ズームツール(Z)
 cameraRaw	Type	種類
-	Demosaic	デモザイク
-	How the camera's colour filter mosaic is filled in. It is applied when the file opens; the preview shows the method it was opened with.	カメラのカラーフィルター配列をどのように補間するか。ファイルを開くときに適用されます。プレビューは開いたときの方式で表示されます。
-	AHD (adaptive homogeneity)	AHD（適応的均質性）
-	Malvar–He–Cutler	Malvar–He–Cutler
-	Hirakawa–Parks: the cleanest edges and the least colour fringing, the slowest.	Hirakawa–Parks：エッジが最もきれいで色にじみが最も少ないが、最も遅い。
-	Gradient-corrected interpolation: sharp and fast, with some colour fringing on fine detail.	勾配補正補間：シャープで高速だが、細部に多少の色にじみが出る。
-	The fastest and the softest, with colour fringing on fine detail.	最も高速で最も柔らかく、細部に色にじみが出る。
-	Object Finder	オブジェクトファインダー
-	No object found there — drag a rectangle around it	そこにオブジェクトが見つかりません — 周囲に矩形をドラッグしてください
-	Remove after each stroke	ストロークごとに削除
-	Apply the removal ({key})	削除を適用 ({key})
-	Strokes to remove: {n} (Enter applies, Esc cancels)	削除するストローク: {n}（Enter で適用、Esc で取り消し）
-	Show home recent files	ホーム画面に最近使ったファイルを表示
+	Memory Usage	メモリ使用量
+	Per-document RAM limit (MB)	ドキュメントあたりの RAM 上限 (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	搭載 RAM: {ram} MB、この上限: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	開いている各ドキュメントのピクセルと履歴を制限します。上限を超えると最も古い取り消し状態が破棄されます。
+	Applies immediately when saved. Memory is not reserved in advance.	保存するとすぐに適用されます。メモリは事前に予約されません。
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	GPU メモリが自動のとき、GPU レイヤー予算も制限します。上限は搭載 RAM の 1/4、判明していればグラフィックメモリの 3/8、最低 512 MB です。これ以上に上げても GPU 予算は増えません。
+	Use	使用
+	In Front	前面
+	Behind	背面
 
-# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
-	Load Actions…	アクションを読み込み…
-	Save Actions…	アクションを保存…
-	{name} (Photoshop)	{name}（Photoshop）
-	{message} ({note})	{message}（{note}）
-@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	{file} からアクション {n} 個を読み込みました
-@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} 個のステップにはまだ PhotoCraft の対応機能がありません
-@plural	Saved {n} action to {file}|Saved {n} actions to {file}	{file} にアクション {n} 個を保存しました
-@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Photoshop に対応するもののない {n} 個のステップを省きました
+# DDS Options (#1327)
+	DDS Options	DDS オプション
+	Compression	圧縮
+	Generate Mipmaps	ミップマップを生成
 
-	File Naming	ファイル名の付け方
-	Starting serial	開始番号
-# Actions panel: set folders, dialog toggle, Insert Stop
-	Insert Stop…	ストップを挿入…
-	Save Set…	セットを保存…
-	Message:	メッセージ:
-	Allow Continue	続行を許可
-	Show dialog during playback	再生中にダイアログを表示
-	Select an action first	先にアクションを選択してください
-	Action playback stopped	アクションの再生を停止しました
-	Step {step} is waiting for its dialog	ステップ {step} はダイアログを待っています
-@plural	{n} action|{n} actions	アクション {n} 個
-	Background (Default)	背景（既定）
-# Batch / Image Processor
-	Include All Subfolders	すべてのサブフォルダーを含める
-
-# Liquify tool names (shown via tl!(tool.label()) in the UI, so they are not found by the static scan)
-	Forward Warp	前方ワープ
-	Twirl Clockwise	時計回りに渦巻き
-	Twirl Counterclockwise	反時計回りに渦巻き
-	Pucker	収縮
-	Bloat	膨張
-	Push Left	ピクセル移動
-	Freeze Mask	ブラシでマスクを描画
-	Thaw Mask	ブラシでマスクを消去
-
-# Panel menu items and section labels passed to tl!() as variables (channels panel, paths panel, layer style)
-	Convert to Alpha Channel	アルファチャンネルに変換
-	Delete Channel	チャンネルを削除
-	Duplicate Channel	チャンネルを複製
-	Exit Quick Mask	クイックマスクを終了
-	Merge Channels…	チャンネルを結合…
-	Merge Spot Channel	スポットチャンネルを結合
-	New Channel…	新規チャンネル…
-	New Spot Channel…	新規スポットチャンネル…
-	Rename Channel…	チャンネル名を変更…
-	Split Channels	チャンネルを分割
-	Save Path	パスを保存
-	General Blending	通常の描画
-
-# Character panel tooltip (shown once the tooltip helpers in type_tool.rs pass their text through tl!)
-	Kerning: Metrics, Optical or a value in 1/1000 em (Alt+←/→ at the caret)	カーニング: メトリクス、オプティカル、または 1/1000 em 単位の値 (キャレット位置で Alt+←/→)
-
-# Glyphs panel "Show" categories (text/src/glyphs.rs; the dropdown passes them through tl!)
-	Basic Latin	基本ラテン文字
-	Latin 1	ラテン 1
-	Latin Extended-A	ラテン拡張 A
-	Latin Extended-B	ラテン拡張 B
-	Greek	ギリシャ文字
-	Cyrillic	キリル文字
-	Numbers	数字
-	Currency	通貨記号
-	Math Symbols	数学記号
-	Arrows	矢印
-
-# Dialog field labels generated from parameter names (Warp Text, Trim, Calculations, Apply Image; not seen by the tl! scanner)
-	Bend	曲げ
-	Horizontal Distortion	水平方向のゆがみ
-	Vertical Distortion	垂直方向のゆがみ
-	Based On	基準
-	Source Channel	ソースのチャンネル
-	Source Invert	ソースを反転
-	Mask Channel	マスクのチャンネル
-	Source1 Channel	ソース 1 のチャンネル
-	Source1 Invert	ソース 1 を反転
-	Source2 Channel	ソース 2 のチャンネル
-	Source2 Invert	ソース 2 を反転
-	R g b	RGB
-
-# Canvas background menu, Blend If labels and Advanced Blending options
-	Dark Gray	ダークグレー
-	Medium Gray	ミディアムグレー
-	Select Custom Color…	カスタムカラーを選択…
-	This Layer:	現在のレイヤー:
-	Underlying Layer:	下のレイヤー:
-	Blend Interior Effects as Group	内部効果をまとめて描画
-	Blend Clipped Layers as Group	クリップされたレイヤーをまとめて描画
-	Transparency Shapes Layer	透明シェイプレイヤー
-	Layer Mask Hides Effects	レイヤーマスクで効果を隠す
-	Vector Mask Hides Effects	ベクトルマスクで効果を隠す
-	Auto Add/Delete	自動追加・削除
-
-# Native Windows printing qualification
-	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	印刷設定の「鏡像」も有効にしないでください。2回反転すると元に戻ります。
-	Print Settings…	印刷設定…
-	Remember to turn off the printer's own colour management in Print Settings…	印刷設定でプリンター独自のカラーマネジメントを無効にしてください…
-	Sent to {printer}	{printer} に送信しました
-	set in Print Settings…	印刷設定で指定…
-# Restored rows (custom print paper #3820, brush presets, Vanishing Point help, brush panel menu)
-	Drag to pan · Scroll to zoom · Double-click to fit	ドラッグで移動 · スクロールでズーム · ダブルクリックで全体表示
-	Clear Brush Controls	ブラシのコントロールを消去
-	Reset All Locked Settings	ロックされた設定をすべて初期化
-	Copy Texture to Other Tools	テクスチャを他のツールにコピー
-	ICO is limited to 256 × 256 pixels	ICO は 256 × 256 ピクセルまでです
-# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
-	Use the embedded profile ({profile})	埋め込みプロファイルを使用 ({profile})
-	Convert to the working space ({profile})	作業用スペースに変換 ({profile})
-	Remember this choice for future images	今後の画像でもこの選択を使用
-	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	確認を再び表示するには、編集 › カラー設定 の Ask On Mismatch をオンにします。
-	Button Mode	ボタンモード
-	Button Mode On	ボタンモード オン
-# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
-	Darken Interface	インターフェイスを暗くする
-	Lighten Interface	インターフェイスを明るくする
-# Bevel & Emboss Technique.
-	Technique	テクニック
-	Chisel Hard	チゼルハード
-	Chisel Soft	チゼルソフト
-	Open color-less EXR as ACEScg	色空間のないEXRをACEScgとして開く
-# View › Guides › right-click a guide
-	Edit Selected Guides	選択したガイドを編集
-	Clear Selected Guides	選択したガイドを消去
-	Delete this set	このセットを削除
-	New Set…	新規セット…
-	PhotoCraft Defaults	PhotoCraft 初期設定
-	Save a list of these shortcuts as a web page	これらのショートカットの一覧を Web ページとして保存
-	Save the changes to this set	このセットへの変更を保存
-	Save these shortcuts as a .kys file	これらのショートカットを .kys ファイルとして保存
-	Save these shortcuts as a new set	これらのショートカットを新規セットとして保存
-	Set deleted.	セットを削除しました。
-	Set saved.	セットを保存しました。
-	Set:	セット：
-	Summarize…	概要…
-	There are too many sets: delete one first.	セットが多すぎます。先に 1 つ削除してください。
-	set name	セット名
-	{set} (modified)	{set}（変更あり）
-	Accept and Go to Conflict	適用して競合へ移動
-	Changes undone.	変更を取り消しました。
-	Choose a new shortcut for this command, or leave it without one.	このコマンドに新しいショートカットを選択するか、なしのままにしてください。
-	Put this command's shortcuts back as they were	このコマンドのショートカットを元に戻す
-	Take the shortcut from the other command and select it	もう一方のコマンドからショートカットを外して選択
-	Undo Changes	変更を取り消し
-	{shortcut} is reserved by the system and can't be assigned.	{shortcut} はシステムで予約されているため割り当てられません。
-	Low-Latency Drawing (vsync off, applies at next launch)	低遅延描画（垂直同期オフ、次回起動時に適用）
-# Free Transform: a new layer while the box is open (#5859)
-	Free Transform is still being applied; try again when it has finished.	自由変形を適用中です。完了してからもう一度お試しください。
-	The transform couldn't be applied.	変形を適用できませんでした。
-# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
-	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	レイヤーには {needed} の GPU メモリが必要ですが、予算で使えるのは {budget} です。
-	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	環境設定 › パフォーマンスの GPU メモリを、グラフィックカードが保持できる量（最大でメモリの 3/8）に設定してください。自動はメモリ使用量に従い、このコンピューターのメモリの4分の1とカードの 3/8 の範囲内で、メモリ量がわかるカードではドキュメント分を差し引きません。収まらない間、ステータスバーに「GPU メモリ不足」と表示されます。
-	GPU Memory Full	GPU メモリ不足
-	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	レイヤーには {needed} の GPU メモリが必要ですが、使えるのは {budget} のため、ドキュメント全体を再描画する編集は CPU で行われます。クリックして GPU メモリを設定します。
-	GPU memory budget: {budget}	GPU メモリ予算: {budget}
-	This document's layers: {needed} of {budget} for layers	このドキュメントのレイヤー: レイヤー用 {budget} のうち {needed}
-	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	このドキュメントのレイヤーには {needed} が必要ですが、使えるのは {budget} です: ドキュメント全体の再描画は CPU で行われます
-	GPU Memory (MB, 0 = Automatic)	GPU メモリ（MB、0 = 自動）
+# Graphics Adapter preference (#1885)
+	GPU adapter	GPU アダプター

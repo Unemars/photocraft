@@ -8,7 +8,8 @@
 //!
 //! The preview runs [`photocraft_algo::camera_raw::develop`] on a CPU proxy of the layer
 //! (≤ 900 px, `pixel_scale` keeps pixel radii true to the full image), recomputed when a
-//! control changes. OK runs `filter.cameraRaw` with the non-default settings, so the result is
+//! control changes: on a worker for the dialog's own controls, so a drag never waits for it, and
+//! on the UI thread for the control channel, so a reply describes its own settings. OK runs `filter.cameraRaw` with the non-default settings, so the result is
 //! one history step (or a smart filter on a smart object) and exactly replayable.
 //!
 //! Control channel: `ui.menu.invoke {"id":"filter.cameraRaw","params":{"ui":{"set":{…},
@@ -77,9 +78,6 @@ pub struct CameraRawDialog {
     /// Panels whose eye is off: the preview leaves their settings out (OK still applies them).
     pub(crate) hidden: Vec<String>,
     pub(crate) profile_browser: bool,
-    /// The White Balance tool: the next click on the preview neutralises that colour.
-    pub(crate) wb_picker: bool,
-    pub(crate) mono_tex: Option<TextureHandle>,
     pub(crate) before_after: BeforeAfter,
     /// The Before view's settings (none at first); the Before/After bar copies and swaps them.
     pub(crate) before_params: CameraRaw,
@@ -91,8 +89,8 @@ pub struct CameraRawDialog {
     /// dialog's (OK / Cancel).
     text_focus_prev: bool,
     /// Proxy pixels (straight RGBA) and size.
-    pub(crate) proxy: Vec<[f32; 4]>,
-    pub(crate) selection: Option<Vec<f32>>,
+    pub(crate) proxy: std::sync::Arc<Vec<[f32; 4]>>,
+    pub(crate) selection: Option<std::sync::Arc<Vec<f32>>>,
     pub(crate) pw: usize,
     pub(crate) ph: usize,
     full_w: usize,
@@ -106,6 +104,8 @@ pub struct CameraRawDialog {
     before_tex: Option<TextureHandle>,
     before_display_key: Option<u64>,
     pub(crate) before_histogram: RgbHistogram,
+    /// The Before view's developed proxy (empty: the proxy itself), for the scopes and readouts.
+    pub(crate) before_processed: Vec<[f32; 4]>,
     pub(crate) processed: Vec<[f32; 4]>,
     pub(crate) lab_transform: std::sync::Arc<photocraft_cms::Transform>,
     pub(crate) scope_transform: std::sync::Arc<photocraft_cms::Transform>,
@@ -118,18 +118,27 @@ pub struct CameraRawDialog {
     pub render_ms: f64,
     /// Set for the open-time dialog ([`Target::OpenRaw`]).
     pub(crate) raw_open: Option<RawOpen>,
-    /// The open-time dialog's camera tone curve: Shadows / Highlights act on the raw data there,
-    /// in linear light before this curve, and the preview undoes it to show the same.
-    raw_curve: Option<std::sync::Arc<photocraft_io::raw::RawPreview>>,
-    /// The proxy after the raw-stage sliders and [`photocraft_algo::camera_raw::develop_tonal`],
-    /// for the settings it was made with ([`photocraft_algo::camera_raw::tonal_part`]): a change
-    /// of colour, Detail or Effects settings starts from it.
+    /// How the open-time dialog's raw was developed: its raw-stage settings act on the raw data
+    /// there, in linear light before the camera's tone curve, and the preview undoes the curve
+    /// to show the same.
+    raw: Option<std::sync::Arc<photocraft_io::raw::RawPreview>>,
+    /// The proxy after the raw stage and [`photocraft_algo::camera_raw::develop_tonal`], for the
+    /// settings it was made with ([`photocraft_algo::camera_raw::tonal_part`]): a change of
+    /// colour, Detail or Effects settings starts from it. The same for the Before view.
     tonal: super::camera_raw_detail_ui::TonalCache,
+    before_tonal: super::camera_raw_detail_ui::TonalCache,
+    /// The proxy develop running on a worker ([`Self::request_render`]).
+    pending: Option<std::sync::mpsc::Receiver<Result<ProxyFrame, String>>>,
+    /// The last worker failure the status bar shows, with the preview revision it failed on.
+    preview_error: Option<(String, u64)>,
     /// Settings before each finished edit, so Ctrl+Z works inside the dialog (#4100).
     undo: Vec<CameraRaw>,
     redo: Vec<CameraRaw>,
     /// Params at pointer-down. One drag is one undo step.
     edit_origin: Option<CameraRaw>,
+    /// When the settings last changed without the pointer (the arrow keys or the wheel on a
+    /// focused slider, a typed value): a run of such changes is one undo step.
+    key_edit: Option<f64>,
 }
 
 impl CameraRawDialog {
@@ -144,9 +153,10 @@ impl CameraRawDialog {
             Target::SmartFilter(index) => Some(index),
             Target::NewFilter | Target::OpenRaw => None,
         });
-        result["openingRaw"] = json!(self.raw_open.as_ref().map(|r| json!({"name": r.name, "path": r.path, "demosaic": r.demosaic.id()})));
+        result["openingRaw"] = json!(self.raw_open.as_ref().map(|r| json!({"name": r.name, "path": r.path})));
         result["view"] = json!(navigation);
         result["sourceSize"] = json!([self.full_w, self.full_h]);
+        result["previewPending"] = json!(self.render_pending());
         result["previewApproximate"] = json!(!self.detail.ready && (self.pw != self.full_w || self.ph != self.full_h));
         result["detailPending"] = json!(self.detail.pending());
         result["detailScreenSize"] = json!(self.detail.screen_size().map(|(w, h)| [w, h]));
@@ -171,7 +181,6 @@ impl CameraRawDialog {
         result["hidden"] = json!(self.hidden);
         result["beforeAfter"] = json!(self.before_after);
         result["profileBrowser"] = json!(self.profile_browser);
-        result["whiteBalancePicker"] = json!(self.wb_picker);
         result["curveState"] = json!(self.curve_state);
         result["curveRect"] = json!(self.curve_rect.map(|r| [r.left(), r.top(), r.right(), r.bottom()]));
         result["hoverSample"] = json!(self.hover_sample(view.vectorscope));
@@ -200,67 +209,213 @@ impl CameraRawDialog {
         })
     }
 
+    /// Develops the proxy with the current settings and shows it, on this thread. The control
+    /// channel and the first frame use this, so a reply always describes its own settings; the
+    /// dialog's own controls go through [`Self::request_render`].
     pub(crate) fn render(&mut self, ctx: &egui::Context) {
+        // A render still running on the worker has older settings than this one.
+        self.pending = None;
+        let frame = self.proxy_job().run();
+        self.publish(ctx, frame);
+        self.dirty = false;
+    }
+
+    /// What the full-size preview shows: the revision its result is kept under, whether that is
+    /// the original, and the settings. A Before view with settings of its own (after Copy After
+    /// to Before, or a swap) is developed from them, under a key of its own, not shown as the
+    /// unedited original.
+    pub(crate) fn detail_view(&self) -> (u64, bool, CameraRaw) {
+        if !self.show_before {
+            return (self.preview_revision, false, crate::camera_raw_panels::visible(&self.params, &self.hidden));
+        }
+        if self.before_params.is_identity() {
+            return (self.preview_revision, true, self.params.clone());
+        }
+        let before = CameraRaw { encoding_gamma: self.params.encoding_gamma, ..self.before_params.clone() };
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&serde_json::to_string(&before).unwrap_or_default(), &mut hash);
+        ((1 << 63) | (std::hash::Hasher::finish(&hash) >> 1), false, before)
+    }
+
+    fn proxy_job(&self) -> ProxyJob {
+        let before = (self.before_tex.is_none() || self.before_dirty || self.before_display_key != Some(self.display.key))
+            .then(|| CameraRaw { encoding_gamma: self.params.encoding_gamma, ..self.before_params.clone() });
+        ProxyJob {
+            proxy: self.proxy.clone(),
+            selection: self.selection.clone(),
+            raw: self.raw.clone(),
+            params: crate::camera_raw_panels::visible(&self.params, &self.hidden),
+            before,
+            float: self.float,
+            size: (self.pw, self.ph),
+            full_w: self.full_w,
+            display: self.display.clone(),
+            tonal: self.tonal.clone(),
+            before_tonal: self.before_tonal.clone(),
+        }
+    }
+
+    fn publish(&mut self, ctx: &egui::Context, frame: ProxyFrame) {
+        match &mut self.tex {
+            Some(t) => t.set(frame.image, egui::TextureOptions::LINEAR),
+            None => self.tex = Some(ctx.load_texture("camera-raw-after", frame.image, egui::TextureOptions::LINEAR)),
+        }
+        if let Some((bp, px, image, histogram)) = frame.before {
+            match &mut self.before_tex {
+                Some(t) => t.set(image, egui::TextureOptions::LINEAR),
+                None => self.before_tex = Some(ctx.load_texture("camera-raw-before", image, egui::TextureOptions::LINEAR)),
+            }
+            self.before_histogram = histogram;
+            self.before_processed = px;
+            self.before_display_key = Some(frame.display.key);
+            // Settings changed while the worker ran are made in the next frame.
+            self.before_dirty = bp != CameraRaw { encoding_gamma: self.params.encoding_gamma, ..self.before_params.clone() };
+        }
+        (self.tonal, self.before_tonal) = (frame.tonal, frame.before_tonal);
+        self.after_histogram = frame.histogram;
+        self.histogram_ms = frame.histogram_ms;
+        self.processed = frame.px;
+        self.scope.cache = None;
+        self.render_ms = frame.ms;
+        self.preview_revision = self.preview_revision.saturating_add(1);
+    }
+
+    /// Starts developing the proxy with the current settings on a worker, unless one is already
+    /// running: then [`Self::poll_render`] starts the next one with the settings of that moment.
+    /// A slider drag never waits for the develop, which takes hundreds of milliseconds with
+    /// Shadows or Highlights set (#5964); the preview shows the latest finished frame.
+    fn request_render(&mut self, ctx: &egui::Context) {
+        if !self.dirty || self.pending.is_some() {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let job = self.proxy_job();
+            let (tx, rx) = std::sync::mpsc::channel::<Result<ProxyFrame, String>>();
+            let repaint = ctx.clone();
+            let spawned = std::thread::Builder::new().name("camera-raw-proxy".into()).spawn(move || {
+                let frame = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).map_err(|_| "Camera Raw preview failed".to_string());
+                // The dialog may have closed or rendered on its own meanwhile; then nobody listens.
+                if tx.send(frame).is_ok() {
+                    repaint.request_repaint();
+                }
+            });
+            match spawned {
+                Ok(_) => {
+                    self.pending = Some(rx);
+                    self.dirty = false;
+                }
+                // No thread to spare: develop here rather than show stale settings.
+                Err(_) => self.render(ctx),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.render(ctx);
+    }
+
+    /// Shows the worker's frame once it is done. `Err` when the develop failed; the preview keeps
+    /// the last frame then.
+    fn poll_render(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        let Some(rx) = &self.pending else { return Ok(()) };
+        let frame = match rx.try_recv() {
+            Ok(frame) => frame,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("Camera Raw preview worker stopped".to_string()),
+        };
+        self.pending = None;
+        self.publish(ctx, frame?);
+        Ok(())
+    }
+
+    pub(crate) fn render_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+}
+
+/// Everything one develop of the proxy reads, owned, so it can run off the UI thread.
+struct ProxyJob {
+    proxy: std::sync::Arc<Vec<[f32; 4]>>,
+    selection: Option<std::sync::Arc<Vec<f32>>>,
+    raw: Option<std::sync::Arc<photocraft_io::raw::RawPreview>>,
+    /// The settings with hidden panels left out.
+    params: CameraRaw,
+    /// The Before view's settings, when its frame is to be made again.
+    before: Option<CameraRaw>,
+    float: bool,
+    size: (usize, usize),
+    full_w: usize,
+    display: std::sync::Arc<photocraft_engine::display_color::CanvasDisplay>,
+    tonal: super::camera_raw_detail_ui::TonalCache,
+    before_tonal: super::camera_raw_detail_ui::TonalCache,
+}
+
+/// A developed proxy, ready to show.
+struct ProxyFrame {
+    px: Vec<[f32; 4]>,
+    histogram: RgbHistogram,
+    histogram_ms: f64,
+    image: egui::ColorImage,
+    display: std::sync::Arc<photocraft_engine::display_color::CanvasDisplay>,
+    ms: f64,
+    tonal: super::camera_raw_detail_ui::TonalCache,
+    /// The Before view's settings, pixels, image and histogram, when the job made them.
+    before: Option<(CameraRaw, Vec<[f32; 4]>, egui::ColorImage, RgbHistogram)>,
+    before_tonal: super::camera_raw_detail_ui::TonalCache,
+}
+
+impl ProxyJob {
+    fn run(mut self) -> ProxyFrame {
         let t0 = crate::gpu_canvas::now_ms();
-        let mut p = crate::camera_raw_panels::visible(&self.params, &self.hidden);
-        p.pixel_scale = (self.pw as f32 / self.full_w.max(1) as f32).min(1.0);
+        let (pw, ph) = self.size;
         // The raw stage and the tonal stages are the slow ones: kept while only colour, Detail or
         // Effects settings change.
-        let (p, tonal) = super::camera_raw_detail_ui::tonal_stage(&self.proxy, self.pw, self.ph, &p, self.raw_curve.as_deref(), &mut self.tonal);
-        let mut px = tonal.to_vec();
-        photocraft_algo::camera_raw::develop_colour(&mut px, self.pw, self.ph, &p, self.float);
+        let mut tonal = std::mem::take(&mut self.tonal);
+        let px = self.develop(&self.params, &mut tonal);
+        self.tonal = tonal;
+        let histogram_start = crate::gpu_canvas::now_ms();
+        let histogram = RgbHistogram::from_rgba(&px);
+        let histogram_ms = crate::gpu_canvas::now_ms() - histogram_start;
+        let image = CameraRawDialog::image(&px, pw, ph, &self.display);
+        // Before: its settings through the same stages and the same selection as After, so
+        // identical settings make identical halves.
+        let before = self.before.take().map(|bp| {
+            let mut tonal = std::mem::take(&mut self.before_tonal);
+            let px = self.develop(&bp, &mut tonal);
+            self.before_tonal = tonal;
+            let (image, histogram) = (CameraRawDialog::image(&px, pw, ph, &self.display), RgbHistogram::from_rgba(&px));
+            (bp, px, image, histogram)
+        });
+        ProxyFrame {
+            px,
+            histogram,
+            histogram_ms,
+            image,
+            display: self.display,
+            ms: crate::gpu_canvas::now_ms() - t0,
+            tonal: self.tonal,
+            before,
+            before_tonal: self.before_tonal,
+        }
+    }
+
+    /// The proxy developed with `p`: the raw stage of a raw open, the tonal stages through
+    /// `tonal`, the colour stages, then the selection's coverage.
+    fn develop(&self, p: &CameraRaw, tonal: &mut super::camera_raw_detail_ui::TonalCache) -> Vec<[f32; 4]> {
+        let (pw, ph) = self.size;
+        let mut p = p.clone();
+        p.pixel_scale = (pw as f32 / self.full_w.max(1) as f32).min(1.0);
+        let (colour, base) = super::camera_raw_detail_ui::tonal_stage(&self.proxy, pw, ph, &p, self.raw.as_deref(), tonal);
+        let mut px = base.to_vec();
+        photocraft_algo::camera_raw::develop_colour(&mut px, pw, ph, &colour, self.float);
         if let Some(mask) = &self.selection {
-            for ((out, original), coverage) in px.iter_mut().zip(&self.proxy).zip(mask) {
+            for ((out, original), coverage) in px.iter_mut().zip(self.proxy.iter()).zip(mask.iter()) {
                 for (out, original) in out.iter_mut().zip(original) {
                     *out = *original + (*out - *original) * coverage;
                 }
             }
         }
-        let histogram_start = crate::gpu_canvas::now_ms();
-        self.after_histogram = RgbHistogram::from_rgba(&px);
-        self.histogram_ms = crate::gpu_canvas::now_ms() - histogram_start;
-        let img = Self::image(&px, self.pw, self.ph, &self.display);
-        match &mut self.tex {
-            Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-            None => self.tex = Some(ctx.load_texture("camera-raw-after", img, egui::TextureOptions::LINEAR)),
-        }
-        if self.before_tex.is_none() || self.before_dirty || self.before_display_key != Some(self.display.key) {
-            let mut before = self.proxy.clone();
-            let mut bp = self.before_params.clone();
-            bp.pixel_scale = p.pixel_scale;
-            bp.encoding_gamma = self.params.encoding_gamma;
-            photocraft_algo::camera_raw::develop(&mut before, self.pw, self.ph, &bp, self.float);
-            self.before_histogram = RgbHistogram::from_rgba(&before);
-            let img = Self::image(&before, self.pw, self.ph, &self.display);
-            match &mut self.before_tex {
-                Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-                None => self.before_tex = Some(ctx.load_texture("camera-raw-before", img, egui::TextureOptions::LINEAR)),
-            }
-            self.before_dirty = false;
-            self.before_display_key = Some(self.display.key);
-        }
-        if self.profile_browser {
-            let gray = CameraRaw { monochrome: true, ..p.clone() };
-            let mut mono = self.proxy.clone();
-            photocraft_algo::camera_raw::develop(&mut mono, self.pw, self.ph, &gray, self.float);
-            let img = Self::image(&mono, self.pw, self.ph, &self.display);
-            match &mut self.mono_tex {
-                Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-                None => self.mono_tex = Some(ctx.load_texture("camera-raw-mono", img, egui::TextureOptions::LINEAR)),
-            }
-        }
-        self.processed = px;
-        self.scope.cache = None;
-        self.render_ms = crate::gpu_canvas::now_ms() - t0;
-        self.preview_revision = self.preview_revision.saturating_add(1);
-        self.dirty = false;
+        px
     }
-}
-
-/// Pixel values of the document → what the screen shows, as [`CameraRawDialog::image`] makes
-/// them, without copying the pixels into a buffer first (the screen-size preview's frames).
-pub(crate) fn screen_image(display: &photocraft_engine::display_color::CanvasDisplay, px: &[[f32; 4]], w: usize, h: usize) -> egui::ColorImage {
-    egui::ColorImage::from_rgba_unmultiplied([w, h], &display.rgba8_of(px))
 }
 
 /// Opens the dialog on the active layer.
@@ -276,10 +431,10 @@ enum Target {
 
 /// A raw file opened interactively, shown in Camera Raw before it is kept (as Photoshop opens
 /// raws in Adobe Camera Raw first). The document is already developed with the defaults; Open
-/// re-develops it when Temperature, Tint, Exposure, Shadows, Highlights, Clarity, Texture,
-/// Dehaze or the demosaic method changed (those act on the sensor data, see
-/// [`photocraft_io::raw::import_raw_tuned`]) and applies the other settings as one Camera Raw
-/// step, then marks the document unmodified. Cancel closes it.
+/// re-develops it when Temperature, Tint, Exposure, Shadows, Highlights, Clarity, Texture or
+/// Dehaze changed (those act on the sensor data, see [`photocraft_io::raw::import_raw_tuned`])
+/// and applies the other settings as one Camera Raw step, then marks the document unmodified.
+/// Cancel closes it.
 #[derive(Clone, Debug)]
 pub struct RawOpen {
     pub document: photocraft_doc::DocId,
@@ -287,10 +442,6 @@ pub struct RawOpen {
     pub path: Option<String>,
     /// The file, when it was opened from bytes (no path to read it again from).
     pub bytes: Option<std::sync::Arc<Vec<u8>>>,
-    /// The demosaic method the open developed it with.
-    pub developed_with: photocraft_io::raw::Demosaic,
-    /// The method chosen in the dialog: Open re-develops when it differs from `developed_with`.
-    pub demosaic: photocraft_io::raw::Demosaic,
 }
 
 /// Should an interactive open of `name` show the open-time Camera Raw dialog? `warnings` are
@@ -308,15 +459,11 @@ pub fn without_develop_note(warnings: &[String]) -> Vec<String> {
 /// Queues the open-time dialog for the active document (shown on the next frame).
 pub fn queue_open_dialog(app: &mut PhotocraftApp, name: &str, path: Option<&str>, bytes: Option<&[u8]>) {
     if let Some(st) = app.session.active() {
-        // The open developed it with the preference's method (`Preferences::import_options`).
-        let method = app.session.prefs().raw_defaults.demosaic.method();
         app.pending_raw_open = Some(RawOpen {
             document: st.doc.id,
             name: name.to_string(),
             path: path.map(str::to_string),
             bytes: bytes.map(|b| std::sync::Arc::new(b.to_vec())),
-            developed_with: method,
-            demosaic: method,
         });
     }
 }
@@ -327,7 +474,7 @@ fn open_raw(app: &mut PhotocraftApp, ctx: &egui::Context, raw: RawOpen) -> Resul
     app.session.set_active(index);
     let (layer, surf, _) = crate::distort_ui::active_pixels(app)?;
     open_pixels(app, ctx, layer, surf, CameraRaw::default(), Coverage::None, Target::OpenRaw)?;
-    let curve = match (&raw.bytes, &raw.path) {
+    let developed = match (&raw.bytes, &raw.path) {
         (Some(b), _) => Some(photocraft_io::raw::raw_preview(b)),
         #[cfg(not(target_arch = "wasm32"))]
         (None, Some(p)) => std::fs::read(p).ok().map(|b| photocraft_io::raw::raw_preview(&b)),
@@ -335,10 +482,14 @@ fn open_raw(app: &mut PhotocraftApp, ctx: &egui::Context, raw: RawOpen) -> Resul
     };
     if let Some(d) = app.camera_raw.as_mut() {
         d.layer_name = raw.name.clone();
-        let curve = curve.map(std::sync::Arc::new);
-        d.detail.raw = curve.clone();
-        d.raw_curve = curve;
-        d.tonal = Default::default();
+        let developed = developed.map(std::sync::Arc::new);
+        // The full-size preview applies the raw stage to the whole frame with it, as Open will;
+        // whatever either preview kept was made without it.
+        d.detail.set_raw(developed.clone());
+        d.raw = developed;
+        (d.tonal, d.before_tonal) = Default::default();
+        d.dirty = true;
+        d.before_dirty = true;
         d.raw_open = Some(raw);
     }
     Ok(())
@@ -389,14 +540,12 @@ fn commit_open_raw(app: &mut PhotocraftApp, params: &CameraRaw, raw: &RawOpen) -
         temperature: params.temperature,
         tint: params.tint,
         exposure: params.exposure,
-        demosaic: raw.demosaic,
         shadows: params.shadows,
         highlights: params.highlights,
         clarity: params.clarity,
         texture: params.texture,
         dehaze: params.dehaze,
     };
-    let as_opened = photocraft_io::raw::RawTuning { demosaic: raw.developed_with, ..Default::default() };
     // Without the file the raw-stage settings stay RGB adjustments, like the filter's.
     let source = match (&raw.bytes, &raw.path) {
         (Some(b), _) => Some(photocraft_engine::jobs::OpenSource::Bytes(b.clone())),
@@ -404,7 +553,7 @@ fn commit_open_raw(app: &mut PhotocraftApp, params: &CameraRaw, raw: &RawOpen) -
         (None, Some(p)) => Some(photocraft_engine::jobs::OpenSource::Path(p.clone())),
         _ => None,
     };
-    let Some(source) = source.filter(|_| tuning != as_opened) else {
+    let Some(source) = source.filter(|_| tuning != photocraft_io::raw::RawTuning::default()) else {
         return finish_open_raw(app, index, params.clone(), None, Some(raw));
     };
     app.session.set_active(index);
@@ -707,8 +856,8 @@ fn open_pixels(
         after_histogram: RgbHistogram::default(),
         preview_revision: 0,
         histogram_ms: 0.0,
-        proxy,
-        selection,
+        proxy: std::sync::Arc::new(proxy),
+        selection: selection.map(std::sync::Arc::new),
         pw,
         ph,
         full_w: w,
@@ -730,6 +879,7 @@ fn open_pixels(
         float,
         tex: None,
         before_tex: None,
+        before_processed: Vec::new(),
         before_display_key: None,
         dirty: true,
         show_before: false,
@@ -737,8 +887,6 @@ fn open_pixels(
         curve_rect: None,
         hidden: Vec::new(),
         profile_browser: false,
-        wb_picker: false,
-        mono_tex: None,
         before_after: BeforeAfter::Off,
         before_params: CameraRaw::default(),
         before_dirty: false,
@@ -748,11 +896,15 @@ fn open_pixels(
         text_focus_prev: false,
         render_ms: 0.0,
         raw_open: None,
-        raw_curve: None,
+        raw: None,
         tonal: Default::default(),
+        before_tonal: Default::default(),
+        pending: None,
+        preview_error: None,
         undo: Vec::new(),
         redo: Vec::new(),
         edit_origin: None,
+        key_edit: None,
     };
     d.render(ctx);
     app.camera_raw = Some(d);
@@ -790,7 +942,7 @@ pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Val
     };
     for (key, value) in fields {
         match key.as_str() {
-            "set" | "scope" | "view" | "layout" | "hidden" | "beforeAfter" | "demosaic" => {}
+            "set" | "scope" | "view" | "layout" | "hidden" | "beforeAfter" => {}
             "before" | "commit" | "cancel" | "profileBrowser" | "saveSettings" | "loadSettings" | "undo" | "redo" if value.is_boolean() => {}
             "before" | "commit" | "cancel" | "profileBrowser" | "saveSettings" | "loadSettings" | "undo" | "redo" => {
                 return Some(Err(format!("Camera Raw {key} must be a boolean")));
@@ -849,14 +1001,6 @@ fn menu_update(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &Value) -> Opti
         if let Err(e) = next_params.validate_changes(&d.original) {
             return Some(Err(format!("bad Camera Raw settings: {e}")));
         }
-        use photocraft_algo::camera_raw::{UPRIGHT_MODES, WHITE_BALANCE_MODES};
-        if !UPRIGHT_MODES.contains(&next_params.upright.as_str()) || !WHITE_BALANCE_MODES.contains(&next_params.white_balance.as_str()) {
-            return Some(Err(format!(
-                "bad Camera Raw settings: upright must be one of {}, whiteBalance one of {}",
-                UPRIGHT_MODES.join("|"),
-                WHITE_BALANCE_MODES.join("|")
-            )));
-        }
     }
     let scope_update = match ui.get("scope") {
         Some(scope) => match super::camera_raw_scope_ui::prepare_control(&next_params, d.selection.is_some(), &app.ui.camera_raw_scope, scope) {
@@ -914,18 +1058,7 @@ fn menu_update(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &Value) -> Opti
         },
         None => None,
     };
-    let demosaic = match ui.get("demosaic") {
-        None => None,
-        Some(_) if d.raw_open.is_none() => return Some(Err("demosaic applies only while a raw file opens".into())),
-        Some(v) => match v.as_str().and_then(photocraft_io::raw::Demosaic::from_id) {
-            Some(m) => Some(m),
-            None => return Some(Err("demosaic must be ahd, mhc or bilinear".into())),
-        },
-    };
     let d = app.camera_raw.as_mut()?;
-    if let (Some(m), Some(raw)) = (demosaic, d.raw_open.as_mut()) {
-        raw.demosaic = m;
-    }
     if let Some(view) = navigation {
         app.ui.camera_raw_preview = view;
     }
@@ -1033,6 +1166,9 @@ fn report_file_error(app: &mut PhotocraftApp, r: Result<Value, String>) {
 }
 
 const RAW_UNDO_LIMIT: usize = 40;
+/// Changes without the pointer closer together than this (seconds) make one undo step: a held
+/// arrow key, a turn of the wheel.
+const KEY_EDIT_GAP: f64 = 1.0;
 
 fn remember_edit(d: &mut CameraRawDialog) {
     if d.undo.len() == RAW_UNDO_LIMIT {
@@ -1050,7 +1186,7 @@ fn undo_edit(d: &mut CameraRawDialog) -> bool {
     }
     d.params = prev;
     d.dirty = true;
-    d.edit_origin = None;
+    (d.edit_origin, d.key_edit) = (None, None);
     true
 }
 
@@ -1062,7 +1198,7 @@ fn redo_edit(d: &mut CameraRawDialog) -> bool {
     }
     d.params = next;
     d.dirty = true;
-    d.edit_origin = None;
+    (d.edit_origin, d.key_edit) = (None, None);
     true
 }
 
@@ -1109,28 +1245,6 @@ fn commit(app: &mut PhotocraftApp) -> Result<Value, String> {
 /// Preference keys: the panel layout, and the settings of the last OK.
 const LAYOUT_KEY: &str = "filter.cameraRaw.layout";
 const PREVIOUS_KEY: &str = "filter.cameraRaw.previous";
-
-/// The open-time demosaic choice (in Detail). Photoshop's Camera Raw picks one method for every
-/// file; here it is the user's. Open re-develops with it; the preview keeps the method the file
-/// was opened with (the differences are finer than the preview's pixels).
-pub(crate) fn demosaic_row(ui: &mut egui::Ui, m: &mut photocraft_io::raw::Demosaic) {
-    use photocraft_io::raw::Demosaic;
-    let c = crate::camera_raw_style::Acr::get(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.add_space(crate::camera_raw_style::INSET_L);
-        ui.set_min_height(28.0);
-        ui.label(egui::RichText::new(tl!("Demosaic")).font(crate::camera_raw_style::label_font()).color(c.label)).on_hover_text(tl!(
-            "How the camera's colour filter mosaic is filled in. It is applied when the file opens; the preview shows the method it was opened with."
-        ));
-        ui.add_space(6.0);
-        let options = [
-            (Demosaic::Ahd, "AHD (adaptive homogeneity)", "Hirakawa–Parks: the cleanest edges and the least colour fringing, the slowest."),
-            (Demosaic::Mhc, "Malvar–He–Cutler", "Gradient-corrected interpolation: sharp and fast, with some colour fringing on fine detail."),
-            (Demosaic::Bilinear, "Bilinear", "The fastest and the softest, with colour fringing on fine detail."),
-        ];
-        widgets::dropdown_with_tooltips(ui, "camera-raw-demosaic", m, &options, 160.0);
-    });
-}
 
 /// True for an identity point curve (empty or on the diagonal).
 pub(crate) fn is_linear(c: &[[f32; 2]]) -> bool {
@@ -1194,7 +1308,10 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
     let screen = ctx.content_rect();
     let current_display = app.session.active().and_then(|st| app.session.color.canvas_display(&st.doc).ok());
     let mut action: Option<&str> = None;
-    let previous: Option<CameraRaw> = app.session.prefs().dialogs.get(PREVIOUS_KEY).and_then(|v| serde_json::from_value(v.clone()).ok());
+    // The settings of the last OK, from the preferences store: validated like a paste, since the
+    // store can be hand-edited.
+    let previous: Option<CameraRaw> =
+        app.session.prefs().dialogs.get(PREVIOUS_KEY).and_then(|v| serde_json::from_value::<CameraRaw>(v.clone()).ok()).filter(|p| p.validate().is_ok());
     egui::Area::new(egui::Id::new("camera-raw-dialog")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let Some(d) = app.camera_raw.as_mut() else { return };
         history_keys(d, ctx);
@@ -1202,6 +1319,8 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
         if pointer && d.edit_origin.is_none() {
             d.edit_origin = Some(d.params.clone());
         }
+        // No pointer edit open: what the keyboard or the wheel changes this frame starts here.
+        let frame_origin = d.edit_origin.is_none().then(|| d.params.clone());
         if let Some(display) = &current_display
             && display.key != d.display.key
         {
@@ -1210,8 +1329,22 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
         }
         d.curve_rect = None;
         d.scope.vectorscope_rect = None;
-        if d.dirty {
-            d.render(ctx);
+        if let Err(e) = d.poll_render(ctx) {
+            d.preview_error = Some((e.clone(), d.preview_revision));
+            app.ui.status = e;
+            app.ui.status_error = true;
+        }
+        d.request_render(ctx);
+        // A newer frame means the failure is over: take its message down, unless something else
+        // has reported since.
+        if let Some((e, revision)) = &d.preview_error
+            && *revision != d.preview_revision
+        {
+            if app.ui.status_error && app.ui.status == *e {
+                app.ui.status.clear();
+                app.ui.status_error = false;
+            }
+            d.preview_error = None;
         }
         let (full, _) = ui.allocate_exact_size(screen.size(), Sense::click());
         let painter = ui.painter().clone();
@@ -1273,7 +1406,6 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
             _ => (None, view),
         };
         let (r, response, panning, zoom_box) = super::camera_raw_preview_ui::interact(&mut preview, navigation, after_view, size, &mut scope.sampler_tool);
-        let shown = crate::camera_raw_panels::visible(&d.params, &d.hidden);
         let tex = if d.show_before && mode == BeforeAfter::Off { d.before_tex.as_ref() } else { d.tex.as_ref() };
         let uv = ERect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         if let Some(tex) = tex {
@@ -1282,7 +1414,8 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
             if mode == BeforeAfter::Off {
                 // Raw-stage sliders included: the worker retones the full frame as Open does.
                 let detail_needed = r.width() * ctx.pixels_per_point() > d.pw as f32 || r.height() * ctx.pixels_per_point() > d.ph as f32;
-                d.detail.paint(&preview, r, d.preview_revision, d.show_before, &shown, detail_needed, &d.display);
+                let (revision, original, params) = d.detail_view();
+                d.detail.paint(&preview, r, revision, original, &params, detail_needed, &d.display);
                 if d.detail.pending() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(50));
                 }
@@ -1326,17 +1459,6 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
                 let s = Stroke::new(1.0, Color32::from_white_alpha(if i % 4 == 0 { 70 } else { 35 }));
                 preview.painter().vline(r.left() + f * r.width(), g.y_range(), s);
                 preview.painter().hline(g.x_range(), r.top() + f * r.height(), s);
-            }
-        }
-        // White Balance tool: a click neutralises the colour under the pointer.
-        if d.wb_picker {
-            response.clone().on_hover_cursor(egui::CursorIcon::Crosshair);
-            if response.clicked()
-                && let Some(p) = response.interact_pointer_pos()
-                && r.contains(p)
-            {
-                let u = ((p - r.min) / r.size()).clamp(vec2(0.0, 0.0), vec2(1.0, 1.0));
-                d.pick_white_balance([u.x, u.y]);
             }
         }
         if let Some(region) = zoom_box {
@@ -1423,6 +1545,10 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
         if d.dirty {
             ctx.request_repaint();
         }
+        if d.render_pending() {
+            // The worker asks for a repaint when it is done; this catches a missed wake-up.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         // Footer: OK (Open for a raw being opened) and Cancel.
         let foot = ERect::from_min_max(pos2(full.left(), full.bottom() - FOOTER_H), full.max);
         let ok_label = if d.target == Target::OpenRaw { tl!("Open") } else { tl!("OK") };
@@ -1452,6 +1578,18 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
             let edited = std::mem::replace(&mut d.params, origin);
             remember_edit(d);
             d.params = edited;
+            d.key_edit = None;
+        } else if let Some(origin) = frame_origin
+            && origin != d.params
+        {
+            // A change without the pointer is a step of its own, one per run of them.
+            let now = ctx.input(|i| i.time);
+            if d.key_edit.is_none_or(|t| now - t > KEY_EDIT_GAP) {
+                let edited = std::mem::replace(&mut d.params, origin);
+                remember_edit(d);
+                d.params = edited;
+            }
+            d.key_edit = Some(now);
         }
     });
     super::camera_raw_scope_ui::persist(app, ctx);
@@ -1597,18 +1735,13 @@ fn preview_bar(
         // Right to left: Copy Before to After, Swap, Copy After to Before (Camera Raw's order
         // reads ⇤ ⇄ ⇥ from the left).
         if crate::icons::button(&mut right, "chevrons-right", 30.0, false, tl!("Copy Before settings to After (Alt+Shift+P)")).clicked() {
-            d.params = CameraRaw { pixel_scale: d.params.pixel_scale, encoding_gamma: d.params.encoding_gamma, ..d.before_params.clone() };
-            d.dirty = true;
+            d.compare(Compare::BeforeToAfter);
         }
         if crate::icons::button(&mut right, "arrow-left-right", 30.0, false, tl!("Swap Before and After settings (Ctrl+Alt+Shift+P)")).clicked() {
-            let after = d.params.clone();
-            d.params = CameraRaw { pixel_scale: after.pixel_scale, encoding_gamma: after.encoding_gamma, ..d.before_params.clone() };
-            d.before_params = after;
-            (d.dirty, d.before_dirty) = (true, true);
+            d.compare(Compare::Swap);
         }
         if crate::icons::button(&mut right, "chevrons-left", 30.0, false, tl!("Copy After settings to Before (Ctrl+Alt+P)")).clicked() {
-            d.before_params = d.params.clone();
-            (d.dirty, d.before_dirty) = (true, true);
+            d.compare(Compare::AfterToBefore);
         }
     }
     if d.detail.pending() {
@@ -1619,9 +1752,33 @@ fn preview_bar(
     }
 }
 
+/// The Before/After bar's settings actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Compare {
+    BeforeToAfter,
+    Swap,
+    AfterToBefore,
+}
+
+impl CameraRawDialog {
+    fn compare(&mut self, action: Compare) {
+        let after = self.params.clone();
+        let before = CameraRaw { pixel_scale: after.pixel_scale, encoding_gamma: after.encoding_gamma, ..self.before_params.clone() };
+        match action {
+            Compare::BeforeToAfter => self.params = before,
+            Compare::Swap => (self.params, self.before_params) = (before, after),
+            Compare::AfterToBefore => self.before_params = after,
+        }
+        self.dirty = true;
+        self.before_dirty |= action != Compare::BeforeToAfter;
+    }
+}
+
 /// Camera Raw's keys (not while a text field has focus): Q cycles Before/After, Y shows Left /
-/// Right, P (or \) toggles the original, V B&W, E B M Shift+E Shift+P pick the tool, Ctrl+U Auto,
-/// Ctrl+K Preferences, Esc cancels and Enter is OK.
+/// Right, P (or \) toggles the original, Alt+Shift+P / Ctrl+Alt+Shift+P / Ctrl+Alt+P copy or swap
+/// the Before/After settings, V B&W, E B M Shift+E Shift+P pick the tool, Ctrl+U Auto,
+/// Ctrl+K Preferences, Esc cancels and Enter is OK (unless a menu or Preferences is open: Esc
+/// closes that).
 fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&str>) {
     let Some(d) = app.camera_raw.as_mut() else { return };
     let focused = ctx.text_edit_focused();
@@ -1631,6 +1788,9 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
     }
     use egui::{Key, Modifiers};
     let layout = &mut app.ui.camera_raw_layout;
+    // A menu shown this frame (zoom, More, Before/After) already closed itself on that Esc; the
+    // key is not the dialog's.
+    let menu_open = ctx.any_popup_open() || egui::Popup::is_any_open(ctx);
     ctx.input_mut(|i| {
         if i.consume_key(Modifiers::NONE, Key::Q) {
             d.before_after = d.before_after.next();
@@ -1638,55 +1798,52 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
         if i.consume_key(Modifiers::NONE, Key::Y) {
             d.before_after = if d.before_after == BeforeAfter::LeftRight { BeforeAfter::Off } else { BeforeAfter::LeftRight };
         }
-        if i.consume_key(Modifiers::NONE, Key::P) || i.consume_key(Modifiers::NONE, Key::Backslash) {
-            d.show_before = !d.show_before;
-        }
-        // Keys change the settings without a pointer drag: each is an undo step of its own.
-        if i.consume_key(Modifiers::NONE, Key::V) {
-            remember_edit(d);
-            d.params.monochrome = !d.params.monochrome;
-            d.dirty = true;
-        }
-        if i.consume_key(Modifiers::COMMAND, Key::U) {
-            let was = d.params.clone();
-            d.auto_tone();
-            if d.params != was {
-                let toned = std::mem::replace(&mut d.params, was);
-                remember_edit(d);
-                d.params = toned;
-            }
-            d.dirty = true;
-        }
         if i.consume_key(Modifiers::COMMAND, Key::K) {
             d.prefs_open = true;
         }
         if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G) {
             layout.grid = !layout.grid;
         }
+        // A pattern also matches the key with extra Shift or Alt (`Modifiers::matches_logically`),
+        // so the most specific shortcuts go first: the Before/After bar's Ctrl+Alt+Shift+P (swap)
+        // before Ctrl+Alt+P (After to Before), and Alt+Shift+P (Before to After) before Shift+P.
+        // They act only while Before/After is shown, as the bar's buttons do, but are always taken
+        // so they never fall through to Presets or the Before toggle.
+        for (mods, action) in [
+            (Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT, Compare::Swap),
+            (Modifiers::COMMAND | Modifiers::ALT, Compare::AfterToBefore),
+            (Modifiers::ALT | Modifiers::SHIFT, Compare::BeforeToAfter),
+        ] {
+            if i.consume_key(mods, Key::P) && d.before_after != BeforeAfter::Off {
+                d.compare(action);
+            }
+        }
+        // Then Shift+E (Red Eye) before E (Edit), Shift+P (Presets) before P (toggle Before).
         for (key, mods, tool) in [
+            (Key::E, Modifiers::SHIFT, "redEye"),
+            (Key::P, Modifiers::SHIFT, "presets"),
             (Key::E, Modifiers::NONE, "edit"),
             (Key::B, Modifiers::NONE, "remove"),
             (Key::M, Modifiers::NONE, "masking"),
-            (Key::E, Modifiers::SHIFT, "redEye"),
-            (Key::P, Modifiers::SHIFT, "presets"),
         ] {
             if i.consume_key(mods, key) {
                 layout.tool = tool.into();
             }
         }
-        if i.consume_key(Modifiers::NONE, Key::I) {
-            d.wb_picker = !d.wb_picker;
+        if i.consume_key(Modifiers::NONE, Key::P) || i.consume_key(Modifiers::NONE, Key::Backslash) {
+            d.show_before = !d.show_before;
         }
-        if i.consume_key(Modifiers::NONE, Key::Escape) {
-            if d.wb_picker {
-                d.wb_picker = false;
+        if i.consume_key(Modifiers::NONE, Key::Escape) && !menu_open {
+            // Esc closes what is open on top of the dialog first; only the bare dialog cancels.
+            if d.prefs_open {
+                d.prefs_open = false;
             } else if d.profile_browser {
                 d.profile_browser = false;
             } else {
                 *action = Some("cancel");
             }
         }
-        if i.consume_key(Modifiers::NONE, Key::Enter) && !d.prefs_open {
+        if i.consume_key(Modifiers::NONE, Key::Enter) && !d.prefs_open && !menu_open {
             *action = Some("ok");
         }
     });
@@ -1700,94 +1857,6 @@ fn persist_layout(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let Ok(value) = serde_json::to_value(&app.ui.camera_raw_layout) else { return };
     if app.session.prefs().dialogs.get(LAYOUT_KEY) != Some(&value) {
         app.session.prefs.edit(|p| p.dialogs.insert(LAYOUT_KEY.into(), value));
-    }
-}
-
-/// Linear-light white balance for a colour `rgb` (display encoded): Temperature and Tint that
-/// make it neutral, inverting [`photocraft_algo::camera_raw::white_balance_gains`].
-pub(crate) fn neutralising_white_balance(rgb: [f32; 3]) -> Option<(f32, f32)> {
-    let lin = rgb.map(photocraft_color::convert::srgb_to_linear);
-    let [r, g, b] = lin;
-    if !(r > 1e-4 && g > 1e-4 && b > 1e-4) {
-        return None;
-    }
-    // Gains ∝ 1/channel; with Camera Raw's slider gains [1 + 0.35 t, 1 − 0.25 n, 1 − 0.35 t]
-    // (up to a common factor), k = 1 − 0.25 n follows from the red and blue ratios.
-    let k = 2.0 / (g * (1.0 / r + 1.0 / b));
-    let t = (k * g / r - 1.0) / 0.35 * 100.0;
-    let n = (1.0 - k) / 0.25 * 100.0;
-    (t.is_finite() && n.is_finite()).then(|| (t.clamp(-100.0, 100.0).round(), n.clamp(-100.0, 100.0).round()))
-}
-
-impl CameraRawDialog {
-    /// White Balance tool: neutralise the original colour at `uv` (0..1 over the image).
-    pub(crate) fn pick_white_balance(&mut self, uv: [f32; 2]) {
-        let x = ((uv[0] * self.pw as f32) as usize).min(self.pw.saturating_sub(1));
-        let y = ((uv[1] * self.ph as f32) as usize).min(self.ph.saturating_sub(1));
-        // Average a small block of the original so noise does not decide the balance.
-        let mut acc = [0.0f32; 3];
-        let mut n = 0.0;
-        for yy in y.saturating_sub(1)..=(y + 1).min(self.ph.saturating_sub(1)) {
-            for xx in x.saturating_sub(1)..=(x + 1).min(self.pw.saturating_sub(1)) {
-                if let Some(q) = self.proxy.get(yy * self.pw + xx) {
-                    for c in 0..3 {
-                        acc[c] += q[c];
-                    }
-                    n += 1.0;
-                }
-            }
-        }
-        if n > 0.0
-            && let Some((t, tint)) = neutralising_white_balance(acc.map(|v| v / n))
-        {
-            self.params.temperature = t;
-            self.params.tint = tint;
-            self.params.white_balance = "custom".into();
-            self.dirty = true;
-        }
-    }
-
-    /// White balance › Auto: the gray-world balance of the original (mean colour made neutral).
-    pub(crate) fn auto_white_balance(&mut self) {
-        let mut acc = [0.0f64; 3];
-        for q in &self.proxy {
-            for c in 0..3 {
-                acc[c] += photocraft_color::convert::srgb_to_linear(q[c].clamp(0.0, 1.0)) as f64;
-            }
-        }
-        let n = self.proxy.len().max(1) as f64;
-        let mean = acc.map(|v| photocraft_color::convert::linear_to_srgb((v / n) as f32));
-        if let Some((t, tint)) = neutralising_white_balance(mean) {
-            self.params.temperature = t;
-            self.params.tint = tint;
-        }
-        self.params.white_balance = "auto".into();
-        self.dirty = true;
-    }
-
-    /// Edit › Auto: textbook auto tone from the original's luminance histogram (median toward
-    /// middle gray, whites and blacks to the ends, contrast for flat images). Camera Raw's own
-    /// Auto is a trained model; this is a plain starting point.
-    pub(crate) fn auto_tone(&mut self) {
-        let mut l: Vec<f32> = self.proxy.iter().map(|q| (0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]).clamp(0.0, 1.0)).filter(|v| v.is_finite()).collect();
-        if l.is_empty() {
-            return;
-        }
-        l.sort_by(f32::total_cmp);
-        let at = |f: f32| l.get(((l.len() - 1) as f32 * f) as usize).copied().unwrap_or(0.5);
-        let (lo, med, hi) = (at(0.005), at(0.5), at(0.995));
-        let mean = l.iter().sum::<f32>() / l.len() as f32;
-        let sd = (l.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / l.len() as f32).sqrt();
-        let lin = photocraft_color::convert::srgb_to_linear;
-        let exposure = ((lin(0.45) / lin(med.max(0.02))).log2() * 0.7).clamp(-2.0, 2.0);
-        let p = &mut self.params;
-        p.exposure = (exposure * 20.0).round() / 20.0;
-        p.whites = if hi < 0.97 { ((0.97 - hi) * 220.0).clamp(0.0, 50.0).round() } else { 0.0 };
-        p.blacks = if lo > 0.03 { (-(lo - 0.03) * 300.0).clamp(-50.0, 0.0).round() } else { 0.0 };
-        p.contrast = if sd < 0.2 { ((0.2 - sd) * 150.0).clamp(0.0, 25.0).round() } else { 0.0 };
-        p.highlights = if hi > 0.98 { -30.0 } else { 0.0 };
-        p.shadows = if at(0.1) < 0.08 { 20.0 } else { 0.0 };
-        self.dirty = true;
     }
 }
 
@@ -1896,6 +1965,173 @@ mod tests {
         assert_eq!(app.session.active().unwrap().history.past_len(), steps);
     }
 
+    /// A layer with tonal variation, a selection over part of it and the dialog open on it.
+    fn worker_app() -> (PhotocraftApp, egui::Context) {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let ctx = egui::Context::default();
+        app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        app.run("edit.fill", json!({"color": "#406080"})).unwrap();
+        app.run("select.rect", json!({"x": 0, "y": 0, "width": 40, "height": 30})).unwrap();
+        open(&mut app, &ctx).unwrap();
+        (app, ctx)
+    }
+
+    fn finish_worker(d: &mut CameraRawDialog, ctx: &egui::Context) {
+        for _ in 0..2000 {
+            d.poll_render(ctx).unwrap();
+            if !d.render_pending() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the Camera Raw preview worker never finished");
+    }
+
+    /// The dialog's controls develop the proxy on a worker (#5964): the frame it shows is the one
+    /// the UI thread would have developed, and settings changed while it runs are developed next.
+    #[test]
+    fn worker_preview_matches_the_synchronous_render_and_ends_on_the_latest_settings() {
+        let (mut app, ctx) = worker_app();
+        let d = app.camera_raw.as_mut().unwrap();
+        assert!(d.selection.is_some());
+        let revision = d.preview_revision;
+        d.params.exposure = 1.0;
+        d.dirty = true;
+        d.request_render(&ctx);
+        assert!(d.render_pending() && !d.dirty);
+        // A drag moves on while the first develop runs; the request waits for it.
+        d.params.highlights = -60.0;
+        d.params.shadows = 45.0;
+        d.dirty = true;
+        d.request_render(&ctx);
+        finish_worker(d, &ctx);
+        assert_eq!(d.preview_revision, revision + 1);
+        assert!(d.dirty, "the newer settings are still to be developed");
+        d.request_render(&ctx);
+        finish_worker(d, &ctx);
+        assert_eq!(d.preview_revision, revision + 2);
+        let (from_worker, histogram) = (d.processed.clone(), d.after_histogram.channels);
+        d.render(&ctx);
+        assert_eq!(d.processed, from_worker, "the worker develops exactly what the UI thread does");
+        assert_eq!(d.after_histogram.channels, histogram);
+        assert!(d.describe(&app.ui.camera_raw_scope, &app.ui.camera_raw_preview)["previewPending"] == false);
+    }
+
+    /// The control channel renders on its own thread so its reply describes its settings; a worker
+    /// still running with older settings must not replace that frame afterwards.
+    #[test]
+    fn a_stale_worker_never_replaces_a_newer_synchronous_render() {
+        let (mut app, ctx) = worker_app();
+        let d = app.camera_raw.as_mut().unwrap();
+        d.params.highlights = -80.0;
+        d.dirty = true;
+        d.request_render(&ctx);
+        assert!(d.render_pending());
+        let reply = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"highlights": 0, "exposure": -1.0}}})).unwrap().unwrap();
+        assert_eq!(reply["previewPending"], false);
+        let d = app.camera_raw.as_mut().unwrap();
+        let (revision, shown) = (d.preview_revision, d.processed.clone());
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        d.poll_render(&ctx).unwrap();
+        assert_eq!((d.preview_revision, &d.processed), (revision, &shown));
+        d.render(&ctx);
+        assert_eq!(d.processed, shown, "the frame shown is the one for the control channel's settings");
+    }
+
+    /// Dragging a slider in the dialog itself never develops on the UI thread: the frame that
+    /// takes the change returns with the develop still running, and the preview catches up.
+    #[test]
+    fn a_dialog_edit_develops_off_the_ui_thread() {
+        let (mut app, ctx) = worker_app();
+        PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::Pro);
+        let frame = |app: &mut PhotocraftApp| {
+            ctx.run_ui(egui::RawInput::default(), |ui| show(app, ui.ctx())).textures_delta.clear();
+        };
+        frame(&mut app);
+        let d = app.camera_raw.as_mut().unwrap();
+        let revision = d.preview_revision;
+        d.params.highlights = -60.0;
+        d.dirty = true;
+        frame(&mut app);
+        let d = app.camera_raw.as_mut().unwrap();
+        assert!(d.render_pending() && d.preview_revision == revision, "the frame returned before the develop finished");
+        finish_worker(d, &ctx);
+        assert_eq!(d.preview_revision, revision + 1);
+        assert!(!d.dirty);
+        frame(&mut app);
+        assert!(!app.ui.status_error, "{}", app.ui.status);
+    }
+
+    /// A failed worker develop shows its error until a later frame is published, and never takes
+    /// down an error something else reported meanwhile.
+    #[test]
+    fn a_worker_failure_is_reported_until_the_next_frame() {
+        let (mut app, ctx) = worker_app();
+        PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::Pro);
+        let frame = |app: &mut PhotocraftApp| {
+            ctx.run_ui(egui::RawInput::default(), |ui| show(app, ui.ctx())).textures_delta.clear();
+        };
+        let fail = |app: &mut PhotocraftApp| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            tx.send(Err("Camera Raw preview failed".to_string())).unwrap();
+            let d = app.camera_raw.as_mut().unwrap();
+            d.pending = Some(rx);
+            d.dirty = false;
+        };
+        let edit = |app: &mut PhotocraftApp, exposure: f32| {
+            let d = app.camera_raw.as_mut().unwrap();
+            d.params.exposure = exposure;
+            d.dirty = true;
+        };
+        frame(&mut app);
+        fail(&mut app);
+        frame(&mut app);
+        assert!(app.ui.status_error && app.ui.status == "Camera Raw preview failed", "{}", app.ui.status);
+        // No new frame yet: the error stays.
+        frame(&mut app);
+        assert!(app.ui.status_error);
+        edit(&mut app, 0.5);
+        frame(&mut app);
+        finish_worker(app.camera_raw.as_mut().unwrap(), &ctx);
+        frame(&mut app);
+        assert!(!app.ui.status_error && app.ui.status.is_empty(), "{}", app.ui.status);
+
+        fail(&mut app);
+        frame(&mut app);
+        app.ui.status = "something else failed".into();
+        edit(&mut app, 1.0);
+        frame(&mut app);
+        finish_worker(app.camera_raw.as_mut().unwrap(), &ctx);
+        frame(&mut app);
+        assert!(app.ui.status_error && app.ui.status == "something else failed", "{}", app.ui.status);
+    }
+
+    /// Before settings copied from After show exactly the After pixels, on a raw open too: both
+    /// views develop through the same proxy job (the raw stage, the tonal and colour halves, then
+    /// the selection's coverage).
+    #[test]
+    fn copied_before_settings_show_the_after_pixels() {
+        let (mut app, ctx) = worker_app();
+        let d = app.camera_raw.as_mut().unwrap();
+        assert!(d.selection.is_some());
+        d.raw = Some(std::sync::Arc::new(photocraft_io::raw::RawPreview::with_curve(vec![[0.0, 0.0], [0.18, 0.3], [1.0, 1.0]])));
+        (d.params.shadows, d.params.exposure) = (40.0, 0.5);
+        d.compare(Compare::AfterToBefore);
+        d.render(&ctx);
+        assert!(!d.before_dirty);
+        assert_eq!(d.before_processed, d.processed);
+        assert_eq!(d.before_histogram.channels, d.after_histogram.channels);
+        assert_ne!(d.before_processed, *d.proxy, "the settings do change the pixels");
+        // The scopes read the Before view's own pixels.
+        d.show_before = true;
+        let p = [0.25, 0.25];
+        assert_eq!(d.readout(p, false), {
+            d.show_before = false;
+            d.readout(p, false)
+        });
+    }
+
     #[test]
     fn smart_filter_double_click_edits_the_stored_camera_raw_filter_in_its_own_dialog() {
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
@@ -1960,27 +2196,106 @@ mod tests {
         assert!(app.camera_raw.is_none());
     }
 
-    /// The open-time preview shows what Open makes: Exposure acts with the raw stage before the
-    /// camera curve (as the re-develop applies it to the sensor data), not on the developed
-    /// pixels after it.
+    #[test]
+    fn dialog_drives_the_engine() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let ctx = egui::Context::default();
+        app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        app.run("edit.fill", json!({"color": "#808080"})).unwrap();
+        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({})).unwrap().unwrap();
+        assert_eq!(r["proxy"], json!([64, 48]));
+        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": 1.0, "vignetteAmount": -40}}})).unwrap().unwrap();
+        assert_eq!(r["params"]["exposure"], 1.0);
+        assert_eq!(app.camera_raw.as_ref().unwrap().command_params(), json!({"exposure": 1.0, "vignetteAmount": -40.0}));
+        let before = app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().surface().unwrap().rgba(32, 24);
+        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
+        assert!(app.camera_raw.is_none());
+        let after = app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().surface().unwrap().rgba(32, 24);
+        assert!(after[0] > before[0] + 0.1, "{before:?} → {after:?}");
+        // Cancel leaves the document alone.
+        menu(&mut app, &ctx, "filter.cameraRaw", &json!({})).unwrap().unwrap();
+        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"cancel": true}})).unwrap().unwrap();
+        assert_eq!(r["cancelled"], true);
+        assert!(menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": "x"}}})).unwrap().is_err());
+    }
+
+    /// An app whose importer is the real one, opening a synthetic DNG.
+    fn raw_app() -> (PhotocraftApp, Vec<u8>) {
+        use photocraft_raw::testgen::{DngSpec, mosaic, scene};
+        let services = crate::Services {
+            import: Some(Box::new(|name: &str, b: &[u8], depth: usize| {
+                photocraft_io::import_with_svg_group_depth(name, b, depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
+            })),
+            ..Default::default()
+        };
+        let (w, h) = (48, 32);
+        let mut spec = DngSpec::cfa(w, h, mosaic(&scene(w, h), w, [0, 1, 1, 2], 0, 30000));
+        spec.as_shot_neutral = Some([0.5, 1.0, 0.7]);
+        (PhotocraftApp::new(photocraft_engine::Session::new(), services), spec.build())
+    }
+
+    fn layer_px(app: &PhotocraftApp) -> Vec<[f32; 4]> {
+        let st = app.session.active().unwrap();
+        let s = st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap();
+        let (w, h) = (st.doc.size.width as i32, st.doc.size.height as i32);
+        let mut px = vec![[0.0f32; 4]; (w * h) as usize];
+        s.read_rgba_into(Rect::new(0, 0, w, h), &mut px);
+        px
+    }
+
+    /// The open-time preview shows what Open makes: Exposure, and Temperature / Tint with the
+    /// file's as-shot white balance, act with the raw stage before the camera curve (as the
+    /// re-develop applies them to the sensor data), not on the developed pixels after it. Where the
+    /// default develop clipped (here a baseline exposure of +1 pushes the brighter half past
+    /// white), lowering Exposure recovers detail in Open, which develops the sensor data again; the
+    /// preview starts from the clipped pixels and cannot. There the two differ, by design (#3817
+    /// review).
     #[test]
     fn the_raw_open_preview_matches_what_open_makes() {
-        let (mut app, dng) = raw_app();
-        let ctx = egui::Context::default();
-        app.open_bytes("IMG_0005.dng", &dng).unwrap();
-        let raw = app.pending_raw_open.take().unwrap();
-        open_raw(&mut app, &ctx, raw).unwrap();
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": 1.2, "shadows": 40}}})).unwrap().unwrap();
-        let d = app.camera_raw.as_ref().unwrap();
-        assert_eq!((d.pw, d.ph), (d.full_w, d.full_h), "the proxy is the whole frame");
-        let preview = d.processed.clone();
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
-        let opened = pixels(&app);
-        let err =
-            preview.iter().flat_map(|p| [p[0], p[1], p[2]]).zip(opened.chunks(4).flat_map(|p| [p[0], p[1], p[2]])).map(|(a, b)| (a - b).abs()).sum::<f32>()
-                / (preview.len() * 3) as f32;
-        assert!(err < 0.02, "preview vs Open: mean difference {err}");
+        let dng = {
+            use photocraft_raw::testgen::{DngSpec, mosaic, scene};
+            let (w, h) = (48, 32);
+            let mut spec = DngSpec::cfa(w, h, mosaic(&scene(w, h), w, [0, 1, 1, 2], 0, 30000));
+            (spec.as_shot_neutral, spec.baseline_exposure) = (Some([0.5, 1.0, 0.7]), Some(1.0));
+            spec.build()
+        };
+        for set in [json!({"exposure": 1.2, "shadows": 40}), json!({"temperature": 30, "tint": -10, "exposure": 0.3}), json!({"exposure": -1.0})] {
+            let (mut app, _) = raw_app();
+            let ctx = egui::Context::default();
+            app.open_bytes("IMG_0005.dng", &dng).unwrap();
+            let developed = layer_px(&app);
+            let raw = app.pending_raw_open.take().unwrap();
+            open_raw(&mut app, &ctx, raw).unwrap();
+            menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": set}})).unwrap().unwrap();
+            let d = app.camera_raw.as_ref().unwrap();
+            assert_eq!((d.pw, d.ph), (d.full_w, d.full_h), "the proxy is the whole frame");
+            let preview = d.processed.clone();
+            menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
+            let opened = layer_px(&app);
+            // Mean difference over the pixels whose brightest developed channel is in `range`.
+            let (preview, opened, developed) = (&preview, &opened, &developed);
+            let mean = |range: std::ops::Range<f32>| {
+                let errors: Vec<f32> = (0..preview.len())
+                    .filter(|&i| range.contains(&developed[i][..3].iter().fold(0.0f32, |a, v| a.max(*v))))
+                    .flat_map(|i| (0..3).map(move |c| (preview[i][c] - opened[i][c]).abs()))
+                    .collect();
+                assert!(!errors.is_empty(), "{set}: no pixels in {range:?}");
+                errors.iter().sum::<f32>() / errors.len() as f32
+            };
+            let unclipped = mean(0.0..0.95);
+            assert!(unclipped < PREVIEW_TOLERANCE, "{set}: preview vs Open, mean difference {unclipped}");
+            if set["exposure"] == -1.0 {
+                let clipped = mean(0.999..2.0);
+                assert!(clipped > 20.0 * PREVIEW_TOLERANCE, "{set}: Open recovers what the default develop clipped, the preview cannot ({clipped})");
+            }
+        }
     }
+
+    /// Mean difference (of 1) the open-time preview may have from Open where the default develop
+    /// clipped nothing: a few times what it measures (4e-6 to 1.5e-5, under a hundredth of a level
+    /// of 255; 4e-3 where it clipped).
+    const PREVIEW_TOLERANCE: f32 = 5e-5;
 
     #[test]
     fn colour_changes_reuse_the_tonal_stages_with_the_same_preview() {
@@ -2025,94 +2340,33 @@ mod tests {
         }
     }
 
-    /// The preview shows the pixels through the canvas's document → monitor conversion: a raw opens
-    /// in ProPhoto RGB, whose numbers on an sRGB screen look washed out.
+    /// Copy After to Before on a raw open: the two views have the same settings and show the same
+    /// pixels (Before goes through the raw stage, the tonal stages and the selection as After
+    /// does), and the full-size preview of Before develops its settings, not the original
+    /// (#3817 review).
     #[test]
-    fn the_preview_shows_a_prophoto_raw_as_the_canvas_does() {
+    fn identical_before_and_after_settings_show_identical_halves() {
         let (mut app, dng) = raw_app();
         let ctx = egui::Context::default();
-        app.open_bytes("IMG_0004.dng", &dng).unwrap();
+        app.open_bytes("IMG_0006.dng", &dng).unwrap();
         let raw = app.pending_raw_open.take().unwrap();
         open_raw(&mut app, &ctx, raw).unwrap();
-        let canvas = app.session.color.canvas_display(&app.session.active().unwrap().doc).unwrap();
-        let d = app.camera_raw.as_ref().unwrap();
-        let shown = &d.display;
-        assert_eq!(shown.key, canvas.key);
-        assert!(!shown.is_identity(), "ProPhoto on an sRGB monitor is converted");
-        let px = [[0.6f32, 0.3, 0.2, 1.0]];
-        assert_eq!(screen_image(shown, &px, 1, 1).pixels[0], CameraRawDialog::image(&px, 1, 1, shown).pixels[0]);
-    }
-
-    #[test]
-    fn dialog_drives_the_engine() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
-        let ctx = egui::Context::default();
-        app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
-        app.run("layer.new.layer", json!({})).unwrap();
-        app.run("edit.fill", json!({"color": "#808080"})).unwrap();
-        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({})).unwrap().unwrap();
-        assert_eq!(r["proxy"], json!([64, 48]));
-        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": 1.0, "vignetteAmount": -40}}})).unwrap().unwrap();
-        assert_eq!(r["params"]["exposure"], 1.0);
-        assert_eq!(app.camera_raw.as_ref().unwrap().command_params(), json!({"exposure": 1.0, "vignetteAmount": -40.0}));
-        let before = app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().surface().unwrap().rgba(32, 24);
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
-        assert!(app.camera_raw.is_none());
-        let after = app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().surface().unwrap().rgba(32, 24);
-        assert!(after[0] > before[0] + 0.1, "{before:?} → {after:?}");
-        // Cancel leaves the document alone.
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({})).unwrap().unwrap();
-        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"cancel": true}})).unwrap().unwrap();
-        assert_eq!(r["cancelled"], true);
-        assert!(menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": "x"}}})).unwrap().is_err());
-    }
-
-    /// An app whose importer is the real one, opening a synthetic DNG.
-    fn raw_app() -> (PhotocraftApp, Vec<u8>) {
-        use photocraft_raw::testgen::{DngSpec, mosaic, scene};
-        let services = crate::Services {
-            import: Some(Box::new(|name: &str, b: &[u8], opts: &photocraft_io::ImportOptions| {
-                photocraft_io::import_with_options(name, b, opts).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
-            })),
-            ..Default::default()
-        };
-        let (w, h) = (48, 32);
-        let mut spec = DngSpec::cfa(w, h, mosaic(&scene(w, h), w, [0, 1, 1, 2], 0, 30000));
-        spec.as_shot_neutral = Some([0.5, 1.0, 0.7]);
-        (PhotocraftApp::new(photocraft_engine::Session::new(), services), spec.build())
-    }
-
-    fn mean_red(app: &PhotocraftApp) -> f32 {
-        let st = app.session.active().unwrap();
-        let s = st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap();
-        (0..8).map(|i| s.rgba(4 + i * 4, 16)[0]).sum::<f32>() / 8.0
-    }
-
-    #[test]
-    fn raw_opens_in_camera_raw_and_open_redevelops() {
-        let (mut app, dng) = raw_app();
-        let ctx = egui::Context::default();
-        let warnings = app.open_bytes("IMG_0001.dng", &dng).unwrap();
-        assert!(warnings.iter().any(|w| w.contains(photocraft_io::raw::DEVELOPED_NOTE)), "{warnings:?}");
-        // A raw has no embedded profile (ProPhoto RGB is the space it is developed into), so Ask
-        // When Opening (on by default) has nothing to ask about.
-        assert!(app.ui.dialogs.is_empty(), "no profile prompt for a raw");
-        let raw = app.pending_raw_open.take().expect("a raw open queues the dialog");
-        open_raw(&mut app, &ctx, raw).unwrap();
-        let d = app.camera_raw.as_ref().unwrap();
-        assert_eq!(d.target, Target::OpenRaw);
-        assert_eq!(d.describe(&app.ui.camera_raw_scope, &app.ui.camera_raw_preview)["openingRaw"]["name"], "IMG_0001.dng");
-        let before = mean_red(&app);
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": 1.0, "temperature": 30, "contrast": 20}}})).unwrap().unwrap();
-        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
-        assert_eq!(r["redeveloped"], true, "{r}");
-        assert!(r.get("filter").is_some(), "contrast is applied as a Camera Raw step: {r}");
-        assert!(app.camera_raw.is_none());
-        assert_eq!(app.session.documents().len(), 1);
-        let st = app.session.active().unwrap();
-        assert_eq!(st.saved_revision, st.revision, "Open leaves the document unmodified");
-        assert_eq!(st.doc.depth, photocraft_color::SampleType::U16);
-        assert!(mean_red(&app) > before + 0.05, "{before} → {}", mean_red(&app));
+        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": 0.5, "shadows": 40, "temperature": 20, "saturation": 15}}}))
+            .unwrap()
+            .unwrap();
+        let d = app.camera_raw.as_mut().unwrap();
+        d.before_params = d.params.clone();
+        (d.dirty, d.before_dirty) = (true, true);
+        d.render(&ctx);
+        assert!(!d.before_dirty);
+        assert_eq!(d.before_processed, d.processed);
+        assert_eq!(d.before_histogram.channels, d.after_histogram.channels);
+        d.show_before = true;
+        let (revision, original, params) = d.detail_view();
+        assert!(!original && revision != d.preview_revision, "Before's own settings, under a key of their own");
+        assert_eq!(params, CameraRaw { encoding_gamma: d.params.encoding_gamma, ..d.params.clone() });
+        d.before_params = CameraRaw::default();
+        assert_eq!(d.detail_view(), (d.preview_revision, true, d.params.clone()), "the original");
     }
 
     /// Timing harness, not a test: `PHOTOCRAFT_BENCH_RAW=x.NEF cargo test -p photocraft-ui-egui --lib
@@ -2172,71 +2426,9 @@ mod tests {
             let _ = d.detail.develop_now(&d.params);
             eprintln!("{name:26} proxy {proxy:7.1} ms   screen {screen:7.1} ms   full-res {:7.0} ms", ms(t));
         }
-        // Stage by stage, on the proxy and on the full frame.
-        let d = app.camera_raw.as_ref().unwrap();
-        let curve: Vec<[f32; 2]> = d.raw_curve.as_ref().map(|r| r.curve.clone()).unwrap_or_default();
-        let full: Vec<[f32; 4]> = {
-            let st = app.session.active().unwrap();
-            let s = st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap();
-            let mut v = vec![[0.0f32; 4]; d.full_w * d.full_h];
-            s.read_rgba_into(photocraft_geom::Rect::new(0, 0, d.full_w as i32, d.full_h as i32), &mut v);
-            v
-        };
-        let sizes = [("proxy", d.proxy.clone(), d.pw, d.ph), ("full", full, d.full_w, d.full_h)];
-        let gamma = d.params.encoding_gamma;
-        let tones = [
-            ("retone shadows+highlights", photocraft_io::raw::Tone { shadows: 40.0, highlights: -40.0, ..Default::default() }),
-            ("retone clarity", photocraft_io::raw::Tone { clarity: 20.0, ..Default::default() }),
-            ("retone texture", photocraft_io::raw::Tone { texture: 15.0, ..Default::default() }),
-            ("retone dehaze", photocraft_io::raw::Tone { dehaze: 10.0, ..Default::default() }),
-        ];
-        let stages = [
-            ("wb+exposure", json!({"temperature": 15, "exposure": 0.3})),
-            ("whites/blacks", json!({"whites": 10, "blacks": -10})),
-            ("contrast", json!({"contrast": 15})),
-            ("vibrance/saturation", json!({"vibrance": 25, "saturation": 10})),
-            ("hsl", json!({"hslSat": [0, 20, 0, 0, 0, -15, 0, 0]})),
-            ("grading", json!({"gradeShadows": {"hue": 220, "sat": 20, "lum": 0}})),
-            ("sharpen", json!({"sharpenAmount": 40})),
-            ("noise reduction", json!({"noiseLuminance": 20})),
-            ("shadows (rgb)", json!({"shadows": 40})),
-            ("clarity (rgb)", json!({"clarity": 20})),
-            ("dehaze (rgb)", json!({"dehaze": 10})),
-        ];
-        for (label, px, w, h) in &sizes {
-            for (name, tone) in &tones {
-                let mut v = px.clone();
-                let t = Instant::now();
-                photocraft_io::raw::retone(&mut v, *w, *h, &curve, *tone);
-                eprintln!("{label:5} {name:28} {:8.1} ms", ms(t));
-            }
-            for (name, set) in &stages {
-                let mut p: CameraRaw = serde_json::from_value(set.clone()).unwrap();
-                p.encoding_gamma = gamma;
-                p.pixel_scale = *w as f32 / d.full_w as f32;
-                let mut v = px.clone();
-                let t = Instant::now();
-                photocraft_algo::camera_raw::develop(&mut v, *w, *h, &p, false);
-                eprintln!("{label:5} {name:28} {:8.1} ms", ms(t));
-            }
-        }
         let t = Instant::now();
         let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
         eprintln!("commit {:.0} ms {r}", ms(t));
-        // The Camera Raw Filter on the developed layer (no raw stage): its own Shadows / Highlights.
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({})).unwrap().unwrap();
-        for (name, set) in [
-            ("filter shadows", json!({"shadows": 40})),
-            ("filter drag shadows", json!({"shadows": 45})),
-            ("filter + highlights", json!({"highlights": -40})),
-            ("filter drag highlights", json!({"highlights": -45})),
-            ("filter drag shadows", json!({"shadows": 50})),
-            ("filter colour", json!({"saturation": 15})),
-        ] {
-            let t = Instant::now();
-            menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": set}})).unwrap().unwrap();
-            eprintln!("{name:26} proxy {:7.1} ms", ms(t));
-        }
     }
 
     /// Fidelity check, not a test: the open-time preview against what Open makes for a real raw
@@ -2251,8 +2443,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.background_jobs = false;
         app.open_bytes("bench.NEF", &bytes).unwrap();
-        let raw = app.pending_raw_open.take().unwrap();
-        let mut raw = raw;
+        let mut raw = app.pending_raw_open.take().unwrap();
         raw.path = Some(path.clone());
         open_raw(&mut app, &ctx, raw).unwrap();
         menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": set}})).unwrap().unwrap();
@@ -2270,7 +2461,7 @@ mod tests {
             let mut acc = vec![[0.0f32; 5]; pw];
             for dy in 0..k {
                 let y = (py * k + dy).min(fh - 1) as i32;
-                s.read_rgba_into(photocraft_geom::Rect::new(0, y, fw as i32, y + 1), &mut row);
+                s.read_rgba_into(Rect::new(0, y, fw as i32, y + 1), &mut row);
                 for (x, q) in row.iter().enumerate() {
                     let a = &mut acc[x / k];
                     for c in 0..4 {
@@ -2290,45 +2481,37 @@ mod tests {
         eprintln!("preview vs Open: mean {:.4} ({:.1} of 255), p95 {:.4}, settings {set}", mean, mean * 255.0, sorted[sorted.len() * 95 / 100]);
     }
 
-    fn pixels(app: &PhotocraftApp) -> Vec<f32> {
+    fn mean_red(app: &PhotocraftApp) -> f32 {
         let st = app.session.active().unwrap();
         let s = st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap();
-        (0..32).flat_map(|y| (0..48).map(move |x| (x, y))).flat_map(|(x, y)| s.rgba(x, y)).collect()
+        (0..8).map(|i| s.rgba(4 + i * 4, 16)[0]).sum::<f32>() / 8.0
     }
 
     #[test]
-    fn the_demosaic_method_is_chosen_at_open() {
+    fn raw_opens_in_camera_raw_and_open_redevelops() {
         let (mut app, dng) = raw_app();
         let ctx = egui::Context::default();
-        app.open_bytes("IMG_0002.dng", &dng).unwrap();
-        let ahd = pixels(&app);
-        let raw = app.pending_raw_open.take().unwrap();
+        let warnings = app.open_bytes("IMG_0001.dng", &dng).unwrap();
+        assert!(warnings.iter().any(|w| w.contains(photocraft_io::raw::DEVELOPED_NOTE)), "{warnings:?}");
+        // A raw has no embedded profile (ProPhoto RGB is the space it is developed into), so Ask
+        // When Opening (on by default) has nothing to ask about.
+        assert!(app.ui.dialogs.is_empty(), "no profile prompt for a raw");
+        let raw = app.pending_raw_open.take().expect("a raw open queues the dialog");
         open_raw(&mut app, &ctx, raw).unwrap();
-        let d = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"demosaic": "bilinear"}})).unwrap().unwrap();
-        assert_eq!(d["openingRaw"]["demosaic"], "bilinear");
-        assert!(menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"demosaic": "amaze"}})).unwrap().is_err());
+        let d = app.camera_raw.as_ref().unwrap();
+        assert_eq!(d.target, Target::OpenRaw);
+        assert_eq!(d.describe(&app.ui.camera_raw_scope, &app.ui.camera_raw_preview)["openingRaw"]["name"], "IMG_0001.dng");
+        let before = mean_red(&app);
+        menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"set": {"exposure": 1.0, "temperature": 30, "contrast": 20}}})).unwrap().unwrap();
         let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
-        assert_eq!(r["redeveloped"], true, "another method re-develops: {r}");
-        assert!(r.get("filter").is_none(), "nothing else to apply: {r}");
-        let bilinear = pixels(&app);
-        assert!(ahd.iter().zip(&bilinear).any(|(a, b)| (a - b).abs() > 1e-3), "bilinear differs from AHD");
+        assert_eq!(r["redeveloped"], true, "{r}");
+        assert!(r.get("filter").is_some(), "contrast is applied as a Camera Raw step: {r}");
+        assert!(app.camera_raw.is_none());
+        assert_eq!(app.session.documents().len(), 1);
         let st = app.session.active().unwrap();
-        assert_eq!(st.saved_revision, st.revision);
-
-        // The preference sets the method of the open itself; Open with it changes nothing.
-        app.run("prefs.set", json!({"path": "rawDefaults.demosaic", "value": "bilinear"})).unwrap();
-        app.open_bytes("IMG_0003.dng", &dng).unwrap();
-        assert_eq!(pixels(&app), bilinear, "developed with the preference's method");
-        let raw = app.pending_raw_open.take().unwrap();
-        open_raw(&mut app, &ctx, raw).unwrap();
-        let d = app.camera_raw.as_ref().unwrap().describe(&app.ui.camera_raw_scope, &app.ui.camera_raw_preview);
-        assert_eq!(d["openingRaw"]["demosaic"], "bilinear");
-        let r = menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"commit": true}})).unwrap().unwrap();
-        assert_eq!(r["redeveloped"], false, "{r}");
-
-        // Only the open-time dialog has the choice.
-        menu(&mut app, &ctx, "filter.cameraRaw", &json!({})).unwrap().unwrap();
-        assert!(menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"demosaic": "ahd"}})).unwrap().is_err());
+        assert_eq!(st.saved_revision, st.revision, "Open leaves the document unmodified");
+        assert_eq!(st.doc.depth, photocraft_color::SampleType::U16);
+        assert!(mean_red(&app) > before + 0.05, "{before} → {}", mean_red(&app));
     }
 
     #[test]
@@ -2338,7 +2521,7 @@ mod tests {
         app.open_bytes("IMG_0002.dng", &dng).unwrap();
         let raw = app.pending_raw_open.take().unwrap();
         open_raw(&mut app, &ctx, raw).unwrap();
-        assert!(app.camera_raw.as_ref().unwrap().raw_curve.is_some(), "the preview knows how the raw was developed");
+        assert!(app.camera_raw.as_ref().unwrap().raw.is_some(), "the preview knows how the raw was developed");
         let mean = |px: &[[f32; 4]]| px.iter().map(|p| p[0] + p[1] + p[2]).sum::<f32>() / px.len() as f32;
         let preview_before = mean(&app.camera_raw.as_ref().unwrap().processed);
         let before = mean_red(&app);
@@ -2431,21 +2614,7 @@ mod tests {
         app.open_bytes("c.dng", &dng).unwrap();
         assert!(app.pending_raw_open.is_none());
         // A non-raw never queues the dialog; a closed document is an error, not a panic.
-        assert!(
-            open_raw(
-                &mut app,
-                &ctx,
-                RawOpen {
-                    document: photocraft_doc::DocId(u64::MAX),
-                    name: "x".into(),
-                    path: None,
-                    bytes: None,
-                    developed_with: Default::default(),
-                    demosaic: Default::default()
-                }
-            )
-            .is_err()
-        );
+        assert!(open_raw(&mut app, &ctx, RawOpen { document: photocraft_doc::DocId(u64::MAX), name: "x".into(), path: None, bytes: None }).is_err());
     }
 
     #[test]

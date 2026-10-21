@@ -544,58 +544,88 @@ fn guided(i: &[f32], p: &[f32], w: usize, h: usize, r: usize, eps: f32) -> Vec<f
 /// carry the black point, so the change's map is computed from the luminance after it rather
 /// than before; that only differs in the deepest shadows.
 pub fn retone(px: &mut [[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], tone: Tone) {
-    retone_with(px, w, h, curve, tone, None, &mut None);
+    retone_with(px, w, h, curve, tone, None, None);
 }
 
-/// [`retone`], keeping in `cache` what does not depend on the sliders' values, for previews that
-/// retone the same pixels again: `px` must hold the pixels `cache` was filled from (it is filled
-/// again when they, the size or the curve change). `pre`, when set, is a linear ProPhoto 3×3
-/// applied first, as the develop stage applies Exposure and the white balance before the tone
-/// stage (see `white_balance_of`).
-pub fn retone_with(px: &mut [[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], tone: Tone, pre: Option<[[f32; 3]; 3]>, cache: &mut Option<RetoneCache>) {
+/// [`retone`] with `pre`, when set, a linear ProPhoto 3×3 applied first, as the develop stage
+/// applies Exposure and the white balance before the tone stage (see `white_balance_of`). With
+/// `cache`, keeps there what does not depend on the sliders' values, for previews that retone the
+/// same pixels again: it is used only for exactly the pixels, size and curve it was filled from
+/// (every pixel is hashed) and filled again otherwise. Without, nothing outlives the call and no
+/// linear copy of the image is made (full-size previews of 16–60 MP frames).
+pub fn retone_with(
+    px: &mut [[f32; 4]],
+    w: usize,
+    h: usize,
+    curve: &[[f32; 2]],
+    tone: Tone,
+    pre: Option<[[f32; 3]; 3]>,
+    cache: Option<&mut Option<RetoneCache>>,
+) {
     if (tone.is_neutral() && pre.is_none()) || w == 0 || h == 0 || px.len() < w * h {
         return;
     }
     let px = &mut px[..w * h];
-    let print = fingerprint(px);
-    if cache.as_ref().is_none_or(|c| c.w != w || c.h != h || c.curve != curve || c.print != print) {
-        *cache = Some(RetoneCache::new(px, w, h, curve, print));
-    }
-    let Some(c) = cache.as_mut() else { return };
+    let mut once;
+    let c = match cache {
+        Some(slot) => {
+            let hash = content_hash(px, w);
+            if slot.as_ref().is_none_or(|c| c.w != w || c.h != h || c.curve != curve || c.hash != Some(hash)) {
+                *slot = Some(RetoneCache::new(px, w, h, curve, Some(hash)));
+            }
+            let Some(c) = slot.as_mut() else { return };
+            c
+        }
+        None => {
+            once = RetoneCache::new(px, w, h, curve, None);
+            &mut once
+        }
+    };
     c.set_pre(pre);
-    c.analyse(tone);
+    c.analyse(px, tone);
+    let c = &*c;
     let haze = c.haze_map(tone.dehaze);
     let work = c.work_change(tone);
     let texture = c.texture_change(tone);
-    let (lin, lum, forward) = (&c.lin, &c.lum, &c.forward);
     let rows = crate::par::band_rows(w);
     crate::par::chunks_mut(px, rows * w, |band, chunk| {
         for (j, p) in chunk.iter_mut().enumerate() {
             let i = band * rows * w + j;
             let (x, y) = (i % w, i / w);
-            let mut l = lin[i];
+            // Each pixel reads only itself, before it is written.
+            let mut l = c.lin(i, p);
             if let Some(hz) = &haze {
                 l = hz.apply(x, y, l);
             }
-            let change = [&work, &texture].iter().filter_map(|u| u.as_ref()).map(|u| u.change(w, h, x, y, lum[i])).sum::<f32>();
+            let change = [&work, &texture].iter().filter_map(|u| u.as_ref()).map(|u| u.change(w, h, x, y, c.lum[i])).sum::<f32>();
             let g = change.clamp(-6.0, 6.0).exp2();
             for k in 0..3 {
-                p[k] = encode(forward, l[k] * g);
+                p[k] = encode(&c.forward, l[k] * g);
             }
         }
     });
 }
 
-/// A cheap check that the pixels are the ones a [`RetoneCache`] was filled from.
-fn fingerprint(px: &[[f32; 4]]) -> u64 {
-    let step = (px.len() / 251).max(1);
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ px.len() as u64;
-    for p in px.iter().step_by(step) {
-        for v in &p[..3] {
-            h = (h ^ u64::from(v.to_bits())).wrapping_mul(0x0100_0000_01b3);
+/// A hash of every pixel's colour and the size: what a kept [`RetoneCache`] was filled from. Rows
+/// in parallel bands, combined in order.
+fn content_hash(px: &[[f32; 4]], w: usize) -> u64 {
+    const PRIME: u64 = 0x0100_0000_01b3;
+    let rows = crate::par::band_rows(w);
+    let h = px.len().div_ceil(w.max(1));
+    let bands = crate::par::map(h.div_ceil(rows), |band| {
+        let mut x: u64 = 0xcbf2_9ce4_8422_2325;
+        for p in &px[band * rows * w..((band + 1) * rows * w).min(px.len())] {
+            for v in &p[..3] {
+                x = (x ^ u64::from(v.to_bits())).wrapping_mul(PRIME);
+            }
         }
+        x
+    });
+    let mut x: u64 = 0xcbf2_9ce4_8422_2325 ^ (px.len() as u64) ^ ((w as u64) << 32);
+    for b in bands {
+        x = (x ^ b).wrapping_mul(PRIME).rotate_left(29);
     }
-    h
+    x
 }
 
 /// Steps of [`RetoneCache::forward`], over `s = √v`.
@@ -614,18 +644,20 @@ pub struct RetoneCache {
     w: usize,
     h: usize,
     curve: Vec<[f32; 2]>,
-    print: u64,
-    /// Linear ProPhoto RGB per pixel (the curve undone), then `pre`.
-    lin: Vec<[f32; 3]>,
-    /// The pixels' linear values with the curve undone, before `pre`.
+    /// [`content_hash`] of the pixels it was filled from; `None` for one call's use.
+    hash: Option<u64>,
+    /// The pixels' linear values (the curve undone), before `pre`, when kept; empty for one
+    /// call's use, which undoes the curve from each pixel as it reads it.
     undone: Vec<[f32; 3]>,
     pre: Option<[[f32; 3]; 3]>,
-    /// Linear → gamma-1.8 code through the curve, [`FORWARD_STEPS`] + 1 entries over `√v`.
+    /// Linear → gamma-1.8 code through the curve, [`FORWARD_STEPS`] + 2 entries over `√v` (the
+    /// first [`FORWARD_STEPS`] + 1 also invert it).
     forward: Vec<f32>,
     haze: Option<HazeBase>,
-    /// The Dehaze amount `lum`, `work` and `texture` are for.
+    /// The Dehaze amount `lum`, `work` and `texture` are for (`None`: no `lum` yet).
     dehaze: Option<f32>,
-    /// Linear luminance per pixel after Dehaze.
+    /// Linear luminance per pixel after Dehaze, only while Shadows, Highlights, Clarity or Texture
+    /// is set.
     lum: Vec<f32>,
     work: Option<WorkBase>,
     texture: Option<TextureBase>,
@@ -698,31 +730,16 @@ impl HazeMap<'_> {
 }
 
 impl RetoneCache {
-    fn new(px: &[[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], print: u64) -> Self {
+    /// For `px`; `hash` set keeps the linear values for later calls.
+    fn new(px: &[[f32; 4]], w: usize, h: usize, curve: &[[f32; 2]], hash: Option<u64>) -> Self {
         let forward_of = |v: f32| crate::develop::tone(curve, v.clamp(0.0, 1.0)).clamp(0.0, 1.0).powf(1.0 / 1.8);
-        // The inverse from a table over s = √v (the encoding is steep near 0).
-        const N: usize = 4096;
-        let table: Vec<f32> = (0..=N).map(|i| forward_of((i as f32 / N as f32).powi(2))).collect();
-        let inverse = |e: f32| {
-            let i = table.partition_point(|t| *t < e).clamp(1, N);
-            let (a, b) = (table[i - 1], table[i]);
-            let f = if b > a { ((e - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
-            (((i - 1) as f32 + f) / N as f32).powi(2)
-        };
-        let rows = crate::par::band_rows(w);
-        let lin: Vec<[f32; 3]> = crate::par::map(h.div_ceil(rows), |band| {
-            let (y0, y1) = (band * rows, ((band + 1) * rows).min(h));
-            px[y0 * w..y1 * w].iter().map(|p| [inverse(p[0]), inverse(p[1]), inverse(p[2])]).collect::<Vec<_>>()
-        })
-        .concat();
-        let forward = (0..=FORWARD_STEPS + 1).map(|i| forward_of((i.min(FORWARD_STEPS) as f32 / FORWARD_STEPS as f32).powi(2))).collect();
-        RetoneCache {
+        let forward: Vec<f32> = (0..=FORWARD_STEPS + 1).map(|i| forward_of((i.min(FORWARD_STEPS) as f32 / FORWARD_STEPS as f32).powi(2))).collect();
+        let mut c = RetoneCache {
             w,
             h,
             curve: curve.to_vec(),
-            print,
-            undone: lin.clone(),
-            lin,
+            hash,
+            undone: Vec::new(),
             pre: None,
             forward,
             haze: None,
@@ -730,53 +747,88 @@ impl RetoneCache {
             lum: Vec::new(),
             work: None,
             texture: None,
+        };
+        if hash.is_some() {
+            let rows = crate::par::band_rows(w);
+            let this = &c;
+            let undone = crate::par::map(h.div_ceil(rows), |band| {
+                let (y0, y1) = (band * rows, ((band + 1) * rows).min(h));
+                px[y0 * w..y1 * w].iter().map(|p| this.undo(p)).collect::<Vec<_>>()
+            })
+            .concat();
+            c.undone = undone;
+        }
+        c
+    }
+
+    /// The curve undone: linear values of a developed pixel, from the table over `s = √v` (the
+    /// encoding is steep near 0).
+    fn undo(&self, p: &[f32; 4]) -> [f32; 3] {
+        let table = &self.forward[..=FORWARD_STEPS];
+        let inverse = |e: f32| {
+            let i = table.partition_point(|t| *t < e).clamp(1, FORWARD_STEPS);
+            let (a, b) = (table[i - 1], table[i]);
+            let f = if b > a { ((e - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
+            (((i - 1) as f32 + f) / FORWARD_STEPS as f32).powi(2)
+        };
+        [inverse(p[0]), inverse(p[1]), inverse(p[2])]
+    }
+
+    /// Pixel `i`'s linear ProPhoto RGB after `pre` (`p` its developed value).
+    fn lin(&self, i: usize, p: &[f32; 4]) -> [f32; 3] {
+        let v = if self.undone.is_empty() { self.undo(p) } else { self.undone[i] };
+        match &self.pre {
+            Some(m) => [0, 1, 2].map(|r| (m[r][0] * v[0] + m[r][1] * v[1] + m[r][2] * v[2]).max(0.0)),
+            None => v,
         }
     }
 
-    /// Applies `pre` to the linear values; a change drops everything computed from them.
+    /// Takes `pre`; a change drops everything computed from the linear values.
     fn set_pre(&mut self, pre: Option<[[f32; 3]; 3]>) {
         if self.pre == pre {
             return;
         }
-        self.lin = match pre {
-            Some(m) => self.undone.iter().map(|v| [0, 1, 2].map(|r| (m[r][0] * v[0] + m[r][1] * v[1] + m[r][2] * v[2]).max(0.0))).collect(),
-            None => self.undone.clone(),
-        };
         self.pre = pre;
-        (self.haze, self.dehaze, self.work, self.texture) = (None, None, None, None);
+        (self.haze, self.dehaze, self.lum, self.work, self.texture) = (None, None, Vec::new(), None, None);
     }
 
-    /// Fills in what `tone` needs: the haze base, the luminance for its Dehaze, the bases and
-    /// the unit fits of the sliders it sets.
-    fn analyse(&mut self, tone: Tone) {
+    /// Fills in what `tone` needs for `px` (the pixels it was made for): the haze base, the
+    /// luminance for its Dehaze (only when a luminance slider is set), the bases and the unit fits
+    /// of the sliders it sets.
+    fn analyse(&mut self, px: &[[f32; 4]], tone: Tone) {
         let (w, h) = (self.w, self.h);
-        if tone.dehaze != 0.0 && self.haze.is_none() {
-            let (sw, sh, small) = reduce(w, h, WORK_SIDE, |i| self.lin[i]);
-            self.haze = Some(HazeBase { sw, sh, air: airlight(&small), smooth: None });
+        let smooth = tone.dehaze > 0.0 && self.haze.as_ref().is_none_or(|hz| hz.smooth.is_none());
+        if (tone.dehaze != 0.0 && self.haze.is_none()) || smooth {
+            // One work copy for both the airlight and the dark channel.
+            let (sw, sh, small) = reduce(w, h, WORK_SIDE, |i| self.lin(i, &px[i]));
+            let hz = self.haze.get_or_insert_with(|| HazeBase { sw, sh, air: airlight(&small), smooth: None });
+            if smooth {
+                hz.smooth = Some(haze_smooth(&small, hz.sw, hz.sh, hz.air));
+            }
         }
-        if tone.dehaze > 0.0
-            && let Some(hz) = self.haze.as_mut()
-            && hz.smooth.is_none()
-        {
-            let (_, _, small) = reduce(w, h, WORK_SIDE, |i| self.lin[i]);
-            hz.smooth = Some(haze_smooth(&small, hz.sw, hz.sh, hz.air));
+        if tone.work_neutral() && tone.texture == 0.0 {
+            // Only `pre` and Dehaze: no luminance map to make.
+            return;
         }
         let dehaze = tone.dehaze.clamp(-100.0, 100.0);
         if self.dehaze != Some(dehaze) {
             let haze = self.haze_map(dehaze);
             let y = crate::color::rgb_to_xyz(crate::color::ROMM, crate::color::D50_XY)[1].map(|v| v as f32);
             let rows = crate::par::band_rows(w);
-            let lin = &self.lin;
-            self.lum = crate::par::map(h.div_ceil(rows), |band| {
+            let this = &*self;
+            let lum = crate::par::map(h.div_ceil(rows), |band| {
                 let (y0, y1) = (band * rows, ((band + 1) * rows).min(h));
                 (y0 * w..y1 * w)
                     .map(|i| {
-                        let l = haze.as_ref().map_or(lin[i], |hz| hz.apply(i % w, i / w, lin[i]));
+                        let l = this.lin(i, &px[i]);
+                        let l = haze.as_ref().map_or(l, |hz| hz.apply(i % w, i / w, l));
                         y[0] * l[0] + y[1] * l[1] + y[2] * l[2]
                     })
                     .collect::<Vec<_>>()
             })
             .concat();
+            drop(haze);
+            self.lum = lum;
             self.dehaze = Some(dehaze);
             self.work = None;
             self.texture = None;
@@ -1176,7 +1228,7 @@ mod tests {
             Tone { shadows: 0.0, highlights: 10.0, clarity: 0.0, texture: 0.0, dehaze: 15.0 },
         ] {
             let (mut kept, mut fresh) = (px.clone(), px.clone());
-            retone_with(&mut kept, w, h, &curve, tone, None, &mut cache);
+            retone_with(&mut kept, w, h, &curve, tone, None, Some(&mut cache));
             retone(&mut fresh, w, h, &curve, tone);
             assert_eq!(kept, fresh, "{tone:?}");
         }
@@ -1184,7 +1236,7 @@ mod tests {
         let mut other: Vec<[f32; 4]> = px.iter().map(|p| [p[0] * 0.5, p[1] * 0.5, p[2] * 0.5, 1.0]).collect();
         let mut fresh = other.clone();
         let tone = Tone { shadows: 50.0, ..Tone::NEUTRAL };
-        retone_with(&mut other, w, h, &curve, tone, None, &mut cache);
+        retone_with(&mut other, w, h, &curve, tone, None, Some(&mut cache));
         retone(&mut fresh, w, h, &curve, tone);
         assert_eq!(other, fresh);
         // A linear matrix first (Exposure and the white balance): kept and fresh agree, and with
@@ -1192,17 +1244,41 @@ mod tests {
         let pre = Some([[2.0, 0.0, 0.0], [0.0, 1.5, 0.1], [0.0, 0.0, 1.2]]);
         for tone in [Tone { shadows: 50.0, ..Tone::NEUTRAL }, Tone::NEUTRAL, Tone { shadows: 50.0, dehaze: 20.0, ..Tone::NEUTRAL }] {
             let (mut kept, mut fresh) = (px.clone(), px.clone());
-            retone_with(&mut kept, w, h, &curve, tone, pre, &mut cache);
-            retone_with(&mut fresh, w, h, &curve, tone, pre, &mut None);
+            retone_with(&mut kept, w, h, &curve, tone, pre, Some(&mut cache));
+            retone_with(&mut fresh, w, h, &curve, tone, pre, None);
             assert_eq!(kept, fresh, "{tone:?}");
         }
         let mut gained = px.clone();
-        retone_with(&mut gained, w, h, &curve, Tone::NEUTRAL, Some([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]), &mut None);
+        retone_with(&mut gained, w, h, &curve, Tone::NEUTRAL, Some([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]), None);
         let enc = |v: f32| crate::develop::tone(&curve, v.clamp(0.0, 1.0)).clamp(0.0, 1.0).powf(1.0 / 1.8);
         let dark = px.iter().position(|p| p[0] < 0.3).unwrap();
         // Undo the curve by search, then double.
         let undo = |e: f32| (0..=100_000).map(|i| (i as f32 / 100_000.0).powi(2)).min_by(|a, b| (enc(*a) - e).abs().total_cmp(&(enc(*b) - e).abs())).unwrap();
         let want = enc(2.0 * undo(px[dark][0]));
         assert!((gained[dark][0] - want).abs() < 2e-3, "{} vs {want}", gained[dark][0]);
+    }
+
+    /// Pixels changed upstream in one small patch (a hue band, a corner) fill the cache again:
+    /// every pixel counts, not a sample of them (#3817 review).
+    #[test]
+    fn a_change_to_a_few_pixels_refills_the_retone_cache() {
+        let (w, h) = (300, 200);
+        let curve = [[0.01, 0.03], [0.1, 0.27], [0.5, 0.75], [1.0, 1.0]];
+        let px = scene(w, h);
+        let tone = Tone { shadows: 60.0, clarity: 30.0, ..Tone::NEUTRAL };
+        let mut cache = None;
+        let mut first = px.clone();
+        retone_with(&mut first, w, h, &curve, tone, None, Some(&mut cache));
+        let mut edited = px.clone();
+        for y in 101..104 {
+            for x in 151..154 {
+                edited[y * w + x] = [0.9, 0.2, 0.1, 1.0];
+            }
+        }
+        let (mut kept, mut fresh) = (edited.clone(), edited);
+        retone_with(&mut kept, w, h, &curve, tone, None, Some(&mut cache));
+        retone(&mut fresh, w, h, &curve, tone);
+        assert_eq!(kept, fresh);
+        assert_ne!(kept[102 * w + 152], first[102 * w + 152]);
     }
 }

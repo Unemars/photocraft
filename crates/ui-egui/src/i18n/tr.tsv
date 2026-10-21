@@ -2092,6 +2092,11 @@
 	Mixer Brush Tool	Karıştırıcı Fırça Aracı
 	Color Replacement Tool	Renk Değiştirme Aracı
 	Wet	Islaklık
+	Current Brush Load	Geçerli Fırça Yükü
+	Load Brush	Fırçayı Yükle
+	Clean Brush	Fırçayı Temizle
+	Load the brush after each stroke	Her vuruştan sonra fırçayı yükle
+	Clean the brush after each stroke	Her vuruştan sonra fırçayı temizle
 	Mix	Karışım
 	Wetness Jitter	Islaklık Titreme
 	Mix Jitter	Karıştırma Titreşimi
@@ -2176,6 +2181,8 @@
 	Burn	Yanık
 	Quick Selection	Hızlı Seçim
 	History Brush	Tarih Fırçası
+	Paints from the History panel's source state	Tarih panelinin kaynak durumundan boyar
+	Sets the source for the history brush	Tarih fırçasının kaynağını ayarlar
 	Color Replacement	Renk Değiştirme
 	New Group	Yeni Grup
 	Layer Comp	Katman Kompozisyonu
@@ -2682,6 +2689,8 @@ cameraRaw	Color	Renk
 	Create Snapshot	Anlık Görüntü Oluştur
 	Delete Snapshot	Anlık Görüntüyü Sil
 	New Snapshot	Yeni Anlık Görüntü
+	New Snapshot…	Yeni Anlık Görüntü…
+	History Options…	Geçmiş Seçenekleri…
 	Snapshot 1	Anlık Görüntü 1
 	Nonlinear History	Doğrusal Olmayan Geçmiş
 	Set New Snapshot as Default	Yeni Anlık Görüntüyü Varsayılan Olarak Ayarla
@@ -3829,8 +3838,156 @@ cameraData	Lens	Lens
 @plural	{n} step|{n} steps	{n} adım
 @plural	{warning} (+{n} more brush preset warning)|{warning} (+{n} more brush preset warnings)	{warning} (+{n} fırça ön ayarı uyarısı daha)
 @plural	{what} with {n} warning|{what} with {n} warnings	{what}, {n} uyarı ile
+# Edit › Content-Aware Fill workspace
+	Excluded Area	Hariç Tutulan Alan
+	Fill Settings	Dolgu Ayarları
+	Full	Tam
+	Indicates	Gösterir
+	Mirror	Yansıt
+	Output Settings	Çıkış Ayarları
+	Output To	Çıkış Hedefi
+	Rectangular	Dikdörtgen
+	Rotation Adaptation	Döndürme Uyarlaması
+	Sampling Area	Örnekleme Alanı
+	Sampling Area Options	Örnekleme Alanı Seçenekleri
+	Sampling Area Overlay	Örnekleme Alanı Kaplaması
+	Sampling Brush Tool	Örnekleme Fırçası Aracı
+	Show Sampling Area	Örnekleme Alanını Göster
+	Very High	Çok Yüksek
+	Response curve	Yanıt eğrisi
+	Show home recent files	Ana ekranda son dosyaları göster
+	Clear Brush Controls	Fırça Denetimlerini Temizle
+	Reset All Locked Settings	Tüm Kilitli Ayarları Sıfırla
+	Copy Texture to Other Tools	Dokuyu Diğer Araçlara Kopyala
 
-# Camera Raw 16.1.1 dialog (Camera Raw stack): written from the plain meaning of each label
+# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
+	Load Actions…	Eylemleri Yükle…
+	Save Actions…	Eylemleri Kaydet…
+	{name} (Photoshop)	{name} (Photoshop)
+	{message} ({note})	{message} ({note})
+@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	{file} dosyasından {n} eylem yüklendi
+@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} adımın PhotoCraft’ta henüz karşılığı yok
+@plural	Saved {n} action to {file}|Saved {n} actions to {file}	{n} eylem {file} dosyasına kaydedildi
+@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Photoshop karşılığı olmayan {n} adım atlandı
+
+	Starting serial	Başlangıç sıra numarası
+# Actions panel: set folders, dialog toggle, Insert Stop
+	Insert Stop…	Durdurma Ekle…
+	Save Set…	Seti Kaydet…
+	Message:	İleti:
+	Allow Continue	Devam Etmeye İzin Ver
+	Show dialog during playback	Oynatma sırasında iletişim kutusunu göster
+	Select an action first	Önce bir eylem seçin
+	Action playback stopped	Eylem oynatma durduruldu
+	Step {step} is waiting for its dialog	{step}. adım iletişim kutusunu bekliyor
+@plural	{n} action|{n} actions	{n} eylem
+	Object Finder	Nesne Bulucu
+	No object found there — drag a rectangle around it	Orada nesne bulunamadı — çevresine bir dikdörtgen sürükleyin
+	Drag to pan · Scroll to zoom · Double-click to fit	Kaydırmak için sürükleyin · Yakınlaştırmak için kaydırın · Sığdırmak için çift tıklayın
+	Gradient Preset Options	Gradyan Ön Ayarı Seçenekleri
+	Import .GRD	.GRD İçe Aktar
+	Choose a gradient file (.grd).	Bir gradyan dosyası (.grd) seçin.
+	Save Settings…	Ayarları Kaydet…
+	Load Settings…	Ayarları Yükle…
+	Save these settings as a Camera Raw .xmp file	Bu ayarları Camera Raw .xmp dosyası olarak kaydet
+	Load settings from a Camera Raw .xmp file	Ayarları bir Camera Raw .xmp dosyasından yükle
+	Loaded Camera Raw settings from {file}	Camera Raw ayarları {file} dosyasından yüklendi
+	Loaded Camera Raw settings from {file} ({n} not supported)	Camera Raw ayarları {file} dosyasından yüklendi ({n} desteklenmiyor)
+	Auto Add/Delete	Otomatik Ekle/Sil
+
+# Native Windows printing qualification
+	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	Yazdırma Ayarlarında ayrıca Ayna Görüntüsünü açmayın: iki yansıtma birbirini iptal eder.
+	Print Settings…	Yazdırma Ayarları…
+	Remember to turn off the printer's own colour management in Print Settings…	Yazdırma Ayarlarında yazıcının kendi renk yönetimini kapatmayı unutmayın…
+	Sent to {printer}	{printer} yazıcısına gönderildi
+	set in Print Settings…	Yazdırma Ayarlarında belirlenir…
+	ICO is limited to 256 × 256 pixels	ICO 256 × 256 piksel ile sınırlıdır
+
+# Channel Options and New Spot Channel (#3761)
+	Channel Color	Kanal Rengi
+	Color Indicates:	Rengin Gösterdiği:
+	Ink Characteristics	Mürekkep Özellikleri
+	Solidity:	Doluluk:
+	Redrawing	Yeniden çiziliyor
+# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
+	Use the embedded profile ({profile})	Gömülü profili kullanın ({profile})
+	Convert to the working space ({profile})	Çalışma alanına dönüştürün ({profile})
+	Remember this choice for future images	Bu seçimi sonraki görüntüler için hatırla
+	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	Soruyu Düzen › Renk Ayarları'ndaki Ask On Mismatch ile yeniden açabilirsiniz.
+	Button Mode	Düğme modu
+	Button Mode On	Düğme modu açık
+
+# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
+	Darken Interface	Arayüzü koyulaştır
+	Lighten Interface	Arayüzü açıklaştır
+# Bevel & Emboss Technique.
+	Technique	Teknik
+	Chisel Hard	Sert Keski
+	Chisel Soft	Yumuşak Keski
+	Open color-less EXR as ACEScg	Renk bilgisi olmayan EXR'yi ACEScg olarak aç
+
+# View › Guides › right-click a guide
+	Edit Selected Guides	Seçili Kılavuzları Düzenle
+	Clear Selected Guides	Seçili Kılavuzları Temizle
+	Bicubic Automatic	Bikübik Otomatik
+	Bicubic Smoother	Bikübik Pürüzsüzleştirici
+	Bicubic Sharper	Bikübik Daha Keskin
+	Pasting from other apps is unavailable	Diğer uygulamalardan yapıştırma kullanılamıyor
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	PhotoCraft bu oturumda sistem panosuna erişemiyor. Wayland'de Flatpak korumalı alanı, diğer uygulamalardaki görüntülerin okunduğu protokolü gizler.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Diğer uygulamalardan yapıştırmak için PhotoCraft'ı XWayland altında başlatın: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Yapıştırılacak bir şey yok: PhotoCraft burada sistem panosunu okuyamıyor
+	Delete this set	Bu Kümeyi Sil
+	New Set…	Yeni Küme…
+	PhotoCraft Defaults	PhotoCraft Varsayılanları
+	Save a list of these shortcuts as a web page	Bu kısayolların listesini web sayfası olarak kaydet
+	Save the changes to this set	Bu kümedeki değişiklikleri kaydet
+	Save these shortcuts as a .kys file	Bu kısayolları .kys dosyası olarak kaydet
+	Save these shortcuts as a new set	Bu kısayolları yeni bir küme olarak kaydet
+	Set deleted.	Küme silindi.
+	Set saved.	Küme kaydedildi.
+	Set:	Küme:
+	Summarize…	Özetle…
+	There are too many sets: delete one first.	Çok fazla küme var: önce birini silin.
+	set name	küme adı
+	{set} (modified)	{set} (değiştirildi)
+	Show file name in title	Başlıkta dosya adını göster
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	%50 Eşik
+	Pattern Dither	Desen Titreklik
+	Diffusion Dither	Difüzyon Titreklik
+	Halftone Screen	Yarım Ton Tarama
+	Custom Pattern	Özel Desen
+	Frequency:	Frekans:
+	Lines/Inch	Çizgi/İnç
+	Lines/Centimeter	Çizgi/Santimetre
+	Ellipse	Elips
+	Accept and Go to Conflict	Kabul Et ve Çakışmaya Git
+	Changes undone.	Değişiklikler geri alındı.
+	Choose a new shortcut for this command, or leave it without one.	Bu komut için yeni bir kısayol seçin veya kısayolsuz bırakın.
+	Put this command's shortcuts back as they were	Bu komutun kısayollarını eski haline getir
+	Take the shortcut from the other command and select it	Kısayolu diğer komuttan al ve o komutu seç
+	Undo Changes	Değişiklikleri Geri Al
+	{shortcut} is reserved by the system and can't be assigned.	{shortcut} sistem tarafından ayrılmıştır ve atanamaz.
+	Low-Latency Drawing (vsync off, applies at next launch)	Düşük gecikmeli çizim (dikey eşitleme kapalı, sonraki açılışta geçerli)
+# Free Transform: a new layer while the box is open (#5859)
+	Free Transform is still being applied; try again when it has finished.	Serbest Dönüştürme hâlâ uygulanıyor; bittiğinde yeniden deneyin.
+	The transform couldn't be applied.	Dönüştürme uygulanamadı.
+# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
+	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	Katmanlarının {needed} GPU belleğine ihtiyacı var; bütçe onlara {budget} bırakıyor.
+	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	Tercihler › Performans içindeki GPU Belleği'ni ekran kartınızın kaldırabileceği miktara, en fazla belleğinin 3/8'ine ayarlayın. Otomatik, Bellek kullanımını izler; bu bilgisayarın belleğinin dörtte biri ve kartın belleğinin 3/8'i içinde kalır, belleği bilinen bir kartta belgeyi hesaba katmaz. Sığmadıkları sürece durum çubuğu GPU Belleği Dolu gösterir.
+	GPU Memory Full	GPU Belleği Dolu
+	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	Katmanların {needed} GPU belleğine ihtiyacı var ve en fazla {budget} kullanabilirler; bu yüzden tüm belgeyi yeniden çizen düzenlemeler bunu CPU'da yapar. GPU Belleği'ni ayarlamak için tıklayın.
+	GPU memory budget: {budget}	GPU bellek bütçesi: {budget}
+	This document's layers: {needed} of {budget} for layers	Bu belgenin katmanları: katmanlar için {budget} içinden {needed}
+	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	Bu belgenin katmanlarının {needed} belleğe ihtiyacı var ama en fazla {budget} kullanabilirler: tüm belgenin yeniden çizimi CPU'yu kullanır
+	GPU Memory (MB, 0 = Automatic)	GPU Belleği (MB, 0 = Otomatik)
+	{name} was changed by another app after it was opened or saved here.	{name}, burada açıldıktan veya kaydedildikten sonra başka bir uygulama tarafından değiştirildi.
+	Replace it with this document, or cancel and use File › Save As to keep both.	Bu belgeyle değiştirin ya da iptal edip ikisini de korumak için Dosya › Farklı Kaydet'i kullanın.
+	Decrease Brush Size	Fırça boyutunu küçült
+	Increase Brush Size	Fırça boyutunu büyüt
+	Decrease Brush Hardness	Fırça sertliğini azalt
+	Increase Brush Hardness	Fırça sertliğini artır
 	Auto tone and color (Ctrl+U)	Otomatik ton ve renk (Ctrl+U)
 	Before/After Left/Right	Önce/Sonra Sol/Sağ
 	Before/After Left/Right Split	Önce/Sonra Sol/Sağ Bölünmüş
@@ -3845,7 +4002,6 @@ cameraData	Lens	Lens
 	Copy Before settings to After (Alt+Shift+P)	Önce ayarlarını Sonra'ya kopyala (Alt+Shift+P)
 	Creative profiles are not available in PhotoCraft yet.	Yaratıcı profiller PhotoCraft'ta henüz kullanılamıyor.
 	Cycle between Before/After views (Q)	Önce/Sonra görünümleri arasında geçiş yap (Q)
-	Demosaic	Demozaikleme
 	Fit ({percent})	Sığdır ({percent})
 	For a more accurate preview, zoom the preview size to 100% or larger when adjusting the controls in this panel.	Daha doğru bir önizleme için bu paneldeki denetimleri ayarlarken önizlemeyi %100 veya daha büyük boyuta yakınlaştırın.
 	For best results, apply lens corrections first.	En iyi sonuç için önce mercek düzeltmelerini uygulayın.
@@ -3966,114 +4122,19 @@ cameraRaw	Visualize Spots	Lekeleri Göster
 cameraRaw	Vivid	Canlı
 cameraRaw	White balance	Beyaz dengesi
 cameraRaw	Zoom and Pan	Yakınlaştırma ve Kaydırma
-	AHD (adaptive homogeneity)	AHD (uyarlamalı homojenlik)
-	Malvar–He–Cutler	Malvar–He–Cutler
-	Response curve	Yanıt eğrisi
-	Show home recent files	Ana ekranda son dosyaları göster
-	Clear Brush Controls	Fırça Denetimlerini Temizle
-	Reset All Locked Settings	Tüm Kilitli Ayarları Sıfırla
-	Copy Texture to Other Tools	Dokuyu Diğer Araçlara Kopyala
+	Memory Usage	Bellek kullanımı
+	Per-document RAM limit (MB)	Belge başına RAM sınırı (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	Kurulu RAM: {ram} MB; bu sınır: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Her açık belgenin piksellerini ve Geçmişini sınırlar. Sınır aşılınca en eski geri alma durumları atılır.
+	Applies immediately when saved. Memory is not reserved in advance.	Kaydedilince hemen uygulanır. Bellek önceden ayrılmaz.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	GPU Belleği Otomatikken GPU katman bütçesini de sınırlar. Tavan, RAM’in dörtte biri ve biliniyorsa kart belleğinin sekizde üçü, en az 512 MB. Sınırı yükseltmek GPU bütçesini artırmaz.
+	Use	Kullan
+	In Front	Önde
+	Behind	Arkada
 
-# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
-	Load Actions…	Eylemleri Yükle…
-	Save Actions…	Eylemleri Kaydet…
-	{name} (Photoshop)	{name} (Photoshop)
-	{message} ({note})	{message} ({note})
-@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	{file} dosyasından {n} eylem yüklendi
-@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} adımın PhotoCraft’ta henüz karşılığı yok
-@plural	Saved {n} action to {file}|Saved {n} actions to {file}	{n} eylem {file} dosyasına kaydedildi
-@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Photoshop karşılığı olmayan {n} adım atlandı
+# DDS Options (#1327)
+	DDS Options	DDS Seçenekleri
+	Generate Mipmaps	Mipmap oluştur
 
-	Starting serial	Başlangıç sıra numarası
-# Actions panel: set folders, dialog toggle, Insert Stop
-	Insert Stop…	Durdurma Ekle…
-	Save Set…	Seti Kaydet…
-	Message:	İleti:
-	Allow Continue	Devam Etmeye İzin Ver
-	Show dialog during playback	Oynatma sırasında iletişim kutusunu göster
-	Select an action first	Önce bir eylem seçin
-	Action playback stopped	Eylem oynatma durduruldu
-	Step {step} is waiting for its dialog	{step}. adım iletişim kutusunu bekliyor
-@plural	{n} action|{n} actions	{n} eylem
-	Object Finder	Nesne Bulucu
-	No object found there — drag a rectangle around it	Orada nesne bulunamadı — çevresine bir dikdörtgen sürükleyin
-	Drag to pan · Scroll to zoom · Double-click to fit	Kaydırmak için sürükleyin · Yakınlaştırmak için kaydırın · Sığdırmak için çift tıklayın
-	Gradient Preset Options	Gradyan Ön Ayarı Seçenekleri
-	Import .GRD	.GRD İçe Aktar
-	Choose a gradient file (.grd).	Bir gradyan dosyası (.grd) seçin.
-	Save Settings…	Ayarları Kaydet…
-	Load Settings…	Ayarları Yükle…
-	Save these settings as a Camera Raw .xmp file	Bu ayarları Camera Raw .xmp dosyası olarak kaydet
-	Load settings from a Camera Raw .xmp file	Ayarları bir Camera Raw .xmp dosyasından yükle
-	Loaded Camera Raw settings from {file}	Camera Raw ayarları {file} dosyasından yüklendi
-	Loaded Camera Raw settings from {file} ({n} not supported)	Camera Raw ayarları {file} dosyasından yüklendi ({n} desteklenmiyor)
-	Auto Add/Delete	Otomatik Ekle/Sil
-
-# Native Windows printing qualification
-	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	Yazdırma Ayarlarında ayrıca Ayna Görüntüsünü açmayın: iki yansıtma birbirini iptal eder.
-	Print Settings…	Yazdırma Ayarları…
-	Remember to turn off the printer's own colour management in Print Settings…	Yazdırma Ayarlarında yazıcının kendi renk yönetimini kapatmayı unutmayın…
-	Sent to {printer}	{printer} yazıcısına gönderildi
-	set in Print Settings…	Yazdırma Ayarlarında belirlenir…
-	ICO is limited to 256 × 256 pixels	ICO 256 × 256 piksel ile sınırlıdır
-
-# Channel Options and New Spot Channel (#3761)
-	Channel Color	Kanal Rengi
-	Color Indicates:	Rengin Gösterdiği:
-	Ink Characteristics	Mürekkep Özellikleri
-	Solidity:	Doluluk:
-	Redrawing	Yeniden çiziliyor
-# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
-	Use the embedded profile ({profile})	Gömülü profili kullanın ({profile})
-	Convert to the working space ({profile})	Çalışma alanına dönüştürün ({profile})
-	Remember this choice for future images	Bu seçimi sonraki görüntüler için hatırla
-	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	Soruyu Düzen › Renk Ayarları'ndaki Ask On Mismatch ile yeniden açabilirsiniz.
-	Button Mode	Düğme modu
-	Button Mode On	Düğme modu açık
-
-# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
-	Darken Interface	Arayüzü koyulaştır
-	Lighten Interface	Arayüzü açıklaştır
-# Bevel & Emboss Technique.
-	Technique	Teknik
-	Chisel Hard	Sert Keski
-	Chisel Soft	Yumuşak Keski
-	Open color-less EXR as ACEScg	Renk bilgisi olmayan EXR'yi ACEScg olarak aç
-
-# View › Guides › right-click a guide
-	Edit Selected Guides	Seçili Kılavuzları Düzenle
-	Clear Selected Guides	Seçili Kılavuzları Temizle
-	Delete this set	Bu Kümeyi Sil
-	New Set…	Yeni Küme…
-	PhotoCraft Defaults	PhotoCraft Varsayılanları
-	Save a list of these shortcuts as a web page	Bu kısayolların listesini web sayfası olarak kaydet
-	Save the changes to this set	Bu kümedeki değişiklikleri kaydet
-	Save these shortcuts as a .kys file	Bu kısayolları .kys dosyası olarak kaydet
-	Save these shortcuts as a new set	Bu kısayolları yeni bir küme olarak kaydet
-	Set deleted.	Küme silindi.
-	Set saved.	Küme kaydedildi.
-	Set:	Küme:
-	Summarize…	Özetle…
-	There are too many sets: delete one first.	Çok fazla küme var: önce birini silin.
-	set name	küme adı
-	{set} (modified)	{set} (değiştirildi)
-	Accept and Go to Conflict	Kabul Et ve Çakışmaya Git
-	Changes undone.	Değişiklikler geri alındı.
-	Choose a new shortcut for this command, or leave it without one.	Bu komut için yeni bir kısayol seçin veya kısayolsuz bırakın.
-	Put this command's shortcuts back as they were	Bu komutun kısayollarını eski haline getir
-	Take the shortcut from the other command and select it	Kısayolu diğer komuttan al ve o komutu seç
-	Undo Changes	Değişiklikleri Geri Al
-	{shortcut} is reserved by the system and can't be assigned.	{shortcut} sistem tarafından ayrılmıştır ve atanamaz.
-	Low-Latency Drawing (vsync off, applies at next launch)	Düşük gecikmeli çizim (dikey eşitleme kapalı, sonraki açılışta geçerli)
-# Free Transform: a new layer while the box is open (#5859)
-	Free Transform is still being applied; try again when it has finished.	Serbest Dönüştürme hâlâ uygulanıyor; bittiğinde yeniden deneyin.
-	The transform couldn't be applied.	Dönüştürme uygulanamadı.
-# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
-	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	Katmanlarının {needed} GPU belleğine ihtiyacı var; bütçe onlara {budget} bırakıyor.
-	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	Tercihler › Performans içindeki GPU Belleği'ni ekran kartınızın kaldırabileceği miktara, en fazla belleğinin 3/8'ine ayarlayın. Otomatik, Bellek kullanımını izler; bu bilgisayarın belleğinin dörtte biri ve kartın belleğinin 3/8'i içinde kalır, belleği bilinen bir kartta belgeyi hesaba katmaz. Sığmadıkları sürece durum çubuğu GPU Belleği Dolu gösterir.
-	GPU Memory Full	GPU Belleği Dolu
-	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	Katmanların {needed} GPU belleğine ihtiyacı var ve en fazla {budget} kullanabilirler; bu yüzden tüm belgeyi yeniden çizen düzenlemeler bunu CPU'da yapar. GPU Belleği'ni ayarlamak için tıklayın.
-	GPU memory budget: {budget}	GPU bellek bütçesi: {budget}
-	This document's layers: {needed} of {budget} for layers	Bu belgenin katmanları: katmanlar için {budget} içinden {needed}
-	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	Bu belgenin katmanlarının {needed} belleğe ihtiyacı var ama en fazla {budget} kullanabilirler: tüm belgenin yeniden çizimi CPU'yu kullanır
-	GPU Memory (MB, 0 = Automatic)	GPU Belleği (MB, 0 = Otomatik)
+# Graphics Adapter preference (#1885)
+	GPU adapter	GPU bağdaştırıcısı

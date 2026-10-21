@@ -62,16 +62,10 @@ pub fn lens_params(cmd: &str, p: &Value, frame: Rect, info: Option<&exif::Camera
         "edgeExtension" | "extension" => EdgeMode::Extension,
         "black" => EdgeMode::Color([0.0, 0.0, 0.0, 1.0]),
         "white" => EdgeMode::Color([1.0, 1.0, 1.0, 1.0]),
-        "background" | "color" => EdgeMode::Color(crate::commands::color_param(p, "edgeColor", [0.0, 0.0, 0.0, 1.0])),
+        "background" | "color" => EdgeMode::Color(crate::commands::color_param(cmd, p, "edgeColor", [0.0, 0.0, 0.0, 1.0])?),
         other => return Err(bad(cmd, format!("unknown edge `{other}` (transparency|edgeExtension|black|white|color)"))),
     };
-    let focal = num(p, "focalLength", 0.0);
-    lc.profile = match p.get("profile").and_then(Value::as_str).unwrap_or("none") {
-        "none" | "" => None,
-        "generic" => Some(lens::generic_profile(if focal > 0.0 { focal } else { 50.0 })),
-        "auto" => info.and_then(|i| i.focal_length_35mm.or(i.focal_length)).or((focal > 0.0).then_some(focal)).map(lens::generic_profile),
-        other => return Err(bad(cmd, format!("unknown profile `{other}` (none|auto|generic)"))),
-    };
+    lc.profile = profile_focal(cmd, p, info)?.map(lens::generic_profile);
     if let Some(Value::Array(line)) = p.get("straighten") {
         let pt = |v: &Value| -> Option<[f64; 2]> { Some([v.get(0)?.as_f64()?, v.get(1)?.as_f64()?]) };
         let (Some(a), Some(b)) = (line.first().and_then(pt), line.get(1).and_then(pt)) else {
@@ -85,8 +79,20 @@ pub fn lens_params(cmd: &str, p: &Value, frame: Rect, info: Option<&exif::Camera
     Ok(lc)
 }
 
-/// Writes the resolved profile / angle / scale back into the params (for smart filters).
-fn resolved_lens_params(p: &Value, lc: &LensCorrection) -> Value {
+/// The 35 mm-equivalent focal length of the generic profile the params ask for (`None`: no profile).
+fn profile_focal(cmd: &str, p: &Value, info: Option<&exif::CameraInfo>) -> Result<Option<f64>> {
+    let focal = num(p, "focalLength", 0.0);
+    Ok(match p.get("profile").and_then(Value::as_str).unwrap_or("none") {
+        "none" | "" => None,
+        "generic" => Some(if focal > 0.0 { focal } else { 50.0 }),
+        "auto" => info.and_then(|i| i.focal_length_35mm.or(i.focal_length)).or((focal > 0.0).then_some(focal)),
+        other => return Err(bad(cmd, format!("unknown profile `{other}` (none|auto|generic)"))),
+    })
+}
+
+/// Writes the resolved profile (its exact focal length, not the rounded one in its name) /
+/// angle / scale back into the params (for smart filters).
+fn resolved_lens_params(p: &Value, lc: &LensCorrection, focal: Option<f64>) -> Value {
     let mut q = p.clone();
     if let Value::Object(m) = &mut q {
         m.remove("straighten");
@@ -94,10 +100,9 @@ fn resolved_lens_params(p: &Value, lc: &LensCorrection) -> Value {
         m.remove("layer");
         m.insert("angle".into(), json!(lc.angle));
         m.insert("scale".into(), json!(lc.scale));
-        match &lc.profile {
-            Some(pr) => {
+        match lc.profile.as_ref().and(focal) {
+            Some(f) => {
                 m.insert("profile".into(), json!("generic"));
-                let f = pr.name.trim_start_matches("Generic Lens (").split(' ').next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(50.0);
                 m.insert("focalLength".into(), json!(f));
             }
             None => {
@@ -140,11 +145,16 @@ pub fn raw_params(cmd: &str, p: &Value) -> Result<CameraRaw> {
         m.remove("layer");
     }
     let mut cr: CameraRaw = serde_json::from_value(q).map_err(|e| bad(cmd, format!("bad params: {e}")))?;
-    // The noise stages turn their amounts straight into a guided-filter radius and a blur
-    // sigma (an out-of-range value meant unbounded work, #707); the Optics, Geometry and
-    // Calibration stages turn theirs into radii, warps and hue windows. Clamp them all to their
-    // documented ranges (non-finite values become the defaults, inverted hue ranges are sorted).
-    cr.clamp_ranges();
+    // The noise stages turn these straight into a guided-filter radius and a
+    // blur sigma, so an out-of-range value means unbounded work. Clamp to the
+    // documented 0..100 (part of #707).
+    cr.noise_luminance = cr.noise_luminance.clamp(0.0, 100.0);
+    cr.noise_luminance_detail = cr.noise_luminance_detail.clamp(0.0, 100.0);
+    cr.noise_color = cr.noise_color.clamp(0.0, 100.0);
+    cr.noise_color_detail = cr.noise_color_detail.clamp(0.0, 100.0);
+    // `exposure` becomes `2^exposure`, which overflows f32 to infinity from 128 up (and then
+    // writes inf/NaN into 32-bit layers). Clamp to the documented -5..5.
+    cr.exposure = cr.exposure.clamp(-5.0, 5.0);
     Ok(cr)
 }
 
@@ -287,12 +297,13 @@ fn run_filter(s: &mut Session, cmd: &str, label: &str, stored: Value, float_bg: 
         let locks = doc.effective_locks(id);
         let background = doc.is_background(id);
         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+        // A pixel or full lock refuses the smart filter too, as it does for other filters.
+        if locks.all || locks.pixels {
+            return Err(EngineError::Other(format!("layer \"{}\" is locked", l.name)));
+        }
         if let LayerContent::Smart(_) = l.content {
             let sf = SmartFilter { command: cmd.to_string(), params: stored.clone(), blend: photocraft_color::BlendMode::Normal, opacity: 1.0, visible: true };
             return crate::smart_cmds::add_smart_filter(doc, id, sf, selection.as_ref());
-        }
-        if locks.all || locks.pixels {
-            return Err(EngineError::Other(format!("layer \"{}\" is locked", l.name)));
         }
         // A Background layer gains transparency when the edge mode exposes it (as in Photoshop).
         if float_bg && background {
@@ -318,7 +329,7 @@ fn lens_correction(s: &mut Session, p: &Value) -> Result<Value> {
     let frame = st.doc.bounds();
     let info = camera_info(&st.doc);
     let lc = lens_params(LENS, p, frame, info.as_ref())?;
-    let stored = resolved_lens_params(p, &lc);
+    let stored = resolved_lens_params(p, &lc, profile_focal(LENS, p, info.as_ref())?);
     let t0 = Stopwatch::start();
     let id =
         run_filter(s, LENS, "Lens Correction", stored.clone(), matches!(lc.edge, EdgeMode::Transparency), &|surf, canvas| lens::correct(surf, canvas, &lc))?;
@@ -461,7 +472,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Camera Raw Filter…",
             menu: &["Filter"],
             shortcut: Some("Cmd+Shift+A"),
-            params: r##"{"temperature":-100..100=0,"tint":-100..100=0,"exposure":-5..5=0,"contrast":-100..100=0,"highlights":-100..100=0,"shadows":-100..100=0,"whites":-100..100=0,"blacks":-100..100=0,"texture":-100..100=0,"clarity":-100..100=0,"dehaze":-100..100=0,"vibrance":-100..100=0,"saturation":-100..100=0,"curveHighlights":-100..100=0,"curveLights":-100..100=0,"curveDarks":-100..100=0,"curveShadows":-100..100=0,"curveSplits":[25,50,75],"pointCurve":[[in,out]],"pointCurveRed":[[in,out]],"pointCurveGreen":[[in,out]],"pointCurveBlue":[[in,out]],"hslHue":[8],"hslSat":[8],"hslLum":[8],"gradeShadows":{"hue":deg,"sat":0..100,"lum":-100..100},"gradeMidtones":{},"gradeHighlights":{},"gradeGlobal":{},"gradeBlending":0..100=50,"gradeBalance":-100..100=0,"sharpenAmount":0..150=0,"sharpenRadius":0.5..3=1,"sharpenDetail":0..100=25,"sharpenMasking":0..100=0,"noiseLuminance":0..100=0,"noiseLuminanceDetail":0..100=50,"noiseColor":0..100=0,"noiseColorDetail":0..100=50,"grainAmount":0..100=0,"grainSize":0..100=25,"grainRoughness":0..100=50,"vignetteAmount":-100..100=0,"vignetteMidpoint":0..100=50,"vignetteRoundness":-100..100=0,"vignetteFeather":0..100=50,"vignetteHighlights":0..100=0,"vignetteStyle":"highlightPriority|colorPriority|paintOverlay","monochrome":bool=false,"grayMixer":[8 × -100..100],"whiteBalance":"asShot|auto|custom","curveRefineSaturation":0..100=100,"noiseLuminanceContrast":0..100=0,"noiseColorSmoothness":0..100=50,"lensDistortion":-100..100=0,"lensVignette":-100..100=0,"lensVignetteMidpoint":0..100=50,"defringePurpleAmount":0..20=0,"defringePurpleHue":[30,70],"defringeGreenAmount":0..20=0,"defringeGreenHue":[40,60],"upright":"off|auto|level|vertical|full|guided","transformVertical":-100..100=0,"transformHorizontal":-100..100=0,"transformRotate":-10..10=0,"transformAspect":-100..100=0,"transformScale":50..150=100,"transformOffsetX":-100..100=0,"transformOffsetY":-100..100=0,"processVersion":u32=6,"calibrationShadowsTint":-100..100=0,"calibrationRedHue":-100..100=0,"calibrationRedSat":-100..100=0,"calibrationGreenHue":-100..100=0,"calibrationGreenSat":-100..100=0,"calibrationBlueHue":-100..100=0,"calibrationBlueSat":-100..100=0,"seed":u32=0}"##,
+            params: r##"{"temperature":-100..100=0,"tint":-100..100=0,"exposure":-5..5=0,"contrast":-100..100=0,"highlights":-100..100=0,"shadows":-100..100=0,"whites":-100..100=0,"blacks":-100..100=0,"texture":-100..100=0,"clarity":-100..100=0,"dehaze":-100..100=0,"vibrance":-100..100=0,"saturation":-100..100=0,"curveHighlights":-100..100=0,"curveLights":-100..100=0,"curveDarks":-100..100=0,"curveShadows":-100..100=0,"curveSplits":[25,50,75],"pointCurve":[[in,out]],"pointCurveRed":[[in,out]],"pointCurveGreen":[[in,out]],"pointCurveBlue":[[in,out]],"hslHue":[8],"hslSat":[8],"hslLum":[8],"gradeShadows":{"hue":deg,"sat":0..100,"lum":-100..100},"gradeMidtones":{},"gradeHighlights":{},"gradeGlobal":{},"gradeBlending":0..100=50,"gradeBalance":-100..100=0,"sharpenAmount":0..150=0,"sharpenRadius":0.5..3=1,"sharpenDetail":0..100=25,"sharpenMasking":0..100=0,"noiseLuminance":0..100=0,"noiseLuminanceDetail":0..100=50,"noiseColor":0..100=0,"noiseColorDetail":0..100=50,"grainAmount":0..100=0,"grainSize":0..100=25,"grainRoughness":0..100=50,"vignetteAmount":-100..100=0,"vignetteMidpoint":0..100=50,"vignetteRoundness":-100..100=0,"vignetteFeather":0..100=50,"vignetteHighlights":0..100=0,"vignetteStyle":"highlightPriority|colorPriority|paintOverlay","seed":u32=0}"##,
             enabled: raw_enabled,
             run: camera_raw_cmd,
             journal: true,
@@ -553,6 +564,63 @@ mod tests {
     }
 
     #[test]
+    fn lens_smart_filter_keeps_the_exact_focal_length() {
+        // A generic profile at a fractional focal length, and the auto profile from EXIF.
+        let generic = json!({"profile": "generic", "focalLength": 27.4, "edge": "edgeExtension"});
+        let auto = json!({"profile": "auto", "edge": "edgeExtension"});
+        for (p, focal) in [(generic, 27.4), (auto, 18.5)] {
+            let mut s = session(8);
+            s.edit("exif", |doc, _| {
+                doc.metadata.exif = Some(std::sync::Arc::new(exif::build(&exif::CameraInfo { focal_length: Some(18.5), ..Default::default() })));
+                Ok(())
+            })
+            .unwrap();
+            let d = s.active().unwrap();
+            let src = d.doc.layer(d.active_layer.unwrap()).unwrap().surface().unwrap().clone();
+            let (frame, info) = (d.doc.bounds(), camera_info(&d.doc));
+            s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
+            let r = s.execute(LENS, p.clone()).unwrap();
+            assert_eq!(r["params"]["focalLength"], focal, "{r}");
+            // Re-rendering from the stored params gives the pixels the command rendered.
+            let d = s.active().unwrap();
+            let LayerContent::Smart(sm) = &d.doc.layer(LayerId(r["layer"].as_u64().unwrap())).unwrap().content else { panic!("smart") };
+            let original = lens::correct(&src, frame, &lens_params(LENS, &p, frame, info.as_ref()).unwrap());
+            let rerender = apply_to_surface(LENS, &sm.smart_filters[0].params, &src, frame).unwrap();
+            assert!(original == rerender, "re-render differs for {p}");
+        }
+    }
+
+    #[test]
+    fn locked_smart_objects_refuse_lens_filters() {
+        // As other filters do: a pixel or full lock (the layer's own or its group's) refuses the
+        // smart filter, leaving the layer and the history as they were.
+        let filters = [(LENS, json!({"distortion": 10})), (WIDE, json!({"model": "perspective", "scale": 90})), (RAW, json!({"saturation": -100}))];
+        for lock in [json!({"all": true}), json!({"pixels": true})] {
+            for on_group in [false, true] {
+                for (cmd, p) in &filters {
+                    let mut s = session(8);
+                    s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
+                    let layer = s.active().unwrap().active_layer.unwrap();
+                    if on_group {
+                        s.execute("layer.new.groupFromLayers", json!({})).unwrap();
+                    }
+                    s.execute("layer.lockLayers", lock.clone()).unwrap();
+                    s.execute("layer.select", json!({"layer": layer.0})).unwrap();
+                    let locks = s.active().unwrap().doc.effective_locks(layer);
+                    assert!(locks.all || locks.pixels, "the lock reaches the smart object ({lock}, group: {on_group})");
+                    let steps = s.active().unwrap().history.past_len();
+                    let r = s.execute(cmd, p.clone());
+                    assert!(r.is_err(), "{cmd} edited a smart object locked with {lock} (group: {on_group}): {r:?}");
+                    let st = s.active().unwrap();
+                    let LayerContent::Smart(sm) = &st.doc.layer(layer).unwrap().content else { panic!("not smart") };
+                    assert!(sm.smart_filters.is_empty(), "{cmd} {lock} group: {on_group}");
+                    assert_eq!(st.history.past_len(), steps, "{cmd} {lock} group: {on_group}: no history step");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn adaptive_wide_angle_straightens() {
         let mut s = session(8);
         let r = s
@@ -600,45 +668,6 @@ mod tests {
         s.execute(RAW, json!({"saturation": -100})).unwrap();
         let p = active_px(&s, 60, 40);
         assert!((p[0] - p[2]).abs() < 0.01, "{p:?}");
-    }
-
-    #[test]
-    fn camera_raw_clamps_and_renders_the_optics_geometry_and_calibration_controls() {
-        let p = raw_params(
-            RAW,
-            &json!({
-                "lensDistortion": 1e30, "transformScale": -1e30, "transformRotate": 45, "transformOffsetY": 1e39,
-                "defringePurpleHue": [90, 10], "defringeGreenAmount": 1e9, "grayMixer": [1e30, -1e30, 0, 0, 0, 0, 0, 0],
-                "calibrationRedHue": -1e30, "curveRefineSaturation": -5, "noiseColorSmoothness": 1e9, "lensVignetteMidpoint": -3
-            }),
-        )
-        .unwrap();
-        assert_eq!((p.lens_distortion, p.transform_scale, p.transform_rotate, p.transform_offset_y), (100.0, 50.0, 10.0, 0.0));
-        assert_eq!((p.defringe_purple_hue, p.defringe_green_amount, p.gray_mixer[0], p.gray_mixer[1]), ([10.0, 90.0], 20.0, 100.0, -100.0));
-        assert_eq!((p.calibration_red_hue, p.curve_refine_saturation, p.noise_color_smoothness, p.lens_vignette_midpoint), (-100.0, 0.0, 100.0, 0.0));
-        for depth in [8, 16, 32] {
-            let mut s = session(depth);
-            let r = s
-                .execute(
-                    RAW,
-                    json!({"monochrome": true, "grayMixer": [-40, 0, 0, 0, 0, 30, 0, 0], "transformRotate": 4, "transformVertical": -20, "lensDistortion": 15,
-                           "lensVignette": 40, "defringePurpleAmount": 8, "calibrationBlueSat": 40, "calibrationShadowsTint": 20, "upright": "auto"}),
-                )
-                .unwrap();
-            assert_eq!(r["identity"], false);
-            for (x, y) in [(0, 0), (60, 40), (119, 79), (5, 70)] {
-                let q = active_px(&s, x, y);
-                assert!(q[..3].iter().all(|v| v.is_finite()) && q[0] == q[1] && q[1] == q[2] && q[3] == 1.0, "depth {depth} ({x},{y}): {q:?}");
-            }
-        }
-        // Placeholders alone are an identity; unknown modes are refused.
-        let mut s = session(8);
-        let before = active_px(&s, 60, 40);
-        let r = s.execute(RAW, json!({"upright": "full", "whiteBalance": "custom", "processVersion": 5})).unwrap();
-        assert_eq!(r["identity"], true);
-        assert_eq!(active_px(&s, 60, 40), before);
-        assert!(s.execute(RAW, json!({"upright": "sideways"})).is_err());
-        assert!(s.execute(RAW, json!({"whiteBalance": "tungsten"})).is_err());
     }
 
     #[test]

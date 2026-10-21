@@ -2137,6 +2137,11 @@
 	Mixer Brush Tool	Narzędzie Pędzel mieszający
 	Color Replacement Tool	Narzędzie Zamiana koloru
 	Wet	Wilgotność
+	Current Brush Load	Bieżący ładunek pędzla
+	Load Brush	Napełnij pędzel
+	Clean Brush	Wyczyść pędzel
+	Load the brush after each stroke	Napełniaj pędzel po każdym pociągnięciu
+	Clean the brush after each stroke	Czyść pędzel po każdym pociągnięciu
 	Mix	Mieszanie
 	Wetness Jitter	Rozrzut wilgotności
 	Mix Jitter	Rozrzut mieszania
@@ -3648,6 +3653,22 @@ cameraData	Lens	Obiektyw
 	Snap to Origin	Przyciągnij do początku
 	Search settings…	Szukaj ustawień…
 	No matching settings	Brak pasujących ustawień
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Narzędzie Pędzel próbkowania
+	Sampling Area Overlay	Nakładka obszaru próbkowania
+	Show Sampling Area	Pokaż obszar próbkowania
+	Indicates	Wskazuje
+	Sampling Area	Obszar próbkowania
+	Excluded Area	Obszar wykluczony
+	Sampling Area Options	Opcje obszaru próbkowania
+	Rectangular	Prostokątny
+	Fill Settings	Ustawienia wypełnienia
+	Rotation Adaptation	Dopasowanie obrotu
+	Very High	Bardzo wysoka
+	Full	Pełna
+	Mirror	Odbicie lustrzane
+	Output Settings	Ustawienia wyjścia
+	Output To	Wyjście do
 	Loading fonts…	Wczytywanie czcionek…
 	Response curve	Krzywa odpowiedzi
 	Simulate Pressure	Symuluj nacisk
@@ -3691,6 +3712,10 @@ curves	Smooth	Wygładź
 	Click to place · Alt-click or drag off-canvas to remove	Kliknij, aby umieścić · Alt-kliknij lub przeciągnij poza obszar roboczy, aby usunąć
 	No document open	Brak otwartego dokumentu
 	{n} of {max} sample points	{n} z {max} punktów próbkowania
+
+# History panel menu (#2966)
+	New Snapshot…	Nowa migawka…
+	History Options…	Opcje historii…
 # Print dialog (#2697)
 	Emulsion Down	Emulsja w dół
 	Functions	Funkcje
@@ -3708,7 +3733,133 @@ curves	Smooth	Wygładź
 	Light Red	Jasnoczerwony
 	Medium Blue	Średnioniebieski
 	Light Gray	Jasnoszary
-# Camera Raw 16 layout (2026-10-11)
+	Object Finder	Wyszukiwanie obiektów
+	No object found there — drag a rectangle around it	Nie znaleziono tam obiektu — przeciągnij wokół niego prostokąt
+	Remove after each stroke	Usuwaj po każdym pociągnięciu
+	Apply the removal ({key})	Zastosuj usuwanie ({key})
+	Strokes to remove: {n} (Enter applies, Esc cancels)	Pociągnięcia do usunięcia: {n} (Enter stosuje, Esc anuluje)
+	Show home recent files	Pokaż ostatnie pliki na ekranie głównym
+	Clear Brush Controls	Wyczyść elementy sterujące pędzlem
+	Reset All Locked Settings	Resetuj wszystkie zablokowane ustawienia
+	Copy Texture to Other Tools	Kopiuj teksturę do innych narzędzi
+
+# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
+	Load Actions…	Wczytaj operacje…
+	Save Actions…	Zapisz operacje…
+	{name} (Photoshop)	{name} (Photoshop)
+	{message} ({note})	{message} ({note})
+@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	Wczytano {n} operację z {file}|Wczytano {n} operacje z {file}|Wczytano {n} operacji z {file}
+@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} krok nie ma jeszcze odpowiednika w PhotoCraft|{n} kroki nie mają jeszcze odpowiednika w PhotoCraft|{n} kroków nie ma jeszcze odpowiednika w PhotoCraft
+@plural	Saved {n} action to {file}|Saved {n} actions to {file}	Zapisano {n} operację do {file}|Zapisano {n} operacje do {file}|Zapisano {n} operacji do {file}
+@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Pominięto {n} krok bez odpowiednika w Photoshopie|Pominięto {n} kroki bez odpowiednika w Photoshopie|Pominięto {n} kroków bez odpowiednika w Photoshopie
+
+	File Naming	Nazewnictwo plików
+	Starting serial	Początkowy numer seryjny
+# Actions panel: set folders, dialog toggle, Insert Stop
+	Insert Stop…	Wstaw zatrzymanie…
+	Save Set…	Zapisz zestaw…
+	Message:	Komunikat:
+	Allow Continue	Zezwól na kontynuację
+	Show dialog during playback	Pokazuj okno dialogowe podczas odtwarzania
+	Select an action first	Najpierw wybierz operację
+	Action playback stopped	Odtwarzanie operacji zatrzymane
+	Step {step} is waiting for its dialog	Krok {step} czeka na swoje okno dialogowe
+@plural	{n} action|{n} actions	{n} operacja|{n} operacje|{n} operacji
+	Background (Default)	Tło (domyślne)
+# Batch / Image Processor
+	Include All Subfolders	Uwzględnij wszystkie podfoldery
+	Auto Add/Delete	Automatyczne dodawanie/usuwanie
+
+# Native Windows printing qualification
+	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	Nie włączaj też odbicia lustrzanego w ustawieniach druku: oba odbicia wzajemnie się znoszą.
+	Print Settings…	Ustawienia druku…
+	Remember to turn off the printer's own colour management in Print Settings…	Pamiętaj o wyłączeniu zarządzania kolorami drukarki w ustawieniach druku…
+	Sent to {printer}	Wysłano do {printer}
+	set in Print Settings…	ustawiane w ustawieniach druku…
+	ICO is limited to 256 × 256 pixels	ICO jest ograniczony do 256 × 256 pikseli
+# History panel › History Brush source (#2966)
+	Paints from the History panel's source state	Maluje ze stanu źródłowego panelu Historia
+	Sets the source for the history brush	Ustawia źródło dla pędzla historii
+# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
+	Use the embedded profile ({profile})	Użyj osadzonego profilu ({profile})
+	Convert to the working space ({profile})	Konwertuj na przestrzeń roboczą ({profile})
+	Remember this choice for future images	Zapamiętaj ten wybór dla kolejnych obrazów
+	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	Pytanie można włączyć ponownie opcją Ask On Mismatch w Edycja › Ustawienia kolorów.
+	Button Mode	Tryb przycisku
+	Button Mode On	Tryb przycisku włączony
+
+# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
+	Darken Interface	Przyciemnij interfejs
+	Lighten Interface	Rozjaśnij interfejs
+# Bevel & Emboss Technique.
+	Technique	Technika
+	Chisel Hard	Dłuto twarde
+	Chisel Soft	Dłuto miękkie
+	Open color-less EXR as ACEScg	Otwieraj EXR bez profilu koloru jako ACEScg
+
+# View › Guides › right-click a guide
+	Edit Selected Guides	Edytuj zaznaczone prowadnice
+	Clear Selected Guides	Usuń zaznaczone prowadnice
+	Bicubic Automatic	Dwusześcienna automatyczna
+	Bicubic Smoother	Dwusześcienna wygładzona
+	Bicubic Sharper	Dwusześcienna wyostrzona
+	Pasting from other apps is unavailable	Wklejanie z innych aplikacji jest niedostępne
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	PhotoCraft nie ma w tej sesji dostępu do schowka systemowego. W Waylandzie piaskownica Flatpaka ukrywa protokół, przez który odczytywane są obrazy z innych aplikacji.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Aby wklejać z innych aplikacji, uruchom PhotoCraft pod XWaylandem: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Nie ma czego wkleić: PhotoCraft nie może tutaj odczytać schowka systemowego
+	Delete this set	Usuń ten zestaw
+	New Set…	Nowy zestaw…
+	PhotoCraft Defaults	Domyślne PhotoCraft
+	Save a list of these shortcuts as a web page	Zapisz listę tych skrótów jako stronę internetową
+	Save the changes to this set	Zapisz zmiany w tym zestawie
+	Save these shortcuts as a .kys file	Zapisz te skróty jako plik .kys
+	Save these shortcuts as a new set	Zapisz te skróty jako nowy zestaw
+	Set deleted.	Zestaw usunięty.
+	Set saved.	Zestaw zapisany.
+	Set:	Zestaw:
+	Summarize…	Podsumuj…
+	There are too many sets: delete one first.	Zestawów jest za dużo: najpierw usuń jeden.
+	set name	nazwa zestawu
+	{set} (modified)	{set} (zmieniony)
+	Show file name in title	Pokaż nazwę pliku w tytule
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	Próg 50%
+	Pattern Dither	Rozpraszanie wzorkiem
+	Diffusion Dither	Rozpraszanie dyfuzyjne
+	Halftone Screen	Raster półtonowy
+	Custom Pattern	Własny wzór
+	Frequency:	Częstotliwość:
+	Lines/Inch	Linii/cal
+	Lines/Centimeter	Linii/centymetr
+	Ellipse	Elipsa
+	Accept and Go to Conflict	Akceptuj i przejdź do konfliktu
+	Changes undone.	Zmiany cofnięte.
+	Choose a new shortcut for this command, or leave it without one.	Wybierz nowy skrót dla tego polecenia lub zostaw je bez skrótu.
+	Put this command's shortcuts back as they were	Przywróć skróty tego polecenia
+	Take the shortcut from the other command and select it	Odbierz skrót drugiemu poleceniu i zaznacz je
+	Undo Changes	Cofnij zmiany
+	{shortcut} is reserved by the system and can't be assigned.	{shortcut} jest zarezerwowany przez system i nie można go przypisać.
+	Low-Latency Drawing (vsync off, applies at next launch)	Rysowanie z małym opóźnieniem (bez synchronizacji pionowej, od następnego uruchomienia)
+# Free Transform: a new layer while the box is open (#5859)
+	Free Transform is still being applied; try again when it has finished.	Przekształcanie swobodne jest nadal stosowane; spróbuj ponownie, gdy się zakończy.
+	The transform couldn't be applied.	Nie można zastosować przekształcenia.
+# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
+	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	Warstwy potrzebują {needed} pamięci GPU; budżet zostawia im {budget}.
+	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	Ustaw Pamięć GPU w Preferencje › Wydajność na tyle, ile zmieści Twoja karta graficzna, najwyżej 3/8 jej pamięci. Automatycznie podąża za Użyciem pamięci, w granicach jednej czwartej pamięci tego komputera i 3/8 pamięci karty, i nie wlicza dokumentu przy karcie o znanej pamięci. Dopóki się nie mieszczą, pasek stanu pokazuje Pamięć GPU pełna.
+	GPU Memory Full	Pamięć GPU pełna
+	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	Warstwy potrzebują {needed} pamięci GPU i mogą zająć {budget}, więc edycje, które odświeżają cały dokument, robią to na CPU. Kliknij, aby ustawić Pamięć GPU.
+	GPU memory budget: {budget}	Budżet pamięci GPU: {budget}
+	This document's layers: {needed} of {budget} for layers	Warstwy tego dokumentu: {needed} z {budget} na warstwy
+	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	Warstwy tego dokumentu potrzebują {needed}, ale mogą zająć {budget}: odświeżanie całego dokumentu używa CPU
+	GPU Memory (MB, 0 = Automatic)	Pamięć GPU (MB, 0 = Automatycznie)
+	Replace	Zastąp
+	{name} was changed by another app after it was opened or saved here.	Plik {name} został zmieniony przez inną aplikację po otwarciu lub zapisaniu go tutaj.
+	Replace it with this document, or cancel and use File › Save As to keep both.	Zastąp go tym dokumentem albo anuluj i użyj Plik › Zapisz jako, aby zachować oba.
+	Decrease Brush Size	Zmniejsz rozmiar pędzla
+	Increase Brush Size	Zwiększ rozmiar pędzla
+	Decrease Brush Hardness	Zmniejsz twardość pędzla
+	Increase Brush Hardness	Zwiększ twardość pędzla
 cameraRaw	Adjust	Dostosuj
 cameraRaw	Apply Favorite Preset	Zastosuj ulubione ustawienie wstępne
 cameraRaw	Apply Previous Settings	Zastosuj poprzednie ustawienia
@@ -3847,108 +3998,20 @@ cameraRaw	Zoom and Pan	Powiększanie i przesuwanie
 	White Balance tool (I): click a neutral area	Narzędzie Balans bieli (I): kliknij neutralny obszar
 	Zoom Tool (Z)	Narzędzie Lupa (Z)
 cameraRaw	Type	Typ
-	Demosaic	Demozaikowanie
-	How the camera's colour filter mosaic is filled in. It is applied when the file opens; the preview shows the method it was opened with.	Sposób uzupełniania mozaiki filtra barwnego aparatu. Stosowany przy otwieraniu pliku; podgląd pokazuje metodę, z którą plik został otwarty.
-	AHD (adaptive homogeneity)	AHD (adaptacyjna jednorodność)
-	Malvar–He–Cutler	Malvar–He–Cutler
-	Hirakawa–Parks: the cleanest edges and the least colour fringing, the slowest.	Hirakawa–Parks: najczystsze krawędzie i najmniej barwnych obwódek, najwolniejsza.
-	Gradient-corrected interpolation: sharp and fast, with some colour fringing on fine detail.	Interpolacja z korekcją gradientu: ostra i szybka, z niewielkimi barwnymi obwódkami na drobnych szczegółach.
-	The fastest and the softest, with colour fringing on fine detail.	Najszybsza i najmiększa, z barwnymi obwódkami na drobnych szczegółach.
-	Object Finder	Wyszukiwanie obiektów
-	No object found there — drag a rectangle around it	Nie znaleziono tam obiektu — przeciągnij wokół niego prostokąt
-	Remove after each stroke	Usuwaj po każdym pociągnięciu
-	Apply the removal ({key})	Zastosuj usuwanie ({key})
-	Strokes to remove: {n} (Enter applies, Esc cancels)	Pociągnięcia do usunięcia: {n} (Enter stosuje, Esc anuluje)
-	Show home recent files	Pokaż ostatnie pliki na ekranie głównym
-	Clear Brush Controls	Wyczyść elementy sterujące pędzlem
-	Reset All Locked Settings	Resetuj wszystkie zablokowane ustawienia
-	Copy Texture to Other Tools	Kopiuj teksturę do innych narzędzi
+	Memory Usage	Użycie pamięci
+	Per-document RAM limit (MB)	Limit RAM na dokument (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	Zainstalowany RAM: {ram} MB; ten limit: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Ogranicza piksele plus Historię każdego otwartego dokumentu. Najstarsze stany cofania są usuwane po przekroczeniu limitu.
+	Applies immediately when saved. Memory is not reserved in advance.	Obowiązuje zaraz po zapisaniu. Pamięć nie jest rezerwowana z góry.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Przy pamięci GPU = Automatycznie ogranicza też budżet GPU. Limit to 1/4 RAM i, jeśli znane, 3/8 pamięci karty, minimum 512 MB. Wyższy limit nie zwiększa budżetu GPU.
+	Use	Użyj
+	In Front	Z przodu
+	Behind	Z tyłu
 
-# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
-	Load Actions…	Wczytaj operacje…
-	Save Actions…	Zapisz operacje…
-	{name} (Photoshop)	{name} (Photoshop)
-	{message} ({note})	{message} ({note})
-@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	Wczytano {n} operację z {file}|Wczytano {n} operacje z {file}|Wczytano {n} operacji z {file}
-@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} krok nie ma jeszcze odpowiednika w PhotoCraft|{n} kroki nie mają jeszcze odpowiednika w PhotoCraft|{n} kroków nie ma jeszcze odpowiednika w PhotoCraft
-@plural	Saved {n} action to {file}|Saved {n} actions to {file}	Zapisano {n} operację do {file}|Zapisano {n} operacje do {file}|Zapisano {n} operacji do {file}
-@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Pominięto {n} krok bez odpowiednika w Photoshopie|Pominięto {n} kroki bez odpowiednika w Photoshopie|Pominięto {n} kroków bez odpowiednika w Photoshopie
+# DDS Options (#1327)
+	DDS Options	Opcje DDS
+	Compression	Kompresja
+	Generate Mipmaps	Generuj mipmapy
 
-	File Naming	Nazewnictwo plików
-	Starting serial	Początkowy numer seryjny
-# Actions panel: set folders, dialog toggle, Insert Stop
-	Insert Stop…	Wstaw zatrzymanie…
-	Save Set…	Zapisz zestaw…
-	Message:	Komunikat:
-	Allow Continue	Zezwól na kontynuację
-	Show dialog during playback	Pokazuj okno dialogowe podczas odtwarzania
-	Select an action first	Najpierw wybierz operację
-	Action playback stopped	Odtwarzanie operacji zatrzymane
-	Step {step} is waiting for its dialog	Krok {step} czeka na swoje okno dialogowe
-@plural	{n} action|{n} actions	{n} operacja|{n} operacje|{n} operacji
-	Background (Default)	Tło (domyślne)
-# Batch / Image Processor
-	Include All Subfolders	Uwzględnij wszystkie podfoldery
-	Auto Add/Delete	Automatyczne dodawanie/usuwanie
-
-# Native Windows printing qualification
-	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	Nie włączaj też odbicia lustrzanego w ustawieniach druku: oba odbicia wzajemnie się znoszą.
-	Print Settings…	Ustawienia druku…
-	Remember to turn off the printer's own colour management in Print Settings…	Pamiętaj o wyłączeniu zarządzania kolorami drukarki w ustawieniach druku…
-	Sent to {printer}	Wysłano do {printer}
-	set in Print Settings…	ustawiane w ustawieniach druku…
-	ICO is limited to 256 × 256 pixels	ICO jest ograniczony do 256 × 256 pikseli
-# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
-	Use the embedded profile ({profile})	Użyj osadzonego profilu ({profile})
-	Convert to the working space ({profile})	Konwertuj na przestrzeń roboczą ({profile})
-	Remember this choice for future images	Zapamiętaj ten wybór dla kolejnych obrazów
-	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	Pytanie można włączyć ponownie opcją Ask On Mismatch w Edycja › Ustawienia kolorów.
-	Button Mode	Tryb przycisku
-	Button Mode On	Tryb przycisku włączony
-
-# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
-	Darken Interface	Przyciemnij interfejs
-	Lighten Interface	Rozjaśnij interfejs
-# Bevel & Emboss Technique.
-	Technique	Technika
-	Chisel Hard	Dłuto twarde
-	Chisel Soft	Dłuto miękkie
-	Open color-less EXR as ACEScg	Otwieraj EXR bez profilu koloru jako ACEScg
-
-# View › Guides › right-click a guide
-	Edit Selected Guides	Edytuj zaznaczone prowadnice
-	Clear Selected Guides	Usuń zaznaczone prowadnice
-	Delete this set	Usuń ten zestaw
-	New Set…	Nowy zestaw…
-	PhotoCraft Defaults	Domyślne PhotoCraft
-	Save a list of these shortcuts as a web page	Zapisz listę tych skrótów jako stronę internetową
-	Save the changes to this set	Zapisz zmiany w tym zestawie
-	Save these shortcuts as a .kys file	Zapisz te skróty jako plik .kys
-	Save these shortcuts as a new set	Zapisz te skróty jako nowy zestaw
-	Set deleted.	Zestaw usunięty.
-	Set saved.	Zestaw zapisany.
-	Set:	Zestaw:
-	Summarize…	Podsumuj…
-	There are too many sets: delete one first.	Zestawów jest za dużo: najpierw usuń jeden.
-	set name	nazwa zestawu
-	{set} (modified)	{set} (zmieniony)
-	Accept and Go to Conflict	Akceptuj i przejdź do konfliktu
-	Changes undone.	Zmiany cofnięte.
-	Choose a new shortcut for this command, or leave it without one.	Wybierz nowy skrót dla tego polecenia lub zostaw je bez skrótu.
-	Put this command's shortcuts back as they were	Przywróć skróty tego polecenia
-	Take the shortcut from the other command and select it	Odbierz skrót drugiemu poleceniu i zaznacz je
-	Undo Changes	Cofnij zmiany
-	{shortcut} is reserved by the system and can't be assigned.	{shortcut} jest zarezerwowany przez system i nie można go przypisać.
-	Low-Latency Drawing (vsync off, applies at next launch)	Rysowanie z małym opóźnieniem (bez synchronizacji pionowej, od następnego uruchomienia)
-# Free Transform: a new layer while the box is open (#5859)
-	Free Transform is still being applied; try again when it has finished.	Przekształcanie swobodne jest nadal stosowane; spróbuj ponownie, gdy się zakończy.
-	The transform couldn't be applied.	Nie można zastosować przekształcenia.
-# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
-	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	Warstwy potrzebują {needed} pamięci GPU; budżet zostawia im {budget}.
-	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	Ustaw Pamięć GPU w Preferencje › Wydajność na tyle, ile zmieści Twoja karta graficzna, najwyżej 3/8 jej pamięci. Automatycznie podąża za Użyciem pamięci, w granicach jednej czwartej pamięci tego komputera i 3/8 pamięci karty, i nie wlicza dokumentu przy karcie o znanej pamięci. Dopóki się nie mieszczą, pasek stanu pokazuje Pamięć GPU pełna.
-	GPU Memory Full	Pamięć GPU pełna
-	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	Warstwy potrzebują {needed} pamięci GPU i mogą zająć {budget}, więc edycje, które odświeżają cały dokument, robią to na CPU. Kliknij, aby ustawić Pamięć GPU.
-	GPU memory budget: {budget}	Budżet pamięci GPU: {budget}
-	This document's layers: {needed} of {budget} for layers	Warstwy tego dokumentu: {needed} z {budget} na warstwy
-	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	Warstwy tego dokumentu potrzebują {needed}, ale mogą zająć {budget}: odświeżanie całego dokumentu używa CPU
-	GPU Memory (MB, 0 = Automatic)	Pamięć GPU (MB, 0 = Automatycznie)
+# Graphics Adapter preference (#1885)
+	GPU adapter	Karta GPU

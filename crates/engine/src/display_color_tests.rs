@@ -398,25 +398,6 @@ fn proof_colors_still_apply_on_top() {
     assert_ne!(sig, s.color.display_signature(&d));
 }
 
-/// Pixels a dialog shows ([`crate::display_color::CanvasDisplay::rgba8_of`]) come out as the
-/// canvas shows the same composite: a ProPhoto document's colours are converted, not sent to the
-/// screen as sRGB numbers.
-#[test]
-fn rgba8_of_pixels_matches_the_canvas() {
-    let s = Session::new();
-    for (profile, depth) in [(Builtin::ProPhotoCompat.profile(), SampleType::U16), (Builtin::DisplayP3.profile(), SampleType::U8)] {
-        let d = rgb_doc(Some(profile), [0.7, 0.35, 0.2], depth);
-        let buf = photocraft_compose::flatten(&d);
-        let cd = s.color.canvas_display(&d).unwrap();
-        assert!(!cd.is_identity());
-        assert_eq!(cd.rgba8_of(&buf.px), cd.to_rgba8(&buf).pixels);
-        let numbers = [0.7f32, 0.35, 0.2].map(|v| v * 255.0);
-        let i = (4 * d.size.width as usize + 4) * 4;
-        let px = cd.rgba8_of(&buf.px);
-        assert!(far([0, 1, 2].map(|k| px[i + k] as f32), numbers, 8.0), "{:?}", &px[i..i + 3]);
-    }
-}
-
 #[test]
 fn parallel_linear_encodes_match_the_scalar_curve() {
     // Several parallel pieces, a ragged last one, and HDR, negative and NaN values.

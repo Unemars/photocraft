@@ -1,9 +1,10 @@
 //! Camera Raw's Edit tool: the Edit header (Auto, B&W, HDR), Profile, and the panels in Camera
 //! Raw 16.1.1's order (Light, Color, Effects, Curve, Color Mixer, Color Grading, Detail, Optics,
 //! Geometry, Calibration; its Early Access Lens Blur is left out), laid out as measured in
-//! Photoshop 25.4. Controls
-//! whose processing PhotoCraft does not have yet are shown, stored and round-tripped like the
-//! rest; `photocraft_algo::camera_raw` documents which ones are placeholders.
+//! Photoshop 25.4. Controls whose processing has not been measured against Camera Raw's yet
+//! (Profile › Monochrome, the White Balance menu and tool, Auto, Refine Saturation, the noise
+//! Contrast and Smoothness, Optics, Geometry, Calibration) are laid out and disabled at their
+//! defaults, and nothing is stored for them: each lands with its measurement.
 
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use photocraft_algo::camera_raw::{CameraRaw, Wheel, curve_lut};
@@ -48,7 +49,6 @@ pub(crate) fn without(p: &CameraRaw, id: &str) -> CameraRaw {
         }
         "color" => {
             (q.temperature, q.tint, q.vibrance, q.saturation) = (d.temperature, d.tint, d.vibrance, d.saturation);
-            q.white_balance = d.white_balance;
         }
         "effects" => {
             (q.texture, q.clarity, q.dehaze) = (d.texture, d.clarity, d.dehaze);
@@ -62,10 +62,9 @@ pub(crate) fn without(p: &CameraRaw, id: &str) -> CameraRaw {
                 (d.curve_highlights, d.curve_lights, d.curve_darks, d.curve_shadows, d.curve_splits);
             (q.point_curve, q.point_curve_red, q.point_curve_green, q.point_curve_blue) =
                 (d.point_curve, d.point_curve_red, d.point_curve_green, d.point_curve_blue);
-            q.curve_refine_saturation = d.curve_refine_saturation;
         }
         "mixer" => {
-            (q.hsl_hue, q.hsl_sat, q.hsl_lum, q.gray_mixer) = (d.hsl_hue, d.hsl_sat, d.hsl_lum, d.gray_mixer);
+            (q.hsl_hue, q.hsl_sat, q.hsl_lum) = (d.hsl_hue, d.hsl_sat, d.hsl_lum);
         }
         "grading" => {
             (q.grade_shadows, q.grade_midtones, q.grade_highlights, q.grade_global) = (d.grade_shadows, d.grade_midtones, d.grade_highlights, d.grade_global);
@@ -74,32 +73,10 @@ pub(crate) fn without(p: &CameraRaw, id: &str) -> CameraRaw {
         "detail" => {
             (q.sharpen_amount, q.sharpen_radius, q.sharpen_detail, q.sharpen_masking) =
                 (d.sharpen_amount, d.sharpen_radius, d.sharpen_detail, d.sharpen_masking);
-            (q.noise_luminance, q.noise_luminance_detail, q.noise_luminance_contrast) =
-                (d.noise_luminance, d.noise_luminance_detail, d.noise_luminance_contrast);
-            (q.noise_color, q.noise_color_detail, q.noise_color_smoothness) = (d.noise_color, d.noise_color_detail, d.noise_color_smoothness);
+            (q.noise_luminance, q.noise_luminance_detail, q.noise_color, q.noise_color_detail) =
+                (d.noise_luminance, d.noise_luminance_detail, d.noise_color, d.noise_color_detail);
         }
-        "optics" => {
-            (q.lens_distortion, q.lens_vignette, q.lens_vignette_midpoint) = (d.lens_distortion, d.lens_vignette, d.lens_vignette_midpoint);
-            (q.defringe_purple_amount, q.defringe_purple_hue, q.defringe_green_amount, q.defringe_green_hue) =
-                (d.defringe_purple_amount, d.defringe_purple_hue, d.defringe_green_amount, d.defringe_green_hue);
-        }
-        "geometry" => {
-            q.upright = d.upright;
-            (q.transform_vertical, q.transform_horizontal, q.transform_rotate, q.transform_aspect) =
-                (d.transform_vertical, d.transform_horizontal, d.transform_rotate, d.transform_aspect);
-            (q.transform_scale, q.transform_offset_x, q.transform_offset_y) = (d.transform_scale, d.transform_offset_x, d.transform_offset_y);
-        }
-        "calibration" => {
-            q.calibration_shadows_tint = d.calibration_shadows_tint;
-            (q.calibration_red_hue, q.calibration_red_sat, q.calibration_green_hue, q.calibration_green_sat, q.calibration_blue_hue, q.calibration_blue_sat) = (
-                d.calibration_red_hue,
-                d.calibration_red_sat,
-                d.calibration_green_hue,
-                d.calibration_green_sat,
-                d.calibration_blue_hue,
-                d.calibration_blue_sat,
-            );
-        }
+        // Optics, Geometry and Calibration have no settings yet: their controls are placeholders.
         _ => {}
     }
     q
@@ -119,8 +96,6 @@ struct Edit<'a> {
     p: &'a mut CameraRaw,
     layout: &'a mut CameraRawLayoutState,
     dirty: bool,
-    /// White balance › Auto was chosen: the dialog measures the preview.
-    auto_wb: bool,
 }
 
 impl Edit<'_> {
@@ -145,12 +120,12 @@ fn slider(ui: &mut Ui, dirty: &mut bool, id: &str, label: &'static str, v: &mut 
 pub(crate) fn edit(ui: &mut Ui, d: &mut CameraRawDialog, layout: &mut CameraRawLayoutState) -> bool {
     let mut dirty = false;
     if d.profile_browser {
-        profile_browser(ui, d, &mut dirty);
-        return dirty;
+        profile_browser(ui, d);
+        return false;
     }
-    header(ui, d, &mut dirty);
+    header(ui);
     st::rule(ui);
-    profile_row(ui, d, &mut dirty);
+    profile_row(ui, d);
     st::rule(ui);
     for (id, title) in PANELS {
         let open = layout.open.iter().any(|o| o == id);
@@ -176,10 +151,10 @@ pub(crate) fn edit(ui: &mut Ui, d: &mut CameraRawDialog, layout: &mut CameraRawL
             }
         }
         if layout.open.iter().any(|o| o == id) {
-            let mut e = Edit { p: &mut d.params, layout, dirty: false, auto_wb: false };
+            let mut e = Edit { p: &mut d.params, layout, dirty: false };
             match id {
                 "light" => light(ui, &mut e, &mut d.scope.alt_tone),
-                "color" => color(ui, &mut e, &mut d.wb_picker),
+                "color" => color(ui, &mut e),
                 "effects" => effects(ui, &mut e),
                 "curve" => curve(ui, &mut e, &d.after_histogram, &mut d.curve_state, &mut d.curve_rect),
                 "mixer" => mixer(ui, &mut e),
@@ -191,14 +166,6 @@ pub(crate) fn edit(ui: &mut Ui, d: &mut CameraRawDialog, layout: &mut CameraRawL
                 _ => {}
             }
             dirty |= e.dirty;
-            if e.auto_wb {
-                d.auto_white_balance();
-            }
-            if id == "detail"
-                && let Some(raw) = d.raw_open.as_mut()
-            {
-                crate::camera_raw_ui::demosaic_row(ui, &mut raw.demosaic);
-            }
             ui.add_space(8.0);
         }
         st::rule(ui);
@@ -207,7 +174,7 @@ pub(crate) fn edit(ui: &mut Ui, d: &mut CameraRawDialog, layout: &mut CameraRawL
     dirty
 }
 
-fn header(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
+fn header(ui: &mut Ui) {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), st::ROW), Sense::hover());
     ui.painter().text(pos2(row.left() + st::INSET_L, row.center().y), Align2::LEFT_CENTER, tr("Edit"), crate::theme::semibold(14.0), c.text);
@@ -223,19 +190,13 @@ fn header(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
     let (sep, _) = buttons.allocate_exact_size(vec2(1.0, 22.0), Sense::hover());
     buttons.painter().rect_filled(sep, 0.0, c.rule);
     buttons.add_space(4.0);
-    let bw = st::small_button(&mut buttons, tr("B&W"), true, d.params.monochrome, 30.0).on_hover_text(tl!("Convert to black and white (V)"));
-    if bw.clicked() {
-        d.params.monochrome = !d.params.monochrome;
-        *dirty = true;
-    }
-    let auto = st::small_button(&mut buttons, tr("Auto"), true, false, 28.0).on_hover_text(tl!("Auto tone and color (Ctrl+U)"));
-    if auto.clicked() {
-        d.auto_tone();
-        *dirty = true;
-    }
+    // B&W (the Monochrome profile) and Auto wait for their processing to be measured against
+    // Camera Raw's: laid out, disabled.
+    st::small_button(&mut buttons, tr("B&W"), false, false, 30.0).on_disabled_hover_text(tl!("Not available yet"));
+    st::small_button(&mut buttons, tr("Auto"), false, false, 28.0).on_disabled_hover_text(tl!("Not available yet"));
 }
 
-fn profile_row(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
+fn profile_row(ui: &mut Ui, d: &mut CameraRawDialog) {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), st::ROW), Sense::hover());
     ui.painter().text(pos2(row.left() + st::INSET_L, row.center().y), Align2::LEFT_CENTER, tr("Profile"), st::label_font(), c.label);
@@ -244,15 +205,10 @@ fn profile_row(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
             .max_rect(Rect::from_min_max(pos2(row.left() + 67.0, row.top() + 8.0), pos2(row.right() - 14.0, row.bottom() - 8.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    let mut choice = if d.params.monochrome { 1 } else { 0 };
-    if crate::widgets::dropdown(&mut inner, "cr-profile", &mut choice, &[(0, tr("Color")), (1, tr("Monochrome")), (2, tr("Browse..."))], 128.0) {
-        match choice {
-            2 => d.profile_browser = true,
-            n => {
-                d.params.monochrome = n == 1;
-                *dirty = true;
-            }
-        }
+    // Color is the only profile with processing so far; Monochrome is laid out in the browser.
+    let mut choice = 0;
+    if crate::widgets::dropdown(&mut inner, "cr-profile", &mut choice, &[(0, tr("Color")), (2, tr("Browse..."))], 128.0) && choice == 2 {
+        d.profile_browser = true;
     }
     inner.add_space(10.0);
     let browse = crate::icons::button(&mut inner, "grid-2x2", 22.0, false, tl!("Browse profiles"));
@@ -263,7 +219,7 @@ fn profile_row(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
 
 /// Profile browser: Back, the Basic profiles as thumbnails of the preview, and the other groups
 /// (no creative profiles ship with PhotoCraft yet).
-fn profile_browser(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
+fn profile_browser(ui: &mut Ui, d: &mut CameraRawDialog) {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), st::ROW), Sense::hover());
     let back = ui.interact(Rect::from_min_size(row.min, vec2(80.0, row.height())), ui.id().with("cr-profile-back"), Sense::click());
@@ -274,7 +230,7 @@ fn profile_browser(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
         d.profile_browser = false;
     }
     st::rule(ui);
-    let current = if d.params.monochrome { tr("Monochrome") } else { tr("Color") };
+    let current = tr("Color");
     st::caption(ui, &format!("{current} - {}", tr("Basic")));
     st::rule(ui);
     let mut favorites = false;
@@ -284,18 +240,19 @@ fn profile_browser(ui: &mut Ui, d: &mut CameraRawDialog, dirty: &mut bool) {
     let w = ((ui.available_width() - st::INSET_L * 2.0 - 10.0) / 2.0).max(40.0);
     ui.horizontal(|ui| {
         ui.add_space(st::INSET_L - 6.0);
+        // Color is selected; Monochrome is laid out but disabled until its processing is measured.
         for (mono, label) in [(false, tr("Color")), (true, tr("Monochrome"))] {
             let (r, resp) = ui.allocate_exact_size(vec2(w, w), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, d.params.monochrome == mono, label));
-            if let Some(tex) = if mono { d.mono_tex.as_ref() } else { d.tex.as_ref() } {
-                ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, !mono, !mono, label));
+            if let Some(tex) = d.tex.as_ref() {
+                let tint = if mono { Color32::from_gray(110) } else { Color32::WHITE };
+                ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
             }
             let strip = Rect::from_min_max(pos2(r.left(), r.bottom() - 16.0), r.max);
-            ui.painter().rect_filled(strip, 0.0, if d.params.monochrome == mono { c.accent } else { Color32::from_black_alpha(160) });
+            ui.painter().rect_filled(strip, 0.0, if mono { Color32::from_black_alpha(160) } else { c.accent });
             ui.painter().text(strip.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, label, st::small_font(), Color32::WHITE);
-            if resp.clicked() && d.params.monochrome != mono {
-                d.params.monochrome = mono;
-                *dirty = true;
+            if mono {
+                resp.on_hover_text(tl!("Not available yet"));
             }
             ui.add_space(6.0);
         }
@@ -356,40 +313,26 @@ fn light(ui: &mut Ui, e: &mut Edit, alt: &mut Option<ToneZone>) {
     }
 }
 
-fn color(ui: &mut Ui, e: &mut Edit, picker: &mut bool) {
+fn color(ui: &mut Ui, e: &mut Edit) {
     let c = Acr::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.add_space(st::INSET_L);
         ui.set_min_height(30.0);
         ui.label(egui::RichText::new(tr("White balance")).font(st::label_font()).color(c.label));
         ui.add_space(8.0);
-        let mut wb = e.p.white_balance.clone();
-        if !matches!(wb.as_str(), "asShot" | "auto" | "custom") {
-            wb = "custom".into();
-        }
+        // The menu (As Shot / Auto / Custom) and the White Balance tool wait for Camera Raw's white
+        // balance to be measured: shown as Camera Raw shows them, disabled. The menu reads what the
+        // sliders say.
+        let mut wb = if e.p.temperature == 0.0 && e.p.tint == 0.0 { "asShot".to_string() } else { "custom".to_string() };
         let options = [("asShot".to_string(), tr("As Shot")), ("auto".to_string(), tr("Auto")), ("custom".to_string(), tr("Custom"))];
-        if crate::widgets::dropdown(ui, "cr-wb", &mut wb, &options, 86.0) {
-            match wb.as_str() {
-                "asShot" => (e.p.temperature, e.p.tint) = (0.0, 0.0),
-                // Filled in by the dialog from the preview (gray world).
-                "auto" => e.auto_wb = true,
-                _ => {}
-            }
-            e.p.white_balance = wb;
-            e.dirty = true;
-        }
+        ui.add_enabled_ui(false, |ui| {
+            crate::widgets::dropdown(ui, "cr-wb", &mut wb, &options, 86.0);
+        });
         ui.add_space(6.0);
-        let pick = crate::icons::button(ui, "pipette", 22.0, *picker, tl!("White Balance tool (I): click a neutral area"));
-        if pick.clicked() {
-            *picker = !*picker;
-        }
+        ui.add_enabled(false, egui::Button::image(crate::icons::image("pipette", 14.0, c.label)).frame(false)).on_disabled_hover_text(tl!("Not available yet"));
     });
-    let before = (e.p.temperature, e.p.tint);
     slider(ui, &mut e.dirty, "temperature", "Temperature", &mut e.p.temperature, &Spec::centred(100.0).colors(st::temperature_stops()));
     slider(ui, &mut e.dirty, "tint", "Tint", &mut e.p.tint, &Spec::centred(100.0).colors(st::tint_stops()));
-    if before != (e.p.temperature, e.p.tint) {
-        e.p.white_balance = "custom".into();
-    }
     slider(ui, &mut e.dirty, "vibrance", "Vibrance", &mut e.p.vibrance, &Spec::centred(100.0).colors(st::saturation_stops()));
     slider(ui, &mut e.dirty, "saturation", "Saturation", &mut e.p.saturation, &Spec::centred(100.0).colors(st::saturation_stops()));
 }
@@ -564,19 +507,9 @@ fn curve(
     }
     ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, c.rule), egui::StrokeKind::Outside);
     if mode == 1 {
-        let mut refine = e.p.curve_refine_saturation;
-        if st::slider(
-            ui,
-            "refineSaturation",
-            tr("Refine Saturation"),
-            &mut refine,
-            &Spec::amount(100.0, 100.0).enabled(!crate::camera_raw_ui::is_linear(&e.p.point_curve)),
-        )
-        .changed
-        {
-            e.p.curve_refine_saturation = refine;
-            e.dirty = true;
-        }
+        // Refine Saturation waits for its processing to be measured: laid out, disabled.
+        let mut refine = 100.0;
+        st::slider(ui, "refineSaturation", tr("Refine Saturation"), &mut refine, &Spec::amount(100.0, 100.0).enabled(false));
     }
     // Input / Output of the selected point.
     let sel = state.selected.and_then(|i| points.get(i).copied());
@@ -629,6 +562,13 @@ fn parametric_preview(p: &CameraRaw) -> Vec<f32> {
 }
 
 /// The strip under the parametric curve: a gray ramp with the three region split handles.
+/// Split `k` moved to `v`, kept at least 5 from its neighbours (and from 0 and 100).
+fn split_within_neighbours(splits: &[f32; 3], k: usize, v: f32) -> f32 {
+    let lo = if k == 0 { 5.0 } else { splits[k - 1] + 5.0 };
+    let hi = if k == 2 { 95.0 } else { splits[k + 1] - 5.0 };
+    v.clamp(lo, hi.max(lo))
+}
+
 fn splits(ui: &mut Ui, rect: Rect, e: &mut Edit) {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
@@ -644,21 +584,21 @@ fn splits(ui: &mut Ui, rect: Rect, e: &mut Edit) {
     for k in 0..3 {
         let x = strip.left() + e.p.curve_splits[k] / 100.0 * strip.width();
         let hit = Rect::from_center_size(pos2(x, strip.center().y), vec2(12.0, 16.0));
-        let r = ui.interact(hit, ui.id().with(("cr-split", k)), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-        if r.dragged()
-            && let Some(p) = r.interact_pointer_pos()
-        {
-            let lo = if k == 0 { 5.0 } else { e.p.curve_splits[k - 1] + 5.0 };
-            let hi = if k == 2 { 95.0 } else { e.p.curve_splits[k + 1] - 5.0 };
-            let v = ((p.x - strip.left()) / strip.width().max(1.0) * 100.0).round().clamp(lo, hi.max(lo));
+        let r = ui.interact(hit, ui.id().with(("cr-split", k)), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        // A split stays at least 5 from its neighbours, dragged or reset by a double-click.
+        let target = if st::reset_click(&r) {
+            Some([25.0, 50.0, 75.0][k])
+        } else if r.dragged() {
+            r.interact_pointer_pos().map(|p| ((p.x - strip.left()) / strip.width().max(1.0) * 100.0).round())
+        } else {
+            None
+        };
+        if let Some(v) = target {
+            let v = split_within_neighbours(&e.p.curve_splits, k, v);
             if v != e.p.curve_splits[k] {
                 e.p.curve_splits[k] = v;
                 e.dirty = true;
             }
-        }
-        if r.double_clicked() {
-            e.p.curve_splits[k] = [25.0, 50.0, 75.0][k];
-            e.dirty = true;
         }
         let center = pos2(x, strip.center().y);
         ui.painter().circle_filled(center, 4.5, Color32::WHITE);
@@ -692,17 +632,10 @@ fn paint_luma_histogram(p: &egui::Painter, rect: Rect, h: &photocraft_algo::hist
 fn mixer(ui: &mut Ui, e: &mut Edit) {
     let tabs = [tr("Mixer"), tr("Point Color")];
     let sel = usize::from(e.layout.mixer == "pointColor");
-    if let Some(i) = st::text_tabs(ui, "cr-mixer-tabs", &tabs, sel, !e.p.monochrome) {
+    if let Some(i) = st::text_tabs(ui, "cr-mixer-tabs", &tabs, sel, true) {
         e.layout.mixer = if i == 1 { "pointColor".into() } else { "mixer".into() };
     }
     ui.add_space(4.0);
-    if e.p.monochrome {
-        st::caption(ui, tr("B&W Mix"));
-        for (k, name) in BANDS.iter().enumerate() {
-            slider(ui, &mut e.dirty, &format!("gray{k}"), name, &mut e.p.gray_mixer[k], &Spec::centred(100.0).colors(st::band_stops(k)));
-        }
-        return;
-    }
     if e.layout.mixer == "pointColor" {
         point_color(ui, e);
         return;
@@ -717,8 +650,11 @@ fn mixer(ui: &mut Ui, e: &mut Edit) {
         if crate::widgets::dropdown(ui, "cr-mixer-adjust", &mut adjust, &[("hsl".to_string(), tr("HSL")), ("color".to_string(), tr("Color"))], 120.0) {
             e.layout.mixer_adjust = adjust;
         }
-        let tat = crate::icons::button(ui, "scan-eye", 22.0, false, tl!("Targeted Adjustment Tool: drag in the image to adjust the colour under the pointer"));
-        tat.on_disabled_hover_text(tl!("Not available yet"));
+        // The Targeted Adjustment Tool is not available yet: laid out, disabled.
+        ui.add_enabled_ui(false, |ui| {
+            crate::icons::button(ui, "scan-eye", 22.0, false, tl!("Targeted Adjustment Tool: drag in the image to adjust the colour under the pointer"))
+                .on_disabled_hover_text(tl!("Not available yet"));
+        });
     });
     if e.layout.mixer_adjust == "color" {
         // One colour at a time: eight swatches, then its hue, saturation and luminance.
@@ -727,20 +663,26 @@ fn mixer(ui: &mut Ui, e: &mut Edit) {
         for (k, band) in BANDS.iter().enumerate() {
             let r = Rect::from_center_size(pos2(row.left() + st::INSET_L + w * (k as f32 + 0.5), row.center().y), vec2(16.0, 16.0));
             let resp = ui.interact(r, ui.id().with(("cr-swatch", k)), Sense::click()).on_hover_text(tr(band));
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, e.layout.mixer_color == k, tr(band)));
             let col = st::hsv(photocraft_algo::camera_raw::HSL_BANDS[k], 0.85, 0.85);
             ui.painter().circle_filled(r.center(), 7.0, col);
             if e.layout.mixer_color == k {
                 ui.painter().circle_stroke(r.center(), 9.5, Stroke::new(1.5, c.text));
             }
-            if resp.clicked() {
+            if resp.clicked() && e.layout.mixer_color != k {
+                // Text typed into the previous colour's boxes must not land in this one.
+                for id in COLOR_ROWS {
+                    st::forget_typed_value(ui, id);
+                }
                 e.layout.mixer_color = k;
             }
         }
         let k = e.layout.mixer_color.min(7);
-        slider(ui, &mut e.dirty, "colorHue", "Hue", &mut e.p.hsl_hue[k], &Spec::centred(100.0).colors(st::band_stops(k)));
+        let [hue, sat, lum] = COLOR_ROWS;
+        slider(ui, &mut e.dirty, hue, "Hue", &mut e.p.hsl_hue[k], &Spec::centred(100.0).colors(st::band_stops(k)));
         let base = st::hsv(photocraft_algo::camera_raw::HSL_BANDS[k], 0.85, 0.85);
-        slider(ui, &mut e.dirty, "colorSat", "Saturation", &mut e.p.hsl_sat[k], &Spec::centred(100.0).colors(vec![Color32::from_gray(130), base]));
-        slider(ui, &mut e.dirty, "colorLum", "Luminance", &mut e.p.hsl_lum[k], &Spec::centred(100.0).colors(vec![Color32::BLACK, base, Color32::WHITE]));
+        slider(ui, &mut e.dirty, sat, "Saturation", &mut e.p.hsl_sat[k], &Spec::centred(100.0).colors(vec![Color32::from_gray(130), base]));
+        slider(ui, &mut e.dirty, lum, "Luminance", &mut e.p.hsl_lum[k], &Spec::centred(100.0).colors(vec![Color32::BLACK, base, Color32::WHITE]));
         return;
     }
     const TABS: [&str; 4] = ["hue", "saturation", "luminance", "all"];
@@ -766,6 +708,9 @@ fn mixer(ui: &mut Ui, e: &mut Edit) {
         }
     }
 }
+
+/// The Color Mixer's Color rows: the same three rows show whichever colour is picked.
+const COLOR_ROWS: [&str; 3] = ["colorHue", "colorSat", "colorLum"];
 
 /// Point Color (Camera Raw 15+): samples picked from the image get their own hue, saturation and
 /// luminance shifts. Not available yet: the layout is in place, the controls are disabled.
@@ -907,7 +852,7 @@ fn wheel(ui: &mut Ui, id: &str, w: &mut Wheel, radius: f32, labelled: bool) -> b
             changed = true;
         }
     }
-    if resp.double_clicked() {
+    if st::reset_click(&resp) {
         w.sat = 0.0;
         w.hue = 0.0;
         changed = true;
@@ -977,17 +922,12 @@ fn detail(ui: &mut Ui, e: &mut Edit) {
                     &mut open,
                     |ui| st::slider(ui, "noiseLuminance", tr(title), &mut p.noise_luminance, &Spec::amount(100.0, 0.0)).changed,
                     |ui| {
-                        let mut ch =
+                        let ch =
                             st::slider(ui, "noiseLuminanceDetail", tr("Detail"), &mut p.noise_luminance_detail, &Spec::amount(100.0, 50.0).enabled(active))
                                 .changed;
-                        ch |= st::slider(
-                            ui,
-                            "noiseLuminanceContrast",
-                            tr("Contrast"),
-                            &mut p.noise_luminance_contrast,
-                            &Spec::amount(100.0, 0.0).enabled(active),
-                        )
-                        .changed;
+                        // Contrast waits for its processing to be measured: laid out, disabled.
+                        let mut contrast = 0.0;
+                        st::slider(ui, "noiseLuminanceContrast", tr("Contrast"), &mut contrast, &Spec::amount(100.0, 0.0).enabled(false));
                         ch
                     },
                 )
@@ -1000,11 +940,11 @@ fn detail(ui: &mut Ui, e: &mut Edit) {
                     &mut open,
                     |ui| st::slider(ui, "noiseColor", tr(title), &mut p.noise_color, &Spec::amount(100.0, 0.0)).changed,
                     |ui| {
-                        let mut ch =
+                        let ch =
                             st::slider(ui, "noiseColorDetail", tr("Detail"), &mut p.noise_color_detail, &Spec::amount(100.0, 50.0).enabled(active)).changed;
-                        ch |=
-                            st::slider(ui, "noiseColorSmoothness", tr("Smoothness"), &mut p.noise_color_smoothness, &Spec::amount(100.0, 50.0).enabled(active))
-                                .changed;
+                        // Smoothness waits for its processing to be measured: laid out, disabled.
+                        let mut smoothness = 50.0;
+                        st::slider(ui, "noiseColorSmoothness", tr("Smoothness"), &mut smoothness, &Spec::amount(100.0, 50.0).enabled(false));
                         ch
                     },
                 )
@@ -1017,22 +957,24 @@ fn detail(ui: &mut Ui, e: &mut Edit) {
     st::note(ui, tl!("For a more accurate preview, zoom the preview size to 100% or larger when adjusting the controls in this panel."), false);
 }
 
+/// Optics: Distortion, the lens Vignette and Defringe wait for their processing to be measured
+/// against Camera Raw's. The panel is laid out as Camera Raw's, every control disabled at its
+/// default, and nothing is stored.
 fn optics(ui: &mut Ui, e: &mut Edit) {
-    slider(ui, &mut e.dirty, "lensDistortion", "Distortion", &mut e.p.lens_distortion, &Spec::centred(100.0));
+    let mut distortion = 0.0;
+    st::slider(ui, "lensDistortion", tr("Distortion"), &mut distortion, &Spec::centred(100.0).enabled(false));
     let mut open = e.group_open("lensVignette");
-    let p = &mut *e.p;
-    let active = p.lens_vignette != 0.0;
-    e.dirty |= st::group(
+    let (mut vignette, mut midpoint) = (0.0, 50.0);
+    st::group(
         ui,
         "lensVignette",
         &mut open,
-        |ui| st::slider(ui, "lensVignette", tr("Vignette"), &mut p.lens_vignette, &Spec::centred(100.0)).changed,
-        |ui| st::slider(ui, "lensVignetteMidpoint", tr("Midpoint"), &mut p.lens_vignette_midpoint, &Spec::amount(100.0, 50.0).enabled(active)).changed,
+        |ui| st::slider(ui, "lensVignette", tr("Vignette"), &mut vignette, &Spec::centred(100.0).enabled(false)).changed,
+        |ui| st::slider(ui, "lensVignetteMidpoint", tr("Midpoint"), &mut midpoint, &Spec::amount(100.0, 50.0).enabled(false)).changed,
     );
     e.set_group("lensVignette", open);
     let mut open = e.group_open("defringe");
-    let p = &mut *e.p;
-    e.dirty |= st::boxed_group(ui, "defringe", "droplet", tr("Defringe"), &mut open, |ui| {
+    st::boxed_group(ui, "defringe", "droplet", tr("Defringe"), &mut open, |ui| {
         let c = Acr::get(ui.ctx());
         ui.horizontal(|ui| {
             ui.add_space(st::INSET_L);
@@ -1042,18 +984,21 @@ fn optics(ui: &mut Ui, e: &mut Edit) {
                 .on_disabled_hover_text(tl!("Not available yet"));
         });
         st::note(ui, tl!("Use the eyedropper to sample purple and green areas of fringing that need correction."), true);
-        let mut ch = st::slider(ui, "defringePurple", tr("Purple Amount"), &mut p.defringe_purple_amount, &Spec::amount(20.0, 0.0)).changed;
-        ch |= hue_range(ui, "defringePurpleHue", tr("Purple Hue"), &mut p.defringe_purple_hue, [260.0, 340.0], 10.0);
-        ch |= st::slider(ui, "defringeGreen", tr("Green Amount"), &mut p.defringe_green_amount, &Spec::amount(20.0, 0.0)).changed;
-        ch |= hue_range(ui, "defringeGreenHue", tr("Green Hue"), &mut p.defringe_green_hue, [60.0, 180.0], 10.0);
-        ch
+        let (mut purple, mut green) = (0.0, 0.0);
+        let (mut purple_hue, mut green_hue) = ([30.0, 70.0], [40.0, 60.0]);
+        st::slider(ui, "defringePurple", tr("Purple Amount"), &mut purple, &Spec::amount(20.0, 0.0).enabled(false));
+        hue_range(ui, "defringePurpleHue", tr("Purple Hue"), &mut purple_hue, [260.0, 340.0], 10.0, false);
+        st::slider(ui, "defringeGreen", tr("Green Amount"), &mut green, &Spec::amount(20.0, 0.0).enabled(false));
+        hue_range(ui, "defringeGreenHue", tr("Green Hue"), &mut green_hue, [60.0, 180.0], 10.0, false);
+        false
     });
     e.set_group("defringe", open);
+    st::note(ui, tl!("Not available yet"), true);
 }
 
 /// A two-knob range slider (Defringe hue windows): `lo / hi` in 0..=100 at least `gap` apart,
 /// over a hue ramp spanning `hues` (degrees).
-fn hue_range(ui: &mut Ui, id: &str, label: &str, v: &mut [f32; 2], hues: [f32; 2], gap: f32) -> bool {
+fn hue_range(ui: &mut Ui, id: &str, label: &str, v: &mut [f32; 2], hues: [f32; 2], gap: f32, enabled: bool) -> bool {
     let c = Acr::get(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), st::SLIDER_ROW + 2.0), Sense::hover());
     let p = ui.painter().clone();
@@ -1076,12 +1021,15 @@ fn hue_range(ui: &mut Ui, id: &str, label: &str, v: &mut [f32; 2], hues: [f32; 2
     let mut changed = false;
     for k in 0..2 {
         let x = track.left() + v[k].clamp(0.0, 100.0) / 100.0 * track.width();
-        let r = ui.interact(Rect::from_center_size(pos2(x, track.center().y), vec2(12.0, 16.0)), ui.id().with((id, k)), Sense::drag());
-        if r.dragged()
+        let sense = if enabled { Sense::drag() } else { Sense::hover() };
+        let r = ui.interact(Rect::from_center_size(pos2(x, track.center().y), vec2(12.0, 16.0)), ui.id().with((id, k)), sense);
+        if enabled
+            && r.dragged()
             && let Some(q) = r.interact_pointer_pos()
         {
             let nv = ((q.x - track.left()) / track.width().max(1.0) * 100.0).round();
-            let nv = if k == 0 { nv.clamp(0.0, v[1] - gap) } else { nv.clamp(v[0] + gap, 100.0) };
+            // A stored range narrower than `gap` must not invert the bounds (`clamp` panics then).
+            let nv = if k == 0 { nv.clamp(0.0, (v[1] - gap).max(0.0)) } else { nv.clamp((v[0] + gap).min(100.0), 100.0) };
             if nv != v[k] {
                 v[k] = nv;
                 changed = true;
@@ -1096,9 +1044,10 @@ fn hue_range(ui: &mut Ui, id: &str, label: &str, v: &mut [f32; 2], hues: [f32; 2
     changed
 }
 
+/// Geometry: Upright and the Manual Transformations wait for their processing to be measured
+/// against Camera Raw's. Laid out as Camera Raw's, disabled at the defaults, nothing stored.
 fn geometry(ui: &mut Ui, e: &mut Edit) {
     st::caption(ui, tr("Upright"));
-    const MODES: [&str; 6] = ["off", "auto", "level", "vertical", "full", "guided"];
     let tips = [
         tr("Disable Upright"),
         tr("Auto: apply balanced perspective corrections"),
@@ -1107,98 +1056,89 @@ fn geometry(ui: &mut Ui, e: &mut Edit) {
         tr("Full: apply level, horizontal, and vertical perspective corrections"),
         tr("Guided: draw two or more guides to customize perspective corrections"),
     ];
-    let sel = MODES.iter().position(|m| *m == e.p.upright);
-    let clicked = st::icon_strip(ui, "cr-upright", 6, sel, 28.0, &tips, |p, r, i, col| {
-        let s = Stroke::new(1.4, col);
-        let b = r.shrink(7.0);
-        match i {
-            0 => {
-                p.circle_stroke(r.center(), 7.0, s);
-                p.line_segment([r.center() + vec2(-5.0, -5.0), r.center() + vec2(5.0, 5.0)], s);
-            }
-            1 => {
-                p.text(r.center(), Align2::CENTER_CENTER, "A", crate::theme::semibold(15.0), col);
-            }
-            2 => {
-                p.rect_stroke(b, 0.0, s, egui::StrokeKind::Inside);
-                p.line_segment([b.left_center(), b.right_center()], s);
-            }
-            3 => {
-                p.rect_stroke(b, 0.0, s, egui::StrokeKind::Inside);
-                for f in [0.33, 0.66] {
-                    p.line_segment([pos2(b.left() + b.width() * f, b.top()), pos2(b.left() + b.width() * f, b.bottom())], s);
+    ui.add_enabled_ui(false, |ui| {
+        st::icon_strip(ui, "cr-upright", 6, Some(0), 28.0, &tips, |p, r, i, col| {
+            let s = Stroke::new(1.4, col);
+            let b = r.shrink(7.0);
+            match i {
+                0 => {
+                    p.circle_stroke(r.center(), 7.0, s);
+                    p.line_segment([r.center() + vec2(-5.0, -5.0), r.center() + vec2(5.0, 5.0)], s);
+                }
+                1 => {
+                    p.text(r.center(), Align2::CENTER_CENTER, "A", crate::theme::semibold(15.0), col);
+                }
+                2 => {
+                    p.rect_stroke(b, 0.0, s, egui::StrokeKind::Inside);
+                    p.line_segment([b.left_center(), b.right_center()], s);
+                }
+                3 => {
+                    p.rect_stroke(b, 0.0, s, egui::StrokeKind::Inside);
+                    for f in [0.33, 0.66] {
+                        p.line_segment([pos2(b.left() + b.width() * f, b.top()), pos2(b.left() + b.width() * f, b.bottom())], s);
+                    }
+                }
+                4 => {
+                    p.rect_stroke(b, 0.0, s, egui::StrokeKind::Inside);
+                    for f in [0.33, 0.66] {
+                        p.line_segment([pos2(b.left() + b.width() * f, b.top()), pos2(b.left() + b.width() * f, b.bottom())], s);
+                        p.line_segment([pos2(b.left(), b.top() + b.height() * f), pos2(b.right(), b.top() + b.height() * f)], s);
+                    }
+                }
+                _ => {
+                    p.line_segment([pos2(b.left() + 3.0, b.top()), pos2(b.left() + 3.0, b.bottom())], s);
+                    p.line_segment([pos2(b.left(), b.bottom() - 3.0), pos2(b.right(), b.bottom() - 3.0)], s);
+                    p.line_segment([pos2(b.right() - 3.0, b.top()), pos2(b.right() - 3.0, b.bottom() - 3.0)], s);
                 }
             }
-            4 => {
-                p.rect_stroke(b, 0.0, s, egui::StrokeKind::Inside);
-                for f in [0.33, 0.66] {
-                    p.line_segment([pos2(b.left() + b.width() * f, b.top()), pos2(b.left() + b.width() * f, b.bottom())], s);
-                    p.line_segment([pos2(b.left(), b.top() + b.height() * f), pos2(b.right(), b.top() + b.height() * f)], s);
-                }
-            }
-            _ => {
-                p.line_segment([pos2(b.left() + 3.0, b.top()), pos2(b.left() + 3.0, b.bottom())], s);
-                p.line_segment([pos2(b.left(), b.bottom() - 3.0), pos2(b.right(), b.bottom() - 3.0)], s);
-                p.line_segment([pos2(b.right() - 3.0, b.top()), pos2(b.right() - 3.0, b.bottom() - 3.0)], s);
-            }
-        }
+        });
     });
-    if let Some(i) = clicked {
-        let mode = if sel == Some(i) && i != 0 { "off" } else { MODES[i] };
-        if e.p.upright != mode {
-            e.p.upright = mode.into();
-            e.dirty = true;
-        }
-    }
     st::note(ui, tl!("For best results, apply lens corrections first."), true);
     let mut open = e.group_open("manualTransformations");
-    let p = &mut *e.p;
-    e.dirty |= st::boxed_group(ui, "manualTransformations", "scaling", tr("Manual Transformations"), &mut open, |ui| {
-        let mut ch = st::slider(ui, "transformVertical", tr("Vertical"), &mut p.transform_vertical, &Spec::centred(100.0)).changed;
-        ch |= st::slider(ui, "transformHorizontal", tr("Horizontal"), &mut p.transform_horizontal, &Spec::centred(100.0)).changed;
-        ch |= st::slider(ui, "transformRotate", tr("Rotate"), &mut p.transform_rotate, &Spec::centred(10.0).decimals(1)).changed;
-        ch |= st::slider(ui, "transformAspect", tr("Aspect"), &mut p.transform_aspect, &Spec::centred(100.0)).changed;
-        ch |= st::slider(ui, "transformScale", tr("Scale"), &mut p.transform_scale, &Spec::range(50.0, 150.0, 100.0)).changed;
-        ch |= st::slider(ui, "transformOffsetX", tr("Offset X"), &mut p.transform_offset_x, &Spec::centred(100.0).decimals(1)).changed;
-        ch |= st::slider(ui, "transformOffsetY", tr("Offset Y"), &mut p.transform_offset_y, &Spec::centred(100.0).decimals(1)).changed;
-        ch
+    st::boxed_group(ui, "manualTransformations", "scaling", tr("Manual Transformations"), &mut open, |ui| {
+        let mut v = [0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0];
+        st::slider(ui, "transformVertical", tr("Vertical"), &mut v[0], &Spec::centred(100.0).enabled(false));
+        st::slider(ui, "transformHorizontal", tr("Horizontal"), &mut v[1], &Spec::centred(100.0).enabled(false));
+        st::slider(ui, "transformRotate", tr("Rotate"), &mut v[2], &Spec::centred(10.0).decimals(1).enabled(false));
+        st::slider(ui, "transformAspect", tr("Aspect"), &mut v[3], &Spec::centred(100.0).enabled(false));
+        st::slider(ui, "transformScale", tr("Scale"), &mut v[4], &Spec::range(50.0, 150.0, 100.0).enabled(false));
+        st::slider(ui, "transformOffsetX", tr("Offset X"), &mut v[5], &Spec::centred(100.0).decimals(1).enabled(false));
+        st::slider(ui, "transformOffsetY", tr("Offset Y"), &mut v[6], &Spec::centred(100.0).decimals(1).enabled(false));
+        false
     });
     e.set_group("manualTransformations", open);
+    st::note(ui, tl!("Not available yet"), true);
 }
 
-fn calibration(ui: &mut Ui, e: &mut Edit) {
-    let mut process = e.p.process_version;
+/// Calibration: the process version, the Shadows tint and the primaries wait for their processing
+/// to be measured against Camera Raw's. Laid out as Camera Raw's, disabled, nothing stored.
+fn calibration(ui: &mut Ui, _e: &mut Edit) {
     ui.horizontal(|ui| {
         ui.add_space(st::INSET_L);
         ui.set_min_height(30.0);
         let c = Acr::get(ui.ctx());
         ui.label(egui::RichText::new(tr("Process")).font(st::label_font()).color(c.label));
         ui.add_space(8.0);
+        let mut process = 6u32;
         let options =
             [(6u32, tr("Version 6 (Current)")), (5, tr("Version 5")), (4, tr("Version 4")), (3, tr("Version 3")), (2, tr("Version 2")), (1, tr("Version 1"))];
-        if crate::widgets::dropdown(ui, "cr-process", &mut process, &options, 150.0) {
-            e.p.process_version = process;
-            e.dirty = true;
-        }
+        ui.add_enabled_ui(false, |ui| {
+            crate::widgets::dropdown(ui, "cr-process", &mut process, &options, 150.0);
+        });
     });
     st::caption(ui, tr("Shadows"));
-    slider(ui, &mut e.dirty, "shadowsTint", "Tint", &mut e.p.calibration_shadows_tint, &Spec::centred(100.0).colors(st::tint_stops()));
-    let p = &mut *e.p;
-    let rows: [(&str, f32, &mut f32, &mut f32); 3] = [
-        ("Red Primary", 0.0, &mut p.calibration_red_hue, &mut p.calibration_red_sat),
-        ("Green Primary", 120.0, &mut p.calibration_green_hue, &mut p.calibration_green_sat),
-        ("Blue Primary", 240.0, &mut p.calibration_blue_hue, &mut p.calibration_blue_sat),
-    ];
-    let mut ch = false;
-    for (title, hue, h, s) in rows {
+    let mut tint = 0.0;
+    st::slider(ui, "shadowsTint", tr("Tint"), &mut tint, &Spec::centred(100.0).colors(st::tint_stops()).enabled(false));
+    for (title, hue) in [("Red Primary", 0.0), ("Green Primary", 120.0), ("Blue Primary", 240.0)] {
         ui.add_space(4.0);
         st::caption(ui, tr(title));
+        let (mut h, mut s) = (0.0, 0.0);
         let hues = vec![st::hsv(hue - 35.0, 0.6, 0.62), st::hsv(hue, 0.6, 0.62), st::hsv(hue + 35.0, 0.6, 0.62)];
-        ch |= st::slider(ui, &format!("{title}Hue"), tr("Hue"), h, &Spec::centred(100.0).colors(hues)).changed;
+        st::slider(ui, &format!("{title}Hue"), tr("Hue"), &mut h, &Spec::centred(100.0).colors(hues).enabled(false));
         let sats = vec![st::hsv(hue, 0.15, 0.58), st::hsv(hue, 0.65, 0.58)];
-        ch |= st::slider(ui, &format!("{title}Sat"), tr("Saturation"), s, &Spec::centred(100.0).colors(sats)).changed;
+        st::slider(ui, &format!("{title}Sat"), tr("Saturation"), &mut s, &Spec::centred(100.0).colors(sats).enabled(false));
     }
-    e.dirty |= ch;
+    st::note(ui, tl!("Not available yet"), true);
 }
 
 #[cfg(test)]
@@ -1215,27 +1155,41 @@ mod tests {
             hsl_sat: [5.0; 8],
             grade_balance: 20.0,
             sharpen_amount: 40.0,
-            lens_distortion: 10.0,
-            transform_rotate: 2.0,
-            calibration_red_hue: 10.0,
             ..Default::default()
         };
+        // Optics, Geometry and Calibration have no settings yet: their controls are placeholders.
+        let placeholders = ["optics", "geometry", "calibration"];
+        let with_settings: Vec<&str> = PANELS.iter().map(|(id, _)| *id).filter(|id| !placeholders.contains(id)).collect();
         let mut all_reset = edited_all.clone();
-        for (id, _) in PANELS {
+        for &id in &with_settings {
             assert!(edited(&edited_all, id), "{id} has an edit in the fixture");
             let without_one = without(&edited_all, id);
             assert!(!edited(&without_one, id));
             // Every other panel keeps its edit.
-            for (other, _) in PANELS.iter().filter(|(o, _)| *o != id) {
+            for &other in with_settings.iter().filter(|o| **o != id) {
                 assert!(edited(&without_one, other), "hiding {id} must not reset {other}");
             }
             all_reset = without(&all_reset, id);
         }
         assert_eq!(all_reset, CameraRaw::default());
         assert!(!edited(&CameraRaw::default(), "light"));
+        for id in placeholders {
+            assert!(!edited(&edited_all, id), "{id} has nothing to edit yet");
+        }
         // The pipeline's own bookkeeping is never part of a panel.
         let scaled = CameraRaw { pixel_scale: 0.25, encoding_gamma: 1.8, ..Default::default() };
         assert_eq!(visible(&scaled, &PANELS.map(|(id, _)| id.to_string())), scaled);
+    }
+
+    /// A double-click resets a split to its default only as far as its neighbours allow, as a
+    /// drag does: the splits stay in order.
+    #[test]
+    fn a_split_reset_stays_between_its_neighbours() {
+        let splits = [10.0, 15.0, 20.0];
+        assert_eq!(split_within_neighbours(&splits, 0, 25.0), 10.0);
+        assert_eq!(split_within_neighbours(&splits, 2, 75.0), 75.0);
+        assert_eq!(split_within_neighbours(&[25.0, 50.0, 75.0], 1, 50.0), 50.0);
+        assert_eq!(split_within_neighbours(&[40.0, 42.0, 44.0], 1, 50.0), 45.0, "too close to fit: the lower bound wins");
     }
 
     #[test]

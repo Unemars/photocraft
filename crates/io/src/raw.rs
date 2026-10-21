@@ -14,9 +14,8 @@ use std::sync::Arc;
 
 use photocraft_cms::{Builtin, Intent, Profile, Transform};
 use photocraft_codecs::{self as codecs, ChannelLayout, Format, Image, SampleType};
-pub use photocraft_raw::Demosaic;
 use photocraft_raw::{CameraLook, DevelopOptions, Limits, PreviewColorSpace, RawError, Reference, Sensor, WhiteBalance};
-pub use photocraft_raw::{RetoneCache, Tone, retone, retone_with};
+pub use photocraft_raw::{EXTENSIONS, RetoneCache, Tone, retone, retone_with};
 
 use crate::flat::image_to_document;
 use crate::{ImportResult, IoError};
@@ -45,7 +44,7 @@ fn upright_preview(raw: &[u8], jpeg: &[u8]) -> Result<Image, IoError> {
 
 /// Camera Raw's Temperature, Tint, Exposure, Shadows, Highlights, Clarity, Texture and Dehaze,
 /// applied while developing the sensor data (the open-time Camera Raw dialog) instead of to the
-/// developed RGB pixels, and the demosaic method.
+/// developed RGB pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RawTuning {
     /// −100…100, as `photocraft_algo::camera_raw::CameraRaw::temperature`.
@@ -54,7 +53,6 @@ pub struct RawTuning {
     pub tint: f32,
     /// EV, as `CameraRaw::exposure`.
     pub exposure: f32,
-    pub demosaic: Demosaic,
     /// −100…100, as `CameraRaw::shadows`: in linear light before the tone curve, as Camera Raw
     /// does for raw files ([`photocraft_raw::Tone`]).
     pub shadows: f32,
@@ -92,7 +90,7 @@ pub fn import_raw_tuned(name: &str, bytes: &[u8], tuning: &RawTuning) -> Result<
     // The colour rendering the default open used (a look fitted to the camera's JPEG for files
     // without colour calibration), so re-developing changes only what the sliders change.
     let camera_look = default_look(bytes, &sensor);
-    let mut opts = DevelopOptions { limits: limits(), exposure, demosaic: tuning.demosaic, tone, camera_look, ..Default::default() };
+    let mut opts = DevelopOptions { limits: limits(), exposure, tone, camera_look, ..Default::default() };
     let wb_applied = match sensor.camera_wb {
         Some(m) => {
             let g = wb_gains(tuning.temperature, tuning.tint);
@@ -112,7 +110,7 @@ pub fn import_raw_tuned(name: &str, bytes: &[u8], tuning: &RawTuning) -> Result<
         .filter(|(_, v)| *v != 0.0)
         .map(|(k, v)| format!(", {k} {v:+.0}"))
         .collect::<String>();
-    let summary = format!("developed in Camera Raw (exposure {:+.2} EV{tone}, {wb}, {} demosaic)", tuning.exposure, tuning.demosaic.id());
+    let summary = format!("developed in Camera Raw (exposure {:+.2} EV{tone}, {wb})", tuning.exposure);
     Ok((developed_document(name, format, dev, &summary)?, wb_applied))
 }
 
@@ -123,10 +121,13 @@ pub fn import_raw_tuned(name: &str, bytes: &[u8], tuning: &RawTuning) -> Result<
 pub struct RawPreview {
     /// The tone curve (see [`tone_curve`]).
     pub curve: Vec<[f32; 2]>,
-    /// The camera's as-shot multipliers and the white-balanced camera → linear ProPhoto matrix;
-    /// `None` without an as-shot white balance (Temperature and Tint then stay RGB adjustments).
-    white_balance: Option<([f64; 3], [[f64; 3]; 3])>,
+    /// The camera's as-shot multipliers, the white-balanced camera → linear ProPhoto matrix and
+    /// its inverse; `None` without an as-shot white balance, or when that matrix cannot be
+    /// inverted (Temperature and Tint then stay RGB adjustments in the preview).
+    white_balance: Option<([f64; 3], Mat3, Mat3)>,
 }
+
+type Mat3 = [[f64; 3]; 3];
 
 /// What [`RawPreview`] holds for `bytes` (empty for files this crate does not decode).
 pub fn raw_preview(bytes: &[u8]) -> RawPreview {
@@ -141,7 +142,7 @@ pub fn raw_preview(bytes: &[u8]) -> RawPreview {
         let opts = DevelopOptions { limits: limits(), white_balance: WhiteBalance::Multipliers(wb), camera_look: camera_look.clone(), ..Default::default() };
         photocraft_raw::white_balance_of(&sensor, &opts).ok().map(|(_, m)| (wb, m))
     });
-    RawPreview { curve, white_balance }
+    RawPreview::from_parts(curve, white_balance)
 }
 
 impl RawPreview {
@@ -151,14 +152,22 @@ impl RawPreview {
         RawPreview { curve, white_balance: None }
     }
 
+    /// From the tone `curve` and the as-shot multipliers with their camera → ProPhoto matrix; a
+    /// matrix that cannot be inverted (a degenerate profile) leaves the white balance out.
+    fn from_parts(curve: Vec<[f32; 2]>, white_balance: Option<([f64; 3], Mat3)>) -> Self {
+        let white_balance = white_balance.and_then(|(wb, m)| invert3(&m).map(|inv| (wb, m, inv)));
+        RawPreview { curve, white_balance }
+    }
+
     /// Exposure (EV), Temperature and Tint as one linear ProPhoto 3×3 on the developed pixels,
     /// the way Open applies them to the sensor data: the exposure gain, and the camera channels'
     /// multipliers changed by Camera Raw's gains (normalised as the development normalises them).
     /// The flag says whether Temperature and Tint are in it (only with an as-shot white balance,
-    /// as in [`import_raw_tuned`]). `None` when nothing changes.
+    /// as in [`import_raw_tuned`], whose matrix inverts). `None` when nothing changes. Exposure
+    /// is always in it.
     pub fn stage_matrix(&self, exposure: f32, temperature: f32, tint: f32) -> (Option<[[f32; 3]; 3]>, bool) {
         let gain = 2f64.powf(f64::from(exposure.clamp(-10.0, 10.0)));
-        let Some((wb, m)) = self.white_balance.filter(|_| temperature != 0.0 || tint != 0.0) else {
+        let Some((wb, m, inv)) = self.white_balance.filter(|_| temperature != 0.0 || tint != 0.0) else {
             let applied = self.white_balance.is_some();
             let matrix = (exposure != 0.0).then(|| [0, 1, 2].map(|r| [0, 1, 2].map(|c| if r == c { gain as f32 } else { 0.0 })));
             return (matrix, applied);
@@ -170,7 +179,6 @@ impl RawPreview {
         };
         let g = wb_gains(temperature, tint);
         let (now, then) = (mult(wb), mult([wb[0] * g[0], wb[1] * g[1], wb[2] * g[2]]));
-        let Some(inv) = invert3(&m) else { return (None, false) };
         let r = [0, 1, 2].map(|c| then[c] / now[c]);
         let t: [[f64; 3]; 3] = [0, 1, 2].map(|i| [0, 1, 2].map(|j| (0..3).map(|k| m[i][k] * r[k] * inv[k][j]).sum::<f64>() * gain));
         (Some(t.map(|row| row.map(|v| v as f32))), true)
@@ -191,8 +199,6 @@ fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     ])
 }
 
-/// The tone curve of the camera profile `bytes` develop with (empty: none, or not a raw this
-/// crate decodes), for previews of the open-time raw-stage sliders ([`photocraft_raw::retone`]).
 /// The tone curve `bytes` develop with by default: the fitted look's for a file without colour
 /// calibration (see [`import_raw_with`]), else the camera profile's (empty: none, or not a raw
 /// this crate decodes). For previews of the open-time raw-stage sliders
@@ -259,12 +265,7 @@ fn developed_document(name: &str, format: &str, dev: photocraft_raw::Developed, 
 
 /// Develops a raw file with the default settings.
 pub fn import_raw(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> {
-    import_raw_demosaic(name, bytes, Demosaic::default())
-}
-
-/// Develops a raw file with the default settings and the `demosaic` method.
-pub fn import_raw_demosaic(name: &str, bytes: &[u8], demosaic: Demosaic) -> Result<ImportResult, IoError> {
-    import_raw_with(name, bytes, &DevelopOptions { limits: limits(), demosaic, ..Default::default() })
+    import_raw_with(name, bytes, &DevelopOptions { limits: limits(), ..Default::default() })
 }
 
 /// Smallest preview long edge preferred for the colour fit (a smaller preview decodes faster;
@@ -361,6 +362,24 @@ pub fn import_raw_with(name: &str, bytes: &[u8], opts: &DevelopOptions) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A camera matrix that cannot be inverted leaves the white balance to the RGB adjustments,
+    /// but Exposure still goes before the curve, as Open applies it (#3817 review: the preview
+    /// dropped Exposure then).
+    #[test]
+    fn a_degenerate_camera_matrix_keeps_exposure_in_the_raw_stage() {
+        let flat = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
+        let raw = RawPreview::from_parts(vec![[0.5, 0.5]], Some(([2.0, 1.0, 1.5], flat)));
+        let (matrix, white_balance) = raw.stage_matrix(1.0, 30.0, -10.0);
+        assert!(!white_balance, "Temperature and Tint stay with the pipeline");
+        assert_eq!(matrix, Some([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]));
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let raw = RawPreview::from_parts(vec![[0.5, 0.5]], Some(([2.0, 1.0, 1.5], identity)));
+        let (matrix, white_balance) = raw.stage_matrix(1.0, 30.0, -10.0);
+        assert!(white_balance);
+        let m = matrix.unwrap();
+        assert!(m[0][0] != m[2][2], "the white balance is in it: {m:?}");
+    }
 
     #[test]
     fn camera_names_drop_a_repeated_make() {

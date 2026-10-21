@@ -1,5 +1,5 @@
 //! Colour-managed canvas display: the document's composite shown through document profile →
-//! monitor profile, on the GPU canvas (folded into the display 3D LUT) and the CPU canvas
+//! monitor profile, on the GPU canvas (matrix/shaper or display 3D LUT) and the CPU canvas
 //! (an 8-bit transform of the composite).
 //!
 //! * The composite is in [`composite_profile`] (the document profile for RGB, its gray curve as
@@ -67,25 +67,6 @@ impl CanvasDisplay {
             apply_u8(t, &mut img.pixels);
         }
         img
-    }
-
-    /// Straight-alpha pixel values as the composite stores them (row-major RGBA) → RGBA8
-    /// monitor values, as [`Self::to_rgba8`] makes them for a composite buffer: dialogs that show
-    /// a document's pixels (Camera Raw's preview) look like the canvas.
-    pub fn rgba8_of(&self, px: &[[f32; 4]]) -> Vec<u8> {
-        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-        let mut out = Vec::with_capacity(px.len() * 4);
-        if self.encode_srgb {
-            let t = encode_table();
-            let code = |v: f32| t.get((v.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize).copied().unwrap_or(255);
-            out.extend(px.iter().flat_map(|p| [code(p[0]), code(p[1]), code(p[2]), q(p[3])]));
-        } else {
-            out.extend(px.iter().flat_map(|p| [q(p[0]), q(p[1]), q(p[2]), q(p[3])]));
-        }
-        if let Some(t) = &self.transform {
-            apply_u8(t, &mut out);
-        }
-        out
     }
 
     /// GPU canvas: a CPU composite as the texture stores it (sRGB-encoded for linear

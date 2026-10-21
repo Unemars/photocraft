@@ -1296,6 +1296,11 @@
 	Mixer Brush	Cọ trộn
 	Mixer Brush Tool	Công cụ Cọ trộn
 	Wet	Ướt
+	Current Brush Load	Lượng sơn hiện tại của cọ
+	Load Brush	Nạp sơn cho cọ
+	Clean Brush	Làm sạch cọ
+	Load the brush after each stroke	Nạp sơn cho cọ sau mỗi nét vẽ
+	Clean the brush after each stroke	Làm sạch cọ sau mỗi nét vẽ
 	Load	Tải
 	Mix	Trộn
 	Flow	Lưu lượng
@@ -3590,8 +3595,160 @@ curves	Smooth	Làm mượt
 	Stroke Path…	Đi nét đường dẫn…
 	Apply mask to layer before removing?	Áp dụng mặt nạ vào lớp trước khi xóa?
 	Delete the vector mask?	Xóa mặt nạ vectơ?
+	Add Shortcut	Thêm phím tắt
+	Response curve	Đường cong phản hồi
+	Object Finder	Trình tìm đối tượng
+	No object found there — drag a rectangle around it	Không tìm thấy đối tượng ở đó — hãy kéo một hình chữ nhật quanh nó
+	Remove after each stroke	Xóa sau mỗi nét vẽ
+	Apply the removal ({key})	Áp dụng việc xóa ({key})
+	Strokes to remove: {n} (Enter applies, Esc cancels)	Nét vẽ cần xóa: {n} (Enter áp dụng, Esc hủy)
+# Edit › Content-Aware Fill workspace
+	Excluded Area	Vùng loại trừ
+	Fill Settings	Cài đặt tô
+	Full	Toàn phần
+	Indicates	Biểu thị
+	Mirror	Phản chiếu
+	Output Settings	Cài đặt đầu ra
+	Output To	Đầu ra tới
+	Rectangular	Chữ nhật
+	Rotation Adaptation	Thích ứng xoay
+	Sampling Area	Vùng lấy mẫu
+	Sampling Area Options	Tùy chọn vùng lấy mẫu
+	Sampling Area Overlay	Lớp phủ vùng lấy mẫu
+	Sampling Brush Tool	Công cụ Cọ lấy mẫu
+	Show Sampling Area	Hiện vùng lấy mẫu
+	Very High	Rất cao
+	Show home recent files	Hiện tệp gần đây trên màn hình chính
+	Clear Brush Controls	Xóa điều khiển cọ
+	Reset All Locked Settings	Đặt lại tất cả cài đặt đã khóa
+	Copy Texture to Other Tools	Sao chép họa tiết sang các công cụ khác
 
-# Camera Raw 16.1.1 layout (camera_raw_style.rs, camera_raw_panels.rs, camera_raw_tools_ui.rs)
+# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
+	Load Actions…	Nạp hành động…
+	Save Actions…	Lưu hành động…
+	{name} (Photoshop)	{name} (Photoshop)
+	{message} ({note})	{message} ({note})
+@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	Đã nạp {n} hành động từ {file}
+@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} bước chưa có chức năng tương ứng trong PhotoCraft
+@plural	Saved {n} action to {file}|Saved {n} actions to {file}	Đã lưu {n} hành động vào {file}
+@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Đã bỏ qua {n} bước không có chức năng tương ứng trong Photoshop
+
+	File Naming	Đặt tên tệp
+	Starting serial	Số thứ tự bắt đầu
+# Actions panel: set folders, dialog toggle, Insert Stop
+	Insert Stop…	Chèn điểm dừng…
+	Save Set…	Lưu bộ…
+	Message:	Thông báo:
+	Allow Continue	Cho phép tiếp tục
+	Show dialog during playback	Hiện hộp thoại khi phát
+	Select an action first	Hãy chọn một hành động trước
+	Action playback stopped	Đã dừng phát hành động
+	Step {step} is waiting for its dialog	Bước {step} đang chờ hộp thoại của nó
+@plural	{n} action|{n} actions	{n} hành động
+# History panel menu (#2966)
+	Step Forward	Tiến một bước
+	New Snapshot…	Ảnh chụp trạng thái mới…
+	Clear History	Xóa lịch sử
+	History Options…	Tùy chọn lịch sử…
+	Background (Default)	Nền (mặc định)
+	Presentation	Trình bày
+# Batch / Image Processor
+	Include All Subfolders	Bao gồm tất cả thư mục con
+	Gradient Preset Options	Tùy chọn thiết lập sẵn chuyển sắc
+	Import .GRD	Nhập .GRD
+	Choose a gradient file (.grd).	Chọn tệp chuyển sắc (.grd).
+	Auto Add/Delete	Tự động thêm/xóa
+
+# Native Windows printing qualification
+	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	Đừng bật thêm Ảnh phản chiếu trong thiết lập in: hai lần lật sẽ triệt tiêu nhau.
+	Print Settings…	Thiết lập in…
+	Remember to turn off the printer's own colour management in Print Settings…	Nhớ tắt quản lý màu riêng của máy in trong thiết lập in…
+	Sent to {printer}	Đã gửi tới {printer}
+	set in Print Settings…	đặt trong thiết lập in…
+	ICO is limited to 256 × 256 pixels	ICO giới hạn ở 256 × 256 pixel
+# History panel › History Brush source (#2966)
+	Paints from the History panel's source state	Vẽ từ trạng thái nguồn của bảng Lịch sử
+	Sets the source for the history brush	Đặt nguồn cho cọ lịch sử
+# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
+	Use the embedded profile ({profile})	Dùng hồ sơ nhúng ({profile})
+	Convert to the working space ({profile})	Chuyển sang không gian làm việc ({profile})
+	Remember this choice for future images	Ghi nhớ lựa chọn này cho các ảnh sau
+	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	Bật lại câu hỏi bằng Ask On Mismatch trong Chỉnh sửa › Cài đặt màu.
+	Button Mode	Chế độ nút
+	Button Mode On	Chế độ nút bật
+
+# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
+	Darken Interface	Làm tối giao diện
+	Lighten Interface	Làm sáng giao diện
+# Bevel & Emboss Technique.
+	Technique	Kỹ thuật
+	Chisel Hard	Đục cứng
+	Chisel Soft	Đục mềm
+	Open color-less EXR as ACEScg	Mở EXR không khai báo màu sắc dưới dạng ACEScg
+
+# View › Guides › right-click a guide
+	Edit Selected Guides	Sửa đường căn đã chọn
+	Clear Selected Guides	Xóa đường căn đã chọn
+	Bicubic Automatic	Bicubic tự động
+	Bicubic Smoother	Bicubic mượt hơn
+	Bicubic Sharper	Bicubic sắc hơn
+	Pasting from other apps is unavailable	Không thể dán từ ứng dụng khác
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	PhotoCraft không truy cập được bộ nhớ tạm của hệ thống trong phiên này. Trên Wayland, sandbox của Flatpak ẩn giao thức dùng để đọc hình ảnh từ ứng dụng khác.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Để dán từ ứng dụng khác, hãy khởi động PhotoCraft dưới XWayland: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Không có gì để dán: PhotoCraft không thể đọc bộ nhớ tạm của hệ thống ở đây
+	Delete this set	Xóa bộ này
+	New Set…	Bộ mới…
+	PhotoCraft Defaults	Mặc định của PhotoCraft
+	Save a list of these shortcuts as a web page	Lưu danh sách các phím tắt này thành trang web
+	Save the changes to this set	Lưu thay đổi vào bộ này
+	Save these shortcuts as a .kys file	Lưu các phím tắt này thành tệp .kys
+	Save these shortcuts as a new set	Lưu các phím tắt này thành bộ mới
+	Set deleted.	Đã xóa bộ.
+	Set saved.	Đã lưu bộ.
+	Set:	Bộ:
+	Summarize…	Tóm tắt…
+	There are too many sets: delete one first.	Có quá nhiều bộ: hãy xóa một bộ trước.
+	set name	tên bộ
+	{set} (modified)	{set} (đã sửa đổi)
+	Show file name in title	Hiển thị tên tệp trong tiêu đề
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	Ngưỡng 50%
+	Pattern Dither	Hòa sắc họa tiết
+	Diffusion Dither	Hòa sắc khuếch tán
+	Halftone Screen	Màn bán sắc
+	Custom Pattern	Họa tiết tùy chỉnh
+	Frequency:	Tần số:
+	Lines/Inch	Đường/inch
+	Lines/Centimeter	Đường/centimet
+	Ellipse	Elip
+	Accept and Go to Conflict	Chấp nhận và đến xung đột
+	Changes undone.	Đã hoàn tác thay đổi.
+	Choose a new shortcut for this command, or leave it without one.	Chọn phím tắt mới cho lệnh này, hoặc để lệnh không có phím tắt.
+	Put this command's shortcuts back as they were	Khôi phục phím tắt của lệnh này như cũ
+	Take the shortcut from the other command and select it	Lấy phím tắt khỏi lệnh kia và chọn lệnh đó
+	Undo Changes	Hoàn tác thay đổi
+	{shortcut} is reserved by the system and can't be assigned.	{shortcut} được hệ thống dành riêng và không thể gán.
+	Low-Latency Drawing (vsync off, applies at next launch)	Vẽ độ trễ thấp (tắt vsync, áp dụng ở lần khởi động sau)
+# Free Transform: a new layer while the box is open (#5859)
+	Free Transform is still being applied; try again when it has finished.	Biến đổi tự do vẫn đang được áp dụng; hãy thử lại khi hoàn tất.
+	The transform couldn't be applied.	Không thể áp dụng phép biến đổi.
+# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
+	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	Các lớp cần {needed} bộ nhớ GPU; ngân sách chỉ dành cho chúng {budget}.
+	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	Đặt Bộ nhớ GPU trong Tùy chọn › Hiệu năng bằng mức card đồ họa của bạn chứa được, tối đa 3/8 bộ nhớ của card. Tự động theo mức sử dụng bộ nhớ, trong giới hạn một phần tư bộ nhớ máy này và 3/8 bộ nhớ card, và không tính tài liệu vào card đã biết dung lượng bộ nhớ. Khi chúng chưa vừa, thanh trạng thái hiện Bộ nhớ GPU đầy.
+	GPU Memory Full	Bộ nhớ GPU đầy
+	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	Các lớp cần {needed} bộ nhớ GPU và chỉ được dùng {budget}, nên những chỉnh sửa vẽ lại toàn bộ tài liệu sẽ làm trên CPU. Nhấp để đặt Bộ nhớ GPU.
+	GPU memory budget: {budget}	Ngân sách bộ nhớ GPU: {budget}
+	This document's layers: {needed} of {budget} for layers	Các lớp của tài liệu này: {needed} trên {budget} dành cho lớp
+	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	Các lớp của tài liệu này cần {needed} nhưng chỉ được dùng {budget}: vẽ lại toàn bộ tài liệu dùng CPU
+	GPU Memory (MB, 0 = Automatic)	Bộ nhớ GPU (MB, 0 = Tự động)
+	Replace	Thay thế
+	{name} was changed by another app after it was opened or saved here.	{name} đã bị một ứng dụng khác thay đổi sau khi được mở hoặc lưu ở đây.
+	Replace it with this document, or cancel and use File › Save As to keep both.	Thay thế bằng tài liệu này, hoặc hủy và dùng Tệp › Lưu thành để giữ cả hai.
+	Decrease Brush Size	Giảm kích thước cọ
+	Increase Brush Size	Tăng kích thước cọ
+	Decrease Brush Hardness	Giảm độ cứng của cọ
+	Increase Brush Hardness	Tăng độ cứng của cọ
 	After	Sau
 	Auto tone and color (Ctrl+U)	Tự chỉnh tông và màu (Ctrl+U)
 	Before	Trước
@@ -3608,10 +3765,7 @@ curves	Smooth	Làm mượt
 	Copy Before settings to After (Alt+Shift+P)	Sao chép cài đặt Trước sang Sau (Alt+Shift+P)
 	Creative profiles are not available in PhotoCraft yet.	Hồ sơ sáng tạo chưa có trong PhotoCraft.
 	Cycle between Before/After views (Q)	Chuyển vòng các chế độ xem Trước/Sau (Q)
-	Demosaic	Giải khảm
 	Color Noise Reduction	Giảm nhiễu màu
-	AHD (adaptive homogeneity)	AHD (đồng nhất thích ứng)
-	Malvar–He–Cutler	Malvar–He–Cutler
 	Fit ({percent})	Vừa khung ({percent})
 	For a more accurate preview, zoom the preview size to 100% or larger when adjusting the controls in this panel.	Để xem trước chính xác hơn, hãy phóng ảnh xem trước lên 100% hoặc lớn hơn khi chỉnh các điều khiển trong bảng này.
 	For best results, apply lens corrections first.	Để có kết quả tốt nhất, hãy hiệu chỉnh ống kính trước.
@@ -3750,107 +3904,20 @@ cameraRaw	Warm	Ấm
 cameraRaw	White balance	Cân bằng trắng
 cameraRaw	Yellows	Vàng
 cameraRaw	Zoom and Pan	Thu phóng và kéo
-	Add Shortcut	Thêm phím tắt
-	Response curve	Đường cong phản hồi
-	Object Finder	Trình tìm đối tượng
-	No object found there — drag a rectangle around it	Không tìm thấy đối tượng ở đó — hãy kéo một hình chữ nhật quanh nó
-	Remove after each stroke	Xóa sau mỗi nét vẽ
-	Apply the removal ({key})	Áp dụng việc xóa ({key})
-	Strokes to remove: {n} (Enter applies, Esc cancels)	Nét vẽ cần xóa: {n} (Enter áp dụng, Esc hủy)
-	Show home recent files	Hiện tệp gần đây trên màn hình chính
-	Clear Brush Controls	Xóa điều khiển cọ
-	Reset All Locked Settings	Đặt lại tất cả cài đặt đã khóa
-	Copy Texture to Other Tools	Sao chép họa tiết sang các công cụ khác
+	Memory Usage	Sử dụng bộ nhớ
+	Per-document RAM limit (MB)	Giới hạn RAM mỗi tài liệu (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	RAM đã cài: {ram} MB; giới hạn này: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Giới hạn pixel cộng Lịch sử của mỗi tài liệu đang mở. Các trạng thái hoàn tác cũ nhất bị bỏ khi vượt giới hạn.
+	Applies immediately when saved. Memory is not reserved in advance.	Áp dụng ngay khi lưu. Bộ nhớ không được dành trước.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Khi Bộ nhớ GPU là Tự động, cũng giới hạn ngân sách GPU. Trần là 1/4 RAM và, nếu biết, 3/8 bộ nhớ card, tối thiểu 512 MB. Tăng giới hạn không làm tăng ngân sách GPU.
+	Use	Dùng
+	In Front	Phía trước
+	Behind	Phía sau
 
-# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
-	Load Actions…	Nạp hành động…
-	Save Actions…	Lưu hành động…
-	{name} (Photoshop)	{name} (Photoshop)
-	{message} ({note})	{message} ({note})
-@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	Đã nạp {n} hành động từ {file}
-@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} bước chưa có chức năng tương ứng trong PhotoCraft
-@plural	Saved {n} action to {file}|Saved {n} actions to {file}	Đã lưu {n} hành động vào {file}
-@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	Đã bỏ qua {n} bước không có chức năng tương ứng trong Photoshop
+# DDS Options (#1327)
+	DDS Options	Tùy chọn DDS
+	Compression	Nén
+	Generate Mipmaps	Tạo mipmap
 
-	File Naming	Đặt tên tệp
-	Starting serial	Số thứ tự bắt đầu
-# Actions panel: set folders, dialog toggle, Insert Stop
-	Insert Stop…	Chèn điểm dừng…
-	Save Set…	Lưu bộ…
-	Message:	Thông báo:
-	Allow Continue	Cho phép tiếp tục
-	Show dialog during playback	Hiện hộp thoại khi phát
-	Select an action first	Hãy chọn một hành động trước
-	Action playback stopped	Đã dừng phát hành động
-	Step {step} is waiting for its dialog	Bước {step} đang chờ hộp thoại của nó
-@plural	{n} action|{n} actions	{n} hành động
-	Background (Default)	Nền (mặc định)
-	Presentation	Trình bày
-# Batch / Image Processor
-	Include All Subfolders	Bao gồm tất cả thư mục con
-	Gradient Preset Options	Tùy chọn thiết lập sẵn chuyển sắc
-	Import .GRD	Nhập .GRD
-	Choose a gradient file (.grd).	Chọn tệp chuyển sắc (.grd).
-	Auto Add/Delete	Tự động thêm/xóa
-
-# Native Windows printing qualification
-	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	Đừng bật thêm Ảnh phản chiếu trong thiết lập in: hai lần lật sẽ triệt tiêu nhau.
-	Print Settings…	Thiết lập in…
-	Remember to turn off the printer's own colour management in Print Settings…	Nhớ tắt quản lý màu riêng của máy in trong thiết lập in…
-	Sent to {printer}	Đã gửi tới {printer}
-	set in Print Settings…	đặt trong thiết lập in…
-	ICO is limited to 256 × 256 pixels	ICO giới hạn ở 256 × 256 pixel
-# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
-	Use the embedded profile ({profile})	Dùng hồ sơ nhúng ({profile})
-	Convert to the working space ({profile})	Chuyển sang không gian làm việc ({profile})
-	Remember this choice for future images	Ghi nhớ lựa chọn này cho các ảnh sau
-	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	Bật lại câu hỏi bằng Ask On Mismatch trong Chỉnh sửa › Cài đặt màu.
-	Button Mode	Chế độ nút
-	Button Mode On	Chế độ nút bật
-
-# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
-	Darken Interface	Làm tối giao diện
-	Lighten Interface	Làm sáng giao diện
-# Bevel & Emboss Technique.
-	Technique	Kỹ thuật
-	Chisel Hard	Đục cứng
-	Chisel Soft	Đục mềm
-	Open color-less EXR as ACEScg	Mở EXR không khai báo màu sắc dưới dạng ACEScg
-
-# View › Guides › right-click a guide
-	Edit Selected Guides	Sửa đường căn đã chọn
-	Clear Selected Guides	Xóa đường căn đã chọn
-	Delete this set	Xóa bộ này
-	New Set…	Bộ mới…
-	PhotoCraft Defaults	Mặc định của PhotoCraft
-	Save a list of these shortcuts as a web page	Lưu danh sách các phím tắt này thành trang web
-	Save the changes to this set	Lưu thay đổi vào bộ này
-	Save these shortcuts as a .kys file	Lưu các phím tắt này thành tệp .kys
-	Save these shortcuts as a new set	Lưu các phím tắt này thành bộ mới
-	Set deleted.	Đã xóa bộ.
-	Set saved.	Đã lưu bộ.
-	Set:	Bộ:
-	Summarize…	Tóm tắt…
-	There are too many sets: delete one first.	Có quá nhiều bộ: hãy xóa một bộ trước.
-	set name	tên bộ
-	{set} (modified)	{set} (đã sửa đổi)
-	Accept and Go to Conflict	Chấp nhận và đến xung đột
-	Changes undone.	Đã hoàn tác thay đổi.
-	Choose a new shortcut for this command, or leave it without one.	Chọn phím tắt mới cho lệnh này, hoặc để lệnh không có phím tắt.
-	Put this command's shortcuts back as they were	Khôi phục phím tắt của lệnh này như cũ
-	Take the shortcut from the other command and select it	Lấy phím tắt khỏi lệnh kia và chọn lệnh đó
-	Undo Changes	Hoàn tác thay đổi
-	{shortcut} is reserved by the system and can't be assigned.	{shortcut} được hệ thống dành riêng và không thể gán.
-	Low-Latency Drawing (vsync off, applies at next launch)	Vẽ độ trễ thấp (tắt vsync, áp dụng ở lần khởi động sau)
-# Free Transform: a new layer while the box is open (#5859)
-	Free Transform is still being applied; try again when it has finished.	Biến đổi tự do vẫn đang được áp dụng; hãy thử lại khi hoàn tất.
-	The transform couldn't be applied.	Không thể áp dụng phép biến đổi.
-# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
-	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	Các lớp cần {needed} bộ nhớ GPU; ngân sách chỉ dành cho chúng {budget}.
-	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	Đặt Bộ nhớ GPU trong Tùy chọn › Hiệu năng bằng mức card đồ họa của bạn chứa được, tối đa 3/8 bộ nhớ của card. Tự động theo mức sử dụng bộ nhớ, trong giới hạn một phần tư bộ nhớ máy này và 3/8 bộ nhớ card, và không tính tài liệu vào card đã biết dung lượng bộ nhớ. Khi chúng chưa vừa, thanh trạng thái hiện Bộ nhớ GPU đầy.
-	GPU Memory Full	Bộ nhớ GPU đầy
-	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	Các lớp cần {needed} bộ nhớ GPU và chỉ được dùng {budget}, nên những chỉnh sửa vẽ lại toàn bộ tài liệu sẽ làm trên CPU. Nhấp để đặt Bộ nhớ GPU.
-	GPU memory budget: {budget}	Ngân sách bộ nhớ GPU: {budget}
-	This document's layers: {needed} of {budget} for layers	Các lớp của tài liệu này: {needed} trên {budget} dành cho lớp
-	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	Các lớp của tài liệu này cần {needed} nhưng chỉ được dùng {budget}: vẽ lại toàn bộ tài liệu dùng CPU
-	GPU Memory (MB, 0 = Automatic)	Bộ nhớ GPU (MB, 0 = Tự động)
+# Graphics Adapter preference (#1885)
+	GPU adapter	Bộ điều hợp GPU

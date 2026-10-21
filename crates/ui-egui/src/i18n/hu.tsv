@@ -1114,6 +1114,8 @@
 	Height:	Magasság:
 	Hide Auto Slices	Automatikus szeletek elrejtése
 	History Brush	Előzményecset
+	Paints from the History panel's source state	Az Előzmények panel forrásállapotából fest
+	Sets the source for the history brush	Beállítja az előzményecset forrását
 	Horizontal scale	Vízszintes méretarány
 	Horizontal type	Vízszintes szöveg
 	Hue Jitter	Színárnyalat ingadozása
@@ -1407,6 +1409,11 @@
 	Warp:	Hajlítás:
 	Weight	Vastagság
 	Wet	Nedvesség
+	Current Brush Load	Az ecset jelenlegi töltete
+	Load Brush	Ecset feltöltése
+	Clean Brush	Ecset tisztítása
+	Load the brush after each stroke	Az ecset feltöltése minden ecsetvonás után
+	Clean the brush after each stroke	Az ecset tisztítása minden ecsetvonás után
 	Wet Edges	Nedves szélek
 	Wetness Jitter	Nedvesség ingadozása
 	Width	Szélesség
@@ -3869,6 +3876,8 @@ cameraRaw	Yellow	Sárga
 	New Layer from Brush	Új réteg ecsetből
 	New Path	Új útvonal
 	New Snapshot	Új pillanatkép
+	New Snapshot…	Új pillanatkép…
+	History Options…	Előzménybeállítások…
 	New Video Group	Új videócsoport
 	Newspaper	Újságpapír
 	No Layer Comps	Nincs rétegkompozíció
@@ -4017,8 +4026,157 @@ cameraRaw	Yellow	Sárga
 	The layer or its mask changed. Drag the mask onto the Trash again.	A réteg vagy a maszkja megváltozott. Húzd újra a maszkot a Kukába.
 	Transform On Drop	Átalakítás elengedéskor
 	Vanishing Point is not active	Az Enyészpont nem aktív
-# Camera Raw 16.1.1 dialog (Camera Raw stack)
-	AHD (adaptive homogeneity)	AHD (adaptív homogenitás)
+# Edit › Content-Aware Fill workspace
+	Excluded Area	Kizárt terület
+	Fill Settings	Kitöltési beállítások
+	Full	Teljes
+	Indicates	Jelzi
+	Mirror	Tükrözés
+	Output Settings	Kimeneti beállítások
+	Output To	Kimenet célja
+	Rectangular	Téglalap
+	Rotation Adaptation	Elforgatás-adaptáció
+	Sampling Area	Mintavételi terület
+	Sampling Area Options	Mintavételi terület beállításai
+	Sampling Area Overlay	Mintavételi terület átfedése
+	Sampling Brush Tool	Mintavételi ecset
+	Show Sampling Area	Mintavételi terület megjelenítése
+	Very High	Nagyon magas
+	Vanishing Point: click four corners to create a plane	Enyészpont: sík létrehozásához kattints a négy sarokra
+	Response curve	Válaszgörbe
+	Show home recent files	Legutóbbi fájlok megjelenítése a kezdőképernyőn
+	Clear Brush Controls	Ecsetvezérlők törlése
+	Reset All Locked Settings	Összes zárolt beállítás visszaállítása
+	Copy Texture to Other Tools	Textúra másolása más eszközökre
+
+# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
+	Load Actions…	Műveletek betöltése…
+	Save Actions…	Műveletek mentése…
+	{name} (Photoshop)	{name} (Photoshop)
+	{message} ({note})	{message} ({note})
+@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	{n} művelet betöltve. Forrás: {file}
+@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} lépésnek még nincs megfelelője a PhotoCraftban
+@plural	Saved {n} action to {file}|Saved {n} actions to {file}	{n} művelet mentve. Cél: {file}
+@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	{n} Photoshop-megfelelő nélküli lépés kihagyva
+
+	Starting serial	Kezdő sorszám
+# Actions panel: set folders, dialog toggle, Insert Stop
+	Insert Stop…	Leállítás beszúrása…
+	Save Set…	Készlet mentése…
+	Message:	Üzenet:
+	Allow Continue	Folytatás engedélyezése
+	Show dialog during playback	Párbeszédablak megjelenítése lejátszáskor
+	Select an action first	Először válassz ki egy műveletet
+	Action playback stopped	A művelet lejátszása leállt
+	Step {step} is waiting for its dialog	A(z) {step}. lépés a párbeszédablakára vár
+@plural	{n} action|{n} actions	{n} művelet
+	Object Finder	Objektumkereső
+	No object found there — drag a rectangle around it	Ott nem található objektum – húzz köré egy téglalapot
+	Drag to pan · Scroll to zoom · Double-click to fit	Húzás: mozgatás · Görgetés: nagyítás · Dupla kattintás: igazítás
+	Gradient Preset Options	Színátmenet-előbeállítás beállításai
+	Import .GRD	.GRD importálása
+	Choose a gradient file (.grd).	Válassz színátmenetfájlt (.grd).
+	Save Settings…	Beállítások mentése…
+	Load Settings…	Beállítások betöltése…
+	Save these settings as a Camera Raw .xmp file	A beállítások mentése Camera Raw .xmp-fájlként
+	Load settings from a Camera Raw .xmp file	Beállítások betöltése Camera Raw .xmp-fájlból
+	Loaded Camera Raw settings from {file}	Camera Raw-beállítások betöltve innen: {file}
+	Loaded Camera Raw settings from {file} ({n} not supported)	Camera Raw-beállítások betöltve innen: {file} ({n} nem támogatott)
+	Auto Add/Delete	Automatikus hozzáadás/törlés
+
+# Native Windows printing qualification
+	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	A nyomtatási beállításokban ne jelöld be a tükrözést is: a két tükrözés kioltja egymást.
+	Print Settings…	Nyomtatási beállítások…
+	Remember to turn off the printer's own colour management in Print Settings…	Ne felejtsd el kikapcsolni a nyomtató saját színkezelését a nyomtatási beállításokban…
+	Sent to {printer}	Elküldve ide: {printer}
+	set in Print Settings…	a nyomtatási beállításokban adható meg…
+	ICO is limited to 256 × 256 pixels	Az ICO legfeljebb 256 × 256 képpont lehet
+
+# Channel Options and New Spot Channel (#3761)
+	Channel Color	Csatorna színe
+	Color Indicates:	A szín jelzése:
+	Ink Characteristics	Festék jellemzői
+	Solidity:	Fedőképesség:
+	Redrawing	Újrarajzolás
+# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
+	Use the embedded profile ({profile})	A beágyazott profil használata ({profile})
+	Convert to the working space ({profile})	Átalakítás a munkaszíntérbe ({profile})
+	Remember this choice for future images	A választás megjegyzése a későbbi képekhez
+	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	A kérdést a Szerkesztés › Színbeállítások „Profileltérés: rákérdezés megnyitáskor” beállításával kapcsolhatod vissza.
+	Button Mode	Gomb mód
+	Button Mode On	Gomb mód be
+
+# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
+	Darken Interface	Felület sötétítése
+	Lighten Interface	Felület világosítása
+# Bevel & Emboss Technique.
+	Technique	Technika
+	Chisel Hard	Kemény vésés
+	Chisel Soft	Lágy vésés
+	Open color-less EXR as ACEScg	Színinformáció nélküli EXR megnyitása ACEScg-ként
+
+# View › Guides › right-click a guide
+	Edit Selected Guides	Kijelölt segédvonalak szerkesztése
+	Clear Selected Guides	Kijelölt segédvonalak törlése
+	Bicubic Automatic	Automatikus bikubikus
+	Bicubic Smoother	Simább bikubikus
+	Bicubic Sharper	Élesebb bikubikus
+	Pasting from other apps is unavailable	A beillesztés más alkalmazásokból nem érhető el
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	A PhotoCraft ebben a munkamenetben nem fér hozzá a rendszer vágólapjához. Waylanden a Flatpak homokozó elrejti azt a protokollt, amelyen keresztül más alkalmazások képei olvashatók.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Ha más alkalmazásokból szeretne beilleszteni, indítsa a PhotoCraftot XWayland alatt: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Nincs mit beilleszteni: a PhotoCraft itt nem tudja olvasni a rendszer vágólapját
+	Delete this set	Készlet törlése
+	New Set…	Új készlet…
+	PhotoCraft Defaults	PhotoCraft alapértelmezések
+	Save a list of these shortcuts as a web page	A billentyűparancsok listájának mentése weboldalként
+	Save the changes to this set	A készlet változásainak mentése
+	Save these shortcuts as a .kys file	A billentyűparancsok mentése .kys fájlként
+	Save these shortcuts as a new set	A billentyűparancsok mentése új készletként
+	Set deleted.	Készlet törölve.
+	Set saved.	Készlet mentve.
+	Set:	Készlet:
+	Summarize…	Összegzés…
+	There are too many sets: delete one first.	Túl sok készlet van: előbb töröljön egyet.
+	set name	készlet neve
+	{set} (modified)	{set} (módosítva)
+	Show file name in title	Fájlnév megjelenítése a címben
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	50%-os küszöb
+	Pattern Dither	Mintázatos keverés
+	Diffusion Dither	Diffúziós keverés
+	Halftone Screen	Féltónusrács
+	Custom Pattern	Egyéni mintázat
+	Frequency:	Gyakoriság:
+	Lines/Inch	Vonal/hüvelyk
+	Lines/Centimeter	Vonal/centiméter
+	Ellipse	Ellipszis
+	Accept and Go to Conflict	Elfogadás és ugrás az ütközéshez
+	Changes undone.	Változások visszavonva.
+	Choose a new shortcut for this command, or leave it without one.	Válasszon új billentyűparancsot ehhez a parancshoz, vagy hagyja nélküle.
+	Put this command's shortcuts back as they were	A parancs billentyűparancsainak visszaállítása
+	Take the shortcut from the other command and select it	A billentyűparancs elvétele a másik parancstól, és annak kijelölése
+	Undo Changes	Változások visszavonása
+	{shortcut} is reserved by the system and can't be assigned.	A(z) {shortcut} a rendszer számára fenntartott, nem rendelhető hozzá.
+	Low-Latency Drawing (vsync off, applies at next launch)	Kis késleltetésű rajzolás (vsync nélkül, a következő indításkor lép életbe)
+# Free Transform: a new layer while the box is open (#5859)
+	Free Transform is still being applied; try again when it has finished.	A szabad alakítás alkalmazása még folyamatban van; próbáld újra, ha befejeződött.
+	The transform couldn't be applied.	Az átalakítás nem alkalmazható.
+# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
+	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	A rétegeknek {needed} GPU-memória kell; a keret {budget} hagy nekik.
+	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	A Beállítások › Teljesítmény alatt állítsd a GPU-memóriát arra, amennyit a videokártyád elbír, legfeljebb a memóriája 3/8-ára. Az Automatikus a memóriahasználatot követi, a számítógép memóriájának negyedén és a kártya 3/8-án belül, és ismert memóriájú kártyánál nem számítja bele a dokumentumot. Amíg nem férnek el, az állapotsor a GPU-memória megtelt üzenetet mutatja.
+	GPU Memory Full	GPU-memória megtelt
+	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	A rétegeknek {needed} GPU-memória kell, és {budget} foglalhatnak, ezért a teljes dokumentumot újrarajzoló szerkesztések a CPU-n futnak. Kattints a GPU-memória beállításához.
+	GPU memory budget: {budget}	GPU-memóriakeret: {budget}
+	This document's layers: {needed} of {budget} for layers	A dokumentum rétegei: {needed} / {budget} a rétegeknek
+	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	A dokumentum rétegeinek {needed} kell, de {budget} foglalhatnak: a teljes dokumentum újrarajzolása a CPU-n fut
+	GPU Memory (MB, 0 = Automatic)	GPU-memória (MB, 0 = Automatikus)
+	{name} was changed by another app after it was opened or saved here.	A(z) {name} fájlt egy másik alkalmazás módosította, miután itt megnyitották vagy mentették.
+	Replace it with this document, or cancel and use File › Save As to keep both.	Cserélje le erre a dokumentumra, vagy válassza a Mégse gombot, és a Fájl › Mentés másként paranccsal tartsa meg mindkettőt.
+	Decrease Brush Size	Ecsetméret csökkentése
+	Increase Brush Size	Ecsetméret növelése
+	Decrease Brush Hardness	Ecsetkeménység csökkentése
+	Increase Brush Hardness	Ecsetkeménység növelése
 	Auto tone and color (Ctrl+U)	Automatikus tónus és szín (Ctrl+U)
 	Before/After Left/Right	Előtte/Utána bal/jobb
 	Before/After Left/Right Split	Előtte/Utána bal/jobb osztott
@@ -4033,13 +4191,11 @@ cameraRaw	Yellow	Sárga
 	Copy Before settings to After (Alt+Shift+P)	Az Előtte beállítások átmásolása az Utána állapotba (Alt+Shift+P)
 	Creative profiles are not available in PhotoCraft yet.	A kreatív profilok a PhotoCraftban még nem érhetők el.
 	Cycle between Before/After views (Q)	Váltás az Előtte/Utána nézetek között (Q)
-	Demosaic	Demozaikolás
 	Fit ({percent})	Illesztés ({percent})
 	For a more accurate preview, zoom the preview size to 100% or larger when adjusting the controls in this panel.	A pontosabb előnézethez nagyítsa az előnézetet 100%-ra vagy nagyobbra, amikor a panel vezérlőit állítja.
 	For best results, apply lens corrections first.	A legjobb eredményért először alkalmazza az objektívkorrekciókat.
 	HDR editing needs an HDR display	A HDR-szerkesztéshez HDR-kijelző szükséges
 	Hand Tool (H)	Kéz (H)
-	Malvar–He–Cutler	Malvar–He–Cutler
 	Masks need local adjustments and segmentation models; PhotoCraft does not have them in Camera Raw yet.	A maszkokhoz helyi korrekciók és szegmentálási modellek kellenek; ezek a PhotoCraft Camera Raw-jában még nincsenek meg.
 	More image settings	További képbeállítások
 	Multiple: Edit panels will stay open until you close them.	Több: a szerkesztőpanelek nyitva maradnak, amíg be nem zárja őket.
@@ -4155,113 +4311,19 @@ cameraRaw	Visualize Spots	Foltok megjelenítése
 cameraRaw	Vivid	Élénk
 cameraRaw	White balance	Fehéregyensúly
 cameraRaw	Zoom and Pan	Nagyítás és pásztázás
-	Vanishing Point: click four corners to create a plane	Enyészpont: sík létrehozásához kattints a négy sarokra
-	Response curve	Válaszgörbe
-	Show home recent files	Legutóbbi fájlok megjelenítése a kezdőképernyőn
-	Clear Brush Controls	Ecsetvezérlők törlése
-	Reset All Locked Settings	Összes zárolt beállítás visszaállítása
-	Copy Texture to Other Tools	Textúra másolása más eszközökre
+	Memory Usage	Memóriahasználat
+	Per-document RAM limit (MB)	Dokumentumonkénti RAM-korlát (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	Telepített RAM: {ram} MB; ez a korlát: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Minden nyitott dokumentum pixeljeit és előzményeit korlátozza. A legrégebbi visszavonási állapotok törlődnek a korlát túllépésekor.
+	Applies immediately when saved. Memory is not reserved in advance.	Mentéskor azonnal érvényes. A memória nincs előre lefoglalva.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Automatikus GPU-memóriánál a GPU-rétegkeretet is korlátozza. Felső határ a RAM negyede és, ha ismert, a kártyamemória háromnyolcada, minimum 512 MB. Magasabb korlát a GPU-keretet nem növeli.
+	Use	Használat
+	In Front	Elöl
+	Behind	Mögött
 
-# Actions panel: Load/Save Actions (.atn) and kept Photoshop steps
-	Load Actions…	Műveletek betöltése…
-	Save Actions…	Műveletek mentése…
-	{name} (Photoshop)	{name} (Photoshop)
-	{message} ({note})	{message} ({note})
-@plural	Loaded {n} action from {file}|Loaded {n} actions from {file}	{n} művelet betöltve. Forrás: {file}
-@plural	{n} step has no PhotoCraft equivalent yet|{n} steps have no PhotoCraft equivalent yet	{n} lépésnek még nincs megfelelője a PhotoCraftban
-@plural	Saved {n} action to {file}|Saved {n} actions to {file}	{n} művelet mentve. Cél: {file}
-@plural	{n} step with no Photoshop equivalent left out|{n} steps with no Photoshop equivalent left out	{n} Photoshop-megfelelő nélküli lépés kihagyva
+# DDS Options (#1327)
+	DDS Options	DDS-beállítások
+	Generate Mipmaps	Mipmapek létrehozása
 
-	Starting serial	Kezdő sorszám
-# Actions panel: set folders, dialog toggle, Insert Stop
-	Insert Stop…	Leállítás beszúrása…
-	Save Set…	Készlet mentése…
-	Message:	Üzenet:
-	Allow Continue	Folytatás engedélyezése
-	Show dialog during playback	Párbeszédablak megjelenítése lejátszáskor
-	Select an action first	Először válassz ki egy műveletet
-	Action playback stopped	A művelet lejátszása leállt
-	Step {step} is waiting for its dialog	A(z) {step}. lépés a párbeszédablakára vár
-@plural	{n} action|{n} actions	{n} művelet
-	Object Finder	Objektumkereső
-	No object found there — drag a rectangle around it	Ott nem található objektum – húzz köré egy téglalapot
-	Drag to pan · Scroll to zoom · Double-click to fit	Húzás: mozgatás · Görgetés: nagyítás · Dupla kattintás: igazítás
-	Gradient Preset Options	Színátmenet-előbeállítás beállításai
-	Import .GRD	.GRD importálása
-	Choose a gradient file (.grd).	Válassz színátmenetfájlt (.grd).
-	Save Settings…	Beállítások mentése…
-	Load Settings…	Beállítások betöltése…
-	Save these settings as a Camera Raw .xmp file	A beállítások mentése Camera Raw .xmp-fájlként
-	Load settings from a Camera Raw .xmp file	Beállítások betöltése Camera Raw .xmp-fájlból
-	Loaded Camera Raw settings from {file}	Camera Raw-beállítások betöltve innen: {file}
-	Loaded Camera Raw settings from {file} ({n} not supported)	Camera Raw-beállítások betöltve innen: {file} ({n} nem támogatott)
-	Auto Add/Delete	Automatikus hozzáadás/törlés
-
-# Native Windows printing qualification
-	Don't also tick Mirror Image in Print Settings…: the two flips cancel out.	A nyomtatási beállításokban ne jelöld be a tükrözést is: a két tükrözés kioltja egymást.
-	Print Settings…	Nyomtatási beállítások…
-	Remember to turn off the printer's own colour management in Print Settings…	Ne felejtsd el kikapcsolni a nyomtató saját színkezelését a nyomtatási beállításokban…
-	Sent to {printer}	Elküldve ide: {printer}
-	set in Print Settings…	a nyomtatási beállításokban adható meg…
-	ICO is limited to 256 × 256 pixels	Az ICO legfeljebb 256 × 256 képpont lehet
-
-# Channel Options and New Spot Channel (#3761)
-	Channel Color	Csatorna színe
-	Color Indicates:	A szín jelzése:
-	Ink Characteristics	Festék jellemzői
-	Solidity:	Fedőképesség:
-	Redrawing	Újrarajzolás
-# Embedded Profile Mismatch: profile names beside the choices, Remember this choice
-	Use the embedded profile ({profile})	A beágyazott profil használata ({profile})
-	Convert to the working space ({profile})	Átalakítás a munkaszíntérbe ({profile})
-	Remember this choice for future images	A választás megjegyzése a későbbi képekhez
-	Turn the prompt back on with Ask On Mismatch in Edit › Color Settings.	A kérdést a Szerkesztés › Színbeállítások „Profileltérés: rákérdezés megnyitáskor” beállításával kapcsolhatod vissza.
-	Button Mode	Gomb mód
-	Button Mode On	Gomb mód be
-
-# Darken / Lighten Interface (⇧⌘F1 / ⇧⌘F2)
-	Darken Interface	Felület sötétítése
-	Lighten Interface	Felület világosítása
-# Bevel & Emboss Technique.
-	Technique	Technika
-	Chisel Hard	Kemény vésés
-	Chisel Soft	Lágy vésés
-	Open color-less EXR as ACEScg	Színinformáció nélküli EXR megnyitása ACEScg-ként
-
-# View › Guides › right-click a guide
-	Edit Selected Guides	Kijelölt segédvonalak szerkesztése
-	Clear Selected Guides	Kijelölt segédvonalak törlése
-	Delete this set	Készlet törlése
-	New Set…	Új készlet…
-	PhotoCraft Defaults	PhotoCraft alapértelmezések
-	Save a list of these shortcuts as a web page	A billentyűparancsok listájának mentése weboldalként
-	Save the changes to this set	A készlet változásainak mentése
-	Save these shortcuts as a .kys file	A billentyűparancsok mentése .kys fájlként
-	Save these shortcuts as a new set	A billentyűparancsok mentése új készletként
-	Set deleted.	Készlet törölve.
-	Set saved.	Készlet mentve.
-	Set:	Készlet:
-	Summarize…	Összegzés…
-	There are too many sets: delete one first.	Túl sok készlet van: előbb töröljön egyet.
-	set name	készlet neve
-	{set} (modified)	{set} (módosítva)
-	Accept and Go to Conflict	Elfogadás és ugrás az ütközéshez
-	Changes undone.	Változások visszavonva.
-	Choose a new shortcut for this command, or leave it without one.	Válasszon új billentyűparancsot ehhez a parancshoz, vagy hagyja nélküle.
-	Put this command's shortcuts back as they were	A parancs billentyűparancsainak visszaállítása
-	Take the shortcut from the other command and select it	A billentyűparancs elvétele a másik parancstól, és annak kijelölése
-	Undo Changes	Változások visszavonása
-	{shortcut} is reserved by the system and can't be assigned.	A(z) {shortcut} a rendszer számára fenntartott, nem rendelhető hozzá.
-	Low-Latency Drawing (vsync off, applies at next launch)	Kis késleltetésű rajzolás (vsync nélkül, a következő indításkor lép életbe)
-# Free Transform: a new layer while the box is open (#5859)
-	Free Transform is still being applied; try again when it has finished.	A szabad alakítás alkalmazása még folyamatban van; próbáld újra, ha befejeződött.
-	The transform couldn't be applied.	Az átalakítás nem alkalmazható.
-# Preferences › Performance › GPU Memory; the status bar and slow-redraw notice
-	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	A rétegeknek {needed} GPU-memória kell; a keret {budget} hagy nekik.
-	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	A Beállítások › Teljesítmény alatt állítsd a GPU-memóriát arra, amennyit a videokártyád elbír, legfeljebb a memóriája 3/8-ára. Az Automatikus a memóriahasználatot követi, a számítógép memóriájának negyedén és a kártya 3/8-án belül, és ismert memóriájú kártyánál nem számítja bele a dokumentumot. Amíg nem férnek el, az állapotsor a GPU-memória megtelt üzenetet mutatja.
-	GPU Memory Full	GPU-memória megtelt
-	The layers need {needed} of GPU memory and may hold {budget}, so edits that redraw the whole document do it on the CPU. Click to set GPU Memory.	A rétegeknek {needed} GPU-memória kell, és {budget} foglalhatnak, ezért a teljes dokumentumot újrarajzoló szerkesztések a CPU-n futnak. Kattints a GPU-memória beállításához.
-	GPU memory budget: {budget}	GPU-memóriakeret: {budget}
-	This document's layers: {needed} of {budget} for layers	A dokumentum rétegei: {needed} / {budget} a rétegeknek
-	This document's layers need {needed} but may hold {budget}: whole-document redraws use the CPU	A dokumentum rétegeinek {needed} kell, de {budget} foglalhatnak: a teljes dokumentum újrarajzolása a CPU-n fut
-	GPU Memory (MB, 0 = Automatic)	GPU-memória (MB, 0 = Automatikus)
+# Graphics Adapter preference (#1885)
+	GPU adapter	GPU-adapter
