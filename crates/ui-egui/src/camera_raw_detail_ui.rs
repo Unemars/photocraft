@@ -710,16 +710,25 @@ fn develop(source: &Surface, raw: Option<&photocraft_io::raw::RawPreview>, area:
             photocraft_io::raw::retone_with(&mut px, w, h, &raw.curve, tone, pre, None);
             let fmt = source.format();
             let n = fmt.channels();
-            let mut data = source.read_region(area);
-            for (out, q) in data.chunks_exact_mut(n).zip(&px) {
-                let alpha = if fmt.alpha { out.get(n - 1).copied() } else { None };
-                photocraft_raster::from_rgba_into(&fmt, *q, out);
-                if let (Some(a), Some(o)) = (alpha, out.get_mut(n - 1)) {
-                    *o = a;
-                }
-            }
+            // Written back in bands of rows, so only one band-sized buffer lives next to `px`
+            // (a whole-area one is another 4 bytes per channel and pixel). Each band is read from
+            // the source first to keep its stored alpha.
             let mut out = source.clone();
-            out.write_region(area, &data);
+            let band = (65_536 / w.max(1)).max(1);
+            let mut data = Vec::new();
+            for (b, rows) in px.chunks(band * w.max(1)).enumerate() {
+                let y0 = area.y0 + (b * band) as i32;
+                let rect = PixelRect::new(area.x0, y0, area.x1, y0 + (rows.len() / w.max(1)) as i32);
+                source.read_region_into(rect, &mut data);
+                for (o, q) in data.chunks_exact_mut(n).zip(rows) {
+                    let alpha = if fmt.alpha { o.get(n - 1).copied() } else { None };
+                    photocraft_raster::from_rgba_into(&fmt, *q, o);
+                    if let (Some(a), Some(last)) = (alpha, o.get_mut(n - 1)) {
+                        *last = a;
+                    }
+                }
+                out.write_region(rect, &data);
+            }
             (Some(out), rest)
         }
         _ => (None, rest),
