@@ -712,7 +712,53 @@ pub fn develop_tonal_with(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw
 /// The second half of [`develop`], after [`develop_tonal`]: the per-pixel colour stages, Detail
 /// and Effects, then the clamp to 0…1 unless `float`.
 pub fn develop_colour(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, float: bool) {
-    if px.is_empty() || p.is_identity() {
+    develop_colour_in(px, w, h, p, float, Frame::whole(w, h));
+}
+
+/// Where a `w × h` part of an image lies in it: the part's top-left corner and the image's size.
+/// The post-crop vignette and the grain depend on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Frame {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Frame {
+    /// The whole `w × h` image.
+    pub fn whole(w: usize, h: usize) -> Self {
+        Frame { x: 0, y: 0, width: w, height: h }
+    }
+}
+
+/// How many pixels around a pixel [`develop_colour`] reads at these settings (Detail's filters,
+/// one after the other). A part of the image grown by this much on every side where the image
+/// goes on develops its inside as the whole image does ([`develop_colour_in`]).
+pub fn colour_reach(p: &CameraRaw) -> usize {
+    let ps = p.pixel_scale.clamp(0.01, 1.0);
+    let gauss_reach = |sigma: f32| if sigma < 0.3 { 0 } else { crate::fxutil::gauss_box_radii(sigma).iter().sum::<usize>() };
+    let mut luma = 0;
+    if p.noise_luminance > 0.0 {
+        let n = p.noise_luminance / 100.0;
+        let r = ((1.0 + 3.0 * n) * ps).round().max(1.0) as usize;
+        // The guided filter's two box means.
+        luma += 2 * r;
+    }
+    if p.sharpen_amount > 0.0 {
+        let blur = gauss_reach((p.sharpen_radius.clamp(0.5, 3.0) * ps).max(0.3));
+        // Masking's gradient reads one pixel past its smoothing.
+        let mask = if p.sharpen_masking > 0.0 { gauss_reach(1.0 * ps.max(0.5)) + 1 } else { 0 };
+        luma += blur.max(mask);
+    }
+    let chroma = if p.noise_color > 0.0 { gauss_reach((p.noise_color / 100.0 * 6.0 * ps).max(0.3)) } else { 0 };
+    luma.max(chroma)
+}
+
+/// [`develop_colour`] for the part of an image that `frame` places. Grown by [`colour_reach`]
+/// where the image goes on, the part's inside comes out as in a develop of the whole image.
+pub fn develop_colour_in(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, float: bool, frame: Frame) {
+    if px.is_empty() || px.len() != w.saturating_mul(h) || p.is_identity() {
         return;
     }
     let ps = p.pixel_scale.clamp(0.01, 1.0);
@@ -807,7 +853,7 @@ pub fn develop_colour(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, fl
     }
     // 9. Effects.
     if p.vignette_amount != 0.0 {
-        vignette(px, w, h, p);
+        vignette(px, w, p, frame);
     }
     if p.grain_amount > 0.0 {
         let cell = 1.0 + p.grain_size / 25.0;
@@ -816,9 +862,10 @@ pub fn develop_colour(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, fl
         let seed = p.seed as u64;
         let pscale = 1.0 / ps;
         par_rows(px, w, 1, |y, row| {
+            let y = frame.y + y;
             for (x, q) in row.iter_mut().enumerate() {
                 // Sample in full-resolution coordinates so previews match the result.
-                let (fx, fy) = (x as f32 * pscale / cell, y as f32 * pscale / cell);
+                let (fx, fy) = ((frame.x + x) as f32 * pscale / cell, y as f32 * pscale / cell);
                 let n = value_noise(fx, fy, seed) * (1.0 - rough) + (value_noise(fx * 2.3, fy * 2.3, seed + 7) - 0.0) * rough;
                 let l = luma([q[0], q[1], q[2]]).clamp(0.0, 1.0);
                 let g = (n - 0.5) * 2.0 * amt * (0.4 + 2.4 * l * (1.0 - l));
@@ -1000,14 +1047,15 @@ fn detail(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, ps: f32) {
     }
 }
 
-fn vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw) {
+/// Post-crop vignetting of the `w`-wide part `frame` places.
+fn vignette(px: &mut [[f32; 4]], w: usize, p: &CameraRaw, frame: Frame) {
     let amt = p.vignette_amount / 100.0;
     let mid = p.vignette_midpoint.clamp(0.0, 100.0) / 100.0;
     let feather = p.vignette_feather.clamp(0.0, 100.0) / 100.0;
     let round = p.vignette_roundness.clamp(-100.0, 100.0) / 100.0;
     let hl = p.vignette_highlights.clamp(0.0, 100.0) / 100.0;
     let style = p.vignette_style.as_str();
-    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let (cx, cy) = (frame.width as f32 / 2.0, frame.height as f32 / 2.0);
     // Roundness: 0 follows the frame's aspect, +1 a circle, −1 a rounded rectangle.
     let (ax, ay) = if round >= 0.0 {
         let r = cx.min(cy) + (cx.max(cy) - cx.min(cy)) * (1.0 - round);
@@ -1020,7 +1068,9 @@ fn vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw) {
     let edge0 = inner - feather * 0.5 * inner;
     let edge1 = inner + feather * 0.5 * (1.4 - inner) + 0.02;
     par_rows(px, w, 1, |y, row| {
+        let y = frame.y + y;
         for (x, q) in row.iter_mut().enumerate() {
+            let x = frame.x + x;
             let (dx, dy) = (((x as f32 + 0.5 - cx) / ax).abs(), ((y as f32 + 0.5 - cy) / ay).abs());
             let r = (dx.powf(pw) + dy.powf(pw)).powf(1.0 / pw);
             let m = smoothstep(edge0, edge1, r);
@@ -1062,6 +1112,62 @@ fn vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A part of the image, grown by `colour_reach`, develops its inside as the whole image does:
+    /// Detail's filters, the vignette and the grain included.
+    #[test]
+    fn a_part_grown_by_the_reach_develops_as_the_whole() {
+        let (w, h) = (203usize, 151usize);
+        let whole: Vec<[f32; 4]> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32, (i / w) as f32);
+                let t = (x * 0.37 + y * 0.11).sin() * 0.5 + 0.5;
+                [0.2 + 0.6 * t, ((x * 0.05).cos() * 0.4 + 0.5) * (y / h as f32), ((x + y) % 17.0) / 17.0, 1.0]
+            })
+            .collect();
+        let mut hsl = [0.0; 8];
+        hsl[1] = 30.0;
+        let params = [
+            CameraRaw { vibrance: 20.0, hsl_sat: hsl, sharpen_amount: 60.0, sharpen_masking: 30.0, ..Default::default() },
+            CameraRaw { noise_luminance: 40.0, noise_color: 70.0, ..Default::default() },
+            CameraRaw { vignette_amount: -40.0, vignette_highlights: 50.0, grain_amount: 40.0, grain_size: 30.0, saturation: 10.0, ..Default::default() },
+            CameraRaw { vignette_amount: 30.0, vignette_roundness: -60.0, vignette_style: "colorPriority".into(), sharpen_amount: 30.0, ..Default::default() },
+            CameraRaw { sharpen_amount: 50.0, noise_luminance: 20.0, pixel_scale: 0.5, grain_amount: 25.0, ..Default::default() },
+        ];
+        let part = (37usize, 41usize, 121usize, 97usize); // x0, y0, x1, y1
+        for p in &params {
+            for float in [false, true] {
+                let mut full = whole.clone();
+                develop_colour(&mut full, w, h, p, float);
+                let reach = colour_reach(p);
+                let (gx0, gy0) = (part.0.saturating_sub(reach), part.1.saturating_sub(reach));
+                let (gx1, gy1) = ((part.2 + reach).min(w), (part.3 + reach).min(h));
+                let gw = gx1 - gx0;
+                let mut px: Vec<[f32; 4]> = (gy0..gy1).flat_map(|y| whole[y * w + gx0..y * w + gx1].to_vec()).collect();
+                develop_colour_in(&mut px, gw, gy1 - gy0, p, float, Frame { x: gx0, y: gy0, width: w, height: h });
+                let mut worst = 0.0f32;
+                for y in part.1..part.3 {
+                    for x in part.0..part.2 {
+                        let (a, b) = (full[y * w + x], px[(y - gy0) * gw + (x - gx0)]);
+                        for c in 0..4 {
+                            worst = worst.max((a[c] - b[c]).abs());
+                        }
+                    }
+                }
+                assert!(worst < 1e-6, "{p:?} float {float}: {worst} (reach {reach})");
+            }
+        }
+    }
+
+    /// The reach covers Detail's filters and nothing else needs it.
+    #[test]
+    fn the_reach_follows_detail() {
+        assert_eq!(colour_reach(&CameraRaw { vibrance: 50.0, vignette_amount: -30.0, grain_amount: 20.0, ..Default::default() }), 0);
+        let sharpen = colour_reach(&CameraRaw { sharpen_amount: 40.0, ..Default::default() });
+        assert!(sharpen > 0);
+        assert!(colour_reach(&CameraRaw { sharpen_amount: 40.0, noise_luminance: 30.0, ..Default::default() }) > sharpen);
+        assert!(colour_reach(&CameraRaw { noise_color: 100.0, ..Default::default() }) >= 15);
+    }
 
     #[test]
     fn new_curves_are_validated_but_saved_curves_still_load_and_render() {
