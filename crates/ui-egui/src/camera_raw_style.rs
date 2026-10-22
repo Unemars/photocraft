@@ -461,6 +461,8 @@ fn value_box(ui: &mut Ui, id: egui::Id, rect: Rect, value: &mut f32, spec: &Spec
     p.rect_filled(rect, 0.0, if enabled { c.field } else { c.base });
     p.rect_stroke(rect, 0.0, Stroke::new(1.0, if enabled { c.field_border } else { c.field_border.gamma_multiply(0.5) }), StrokeKind::Inside);
     if !enabled {
+        // Disabled at its value, dimmed like the row's label.
+        p.text(rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, spec.text(*value), label_font(), c.faint.gamma_multiply(0.6));
         return false;
     }
     match text.as_mut() {

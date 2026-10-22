@@ -166,6 +166,11 @@ pub(crate) fn edit(ui: &mut Ui, d: &mut CameraRawDialog, layout: &mut CameraRawL
                 _ => {}
             }
             dirty |= e.dirty;
+            if id == "detail"
+                && let Some(raw) = d.raw_open.as_mut()
+            {
+                crate::camera_raw_ui::demosaic_row(ui, &mut raw.demosaic);
+            }
             ui.add_space(8.0);
         }
         st::rule(ui);
