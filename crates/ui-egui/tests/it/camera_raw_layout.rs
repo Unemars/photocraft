@@ -265,6 +265,10 @@ fn before_after_shortcuts_come_before_presets_and_the_before_toggle() {
     h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT, egui::Key::P);
     h.run_steps(3);
     assert_eq!(inspect(&h)["params"]["exposure"], 1.0, "the swap brought the Before settings");
+    // A key changing After is an undo step, as the bar's buttons are.
+    ui(&mut h, json!({"undo": true})).unwrap();
+    h.run_steps(2);
+    assert_eq!(inspect(&h)["params"]["exposure"], -1.0, "Undo takes the swap back");
     h.key_press_modifiers(Modifiers::SHIFT, egui::Key::P);
     h.run_steps(3);
     assert_eq!(h.state().ui.camera_raw_layout.tool, "presets");
@@ -286,6 +290,8 @@ fn a_typed_value_stays_with_its_colour_and_the_rows_keep_their_place() {
     assert_eq!((p["hslHue"][0].clone(), p["hslHue"][1].clone()), (json!(0.0), json!(0.0)), "nothing typed was committed");
     type_value(&mut h, "Hue", "25", true);
     assert_eq!(inspect(&h)["params"]["hslHue"][1], 25.0);
+    assert!(ui(&mut h, json!({"layout":{"mixerColor":8}})).is_err(), "there are eight colours");
+    assert_eq!(h.state().ui.camera_raw_layout.mixer_color, 1);
 }
 
 /// Temperature and Tint typed in the dialog keep the smart filter exportable: it is written to

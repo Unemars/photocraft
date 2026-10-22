@@ -833,8 +833,10 @@ fn open_pixels(
         app.ui.camera_raw_scope = view;
     }
     if let Some(saved) = app.session.prefs().dialogs.get(LAYOUT_KEY)
-        && let Ok(layout) = serde_json::from_value::<crate::state::CameraRawLayoutState>(saved.clone())
+        && let Ok(mut layout) = serde_json::from_value::<crate::state::CameraRawLayoutState>(saved.clone())
     {
+        // A stored colour past the eight bands would leave no swatch selected.
+        layout.mixer_color = layout.mixer_color.min(photocraft_algo::camera_raw::HSL_BANDS.len() - 1);
         app.ui.camera_raw_layout = layout;
     }
     app.ui.camera_raw_preview = Default::default();
@@ -1023,6 +1025,9 @@ fn menu_update(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &Value) -> Opti
                 c.insert(k.clone(), v.clone());
             }
             match serde_json::from_value::<crate::state::CameraRawLayoutState>(cur) {
+                Ok(l) if l.mixer_color >= photocraft_algo::camera_raw::HSL_BANDS.len() => {
+                    return Some(Err("Camera Raw layout.mixerColor must be between 0 and 7".into()));
+                }
                 Ok(l) if !crate::camera_raw_tools_ui::TOOLS.iter().any(|(id, _, _)| *id == l.tool) => {
                     return Some(Err(format!("unknown Camera Raw tool {}", l.tool)));
                 }
@@ -1825,7 +1830,15 @@ fn shortcuts(app: &mut PhotocraftApp, ctx: &egui::Context, action: &mut Option<&
             (Modifiers::ALT | Modifiers::SHIFT, Compare::BeforeToAfter),
         ] {
             if i.consume_key(mods, Key::P) && d.before_after != BeforeAfter::Off {
+                // A key has no pointer press to start an edit, so a changed After is an undo step
+                // here (the bar's buttons get theirs from the pointer).
+                let origin = d.params.clone();
                 d.compare(action);
+                if d.params != origin {
+                    let edited = std::mem::replace(&mut d.params, origin);
+                    remember_edit(d);
+                    d.params = edited;
+                }
             }
         }
         // Then Shift+E (Red Eye) before E (Edit), Shift+P (Presets) before P (toggle Before).

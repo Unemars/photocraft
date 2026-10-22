@@ -328,9 +328,10 @@ pub(crate) fn more_menu(ui: &mut Ui, d: &mut CameraRawDialog, previous: Option<C
         let b = if shortcut.is_empty() { b } else { b.shortcut_text(shortcut) };
         ui.add_enabled(enabled, b).clicked()
     };
-    let at_open = d.params == d.original;
-    if item(ui, tr("Reset to Open"), "", !at_open) {
-        d.params = d.original.clone();
+    // Both resets keep the preview's own pixel scale and encoding, as Reset to Default does.
+    let original = CameraRaw { pixel_scale: d.params.pixel_scale, encoding_gamma: d.params.encoding_gamma, ..d.original.clone() };
+    if item(ui, tr("Reset to Open"), "", d.params != original) {
+        d.params = original;
         changed = true;
     }
     let defaults = CameraRaw { pixel_scale: d.params.pixel_scale, encoding_gamma: d.params.encoding_gamma, ..Default::default() };
