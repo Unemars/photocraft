@@ -3915,9 +3915,7 @@ cameraRaw	Warm	Тёплый
 cameraRaw	White balance	Баланс белого
 cameraRaw	Yellows	Жёлтые
 cameraRaw	Zoom and Pan	Масштаб и прокрутка
-	After	После
 	Auto tone and color (Ctrl+U)	Автоматический тон и цвет (Ctrl+U)
-	Before	До
 	Before/After Left/Right	До/после: слева/справа
 	Before/After Left/Right Split	До/после: разделение слева/справа
 	Before/After Top/Bottom	До/после: сверху/снизу
