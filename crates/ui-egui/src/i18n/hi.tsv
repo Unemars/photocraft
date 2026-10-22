@@ -534,3 +534,185 @@ cameraRaw	Yellow	पीला
 	Missing delete command	हटाने का कमांड नहीं मिला
 	Invalid delete command	हटाने का कमांड अमान्य है
 	Layer deleted, but confirmation preference could not be saved: {error}	लेयर हटा दी गई, लेकिन पुष्टि की प्राथमिकता सहेजी नहीं जा सकी: {error}
+
+# Camera Raw dialog (Camera Raw 16.1.1 layout): tools, panels, menus and preferences
+cameraRaw	Adjust	समायोजन
+	After	बाद
+	Appearance	रूप-रंग
+cameraRaw	Apply Favorite Preset	पसंदीदा प्रीसेट लागू करें
+cameraRaw	Apply Previous Settings	पिछली सेटिंग्स लागू करें
+cameraRaw	Aquas	एक्वा
+cameraRaw	Artistic	कलात्मक
+cameraRaw	As Shot	शॉट के अनुसार
+cameraRaw	Aspect	आस्पेक्ट
+cameraRaw	Auto: apply balanced perspective corrections	ऑटो: संतुलित पर्सपेक्टिव सुधार लागू करें
+cameraRaw	B&W	B&W
+cameraRaw	Back	वापस
+	Background	बैकग्राउंड
+	Basic	बेसिक
+	Before	पहले
+	Before/After Left/Right	पहले/बाद: बाएँ/दाएँ
+	Before/After Left/Right Split	पहले/बाद: बाएँ/दाएँ विभाजन
+	Before/After Top/Bottom	पहले/बाद: ऊपर/नीचे
+	Before/After Top/Bottom Split	पहले/बाद: ऊपर/नीचे विभाजन
+	Black & White	ब्लैक एंड व्हाइट
+cameraRaw	Blue Channel	नीला चैनल
+cameraRaw	Blue Primary	नीला प्राइमरी
+cameraRaw	Blues	नीले
+	Browse profiles	प्रोफ़ाइल ब्राउज़ करें
+cameraRaw	Browse...	ब्राउज़ करें...
+	Brush	ब्रश
+cameraRaw	Calibration	कैलिब्रेशन
+cameraRaw	Camera Raw Cache	Camera Raw कैश
+	Camera Raw Preferences	Camera Raw प्राथमिकताएं
+	Camera Raw follows PhotoCraft's theme (Window › Theme)	Camera Raw, PhotoCraft की थीम का पालन करता है (विंडो › थीम)
+cameraRaw	Clarity Pop	स्पष्टता उभार
+cameraRaw	Clone	क्लोन
+	Color Noise Reduction	कलर नॉइज़ रिडक्शन
+cameraRaw	Color Theme:	कलर थीम:
+	Convert and save image: not available in the Camera Raw Filter	इमेज कन्वर्ट करके सहेजें: Camera Raw फ़िल्टर में उपलब्ध नहीं
+cameraRaw	Cool	ठंडा
+	Copy After settings to Before (Ctrl+Alt+P)	“बाद” की सेटिंग्स “पहले” में कॉपी करें (Ctrl+Alt+P)
+	Copy Before settings to After (Alt+Shift+P)	“पहले” की सेटिंग्स “बाद” में कॉपी करें (Alt+Shift+P)
+cameraRaw	Copy Edit Settings	एडिट सेटिंग्स कॉपी करें
+cameraRaw	Copy Selected Edit Settings...	चयनित एडिट सेटिंग्स कॉपी करें...
+cameraRaw	Create New Mask	नया मास्क बनाएँ
+cameraRaw	Create Preset...	प्रीसेट बनाएँ...
+cameraRaw	Creative	क्रिएटिव
+	Creative profiles are not available in PhotoCraft yet.	क्रिएटिव प्रोफ़ाइल अभी PhotoCraft में उपलब्ध नहीं हैं।
+	Custom	कस्टम
+	Cycle between Before/After views (Q)	पहले/बाद व्यू के बीच बदलें (Q)
+	Darken	डार्कन
+	Default	डिफ़ॉल्ट
+cameraRaw	Default image click zooms to:	इमेज पर क्लिक करने से ज़ूम:
+cameraRaw	Defringe	डीफ़्रिंज
+cameraRaw	Disable Upright	अपराइट बंद करें
+cameraRaw	Distortion	डिस्टॉर्शन
+cameraRaw	Edit (E)	एडिट (E)
+cameraRaw	Edit panel behavior:	एडिट पैनल का व्यवहार:
+cameraRaw	Faded	फीका
+cameraRaw	Favorites	पसंदीदा
+	Fit ({percent})	फ़िट ({percent})
+	For a more accurate preview, zoom the preview size to 100% or larger when adjusting the controls in this panel.	अधिक सटीक पूर्वावलोकन के लिए, इस पैनल के नियंत्रण बदलते समय पूर्वावलोकन को 100% या उससे अधिक पर ज़ूम करें।
+	For best results, apply lens corrections first.	सर्वोत्तम परिणाम के लिए पहले लेंस सुधार लागू करें।
+cameraRaw	Full: apply level, horizontal, and vertical perspective corrections	पूर्ण: लेवल, क्षैतिज और ऊर्ध्वाधर पर्सपेक्टिव सुधार लागू करें
+	General	सामान्य
+cameraRaw	Geometry	ज्यामिति
+cameraRaw	Green Amount	हरे की मात्रा
+cameraRaw	Green Channel	हरा चैनल
+cameraRaw	Green Hue	हरा ह्यू
+cameraRaw	Green Primary	हरा प्राइमरी
+cameraRaw	Greens	हरे
+cameraRaw	Guided: draw two or more guides to customize perspective corrections	गाइडेड: पर्सपेक्टिव सुधार अपने अनुसार करने के लिए दो या अधिक गाइड बनाएँ
+cameraRaw	HDR	HDR
+	HDR editing needs an HDR display	HDR एडिटिंग के लिए HDR डिस्प्ले चाहिए
+cameraRaw	HSL	HSL
+	Hand Tool (H)	हैंड टूल (H)
+cameraRaw	Haze Cut	धुंध कटौती
+	Heal	हील
+	Healing	हीलिंग
+	Horizontal	क्षैतिज
+	Input:	इनपुट:
+	Keyboard Shortcuts	कीबोर्ड शॉर्टकट
+cameraRaw	Level: apply only level correction	लेवल: केवल लेवल सुधार लागू करें
+	Linear	लीनियर
+cameraRaw	Linear Gradient	लीनियर ग्रेडिएंट
+cameraRaw	Load Settings...	सेटिंग्स लोड करें...
+cameraRaw	Magentas	मैजेंटा
+cameraRaw	Manual Transformations	मैनुअल ट्रांसफ़ॉर्मेशन
+cameraRaw	Masking (M)	मास्किंग (M)
+	Masks need local adjustments and segmentation models; PhotoCraft does not have them in Camera Raw yet.	मास्क के लिए स्थानीय समायोजन और सेगमेंटेशन मॉडल चाहिए; PhotoCraft के Camera Raw में अभी ये नहीं हैं।
+cameraRaw	Medium Contrast	मध्यम कंट्रास्ट
+cameraRaw	Mixer	मिक्सर
+	Modern	आधुनिक
+	Monochrome	मोनोक्रोम
+	More image settings	अधिक इमेज सेटिंग्स
+cameraRaw	Multiple	एकाधिक
+	Multiple: Edit panels will stay open until you close them.	एकाधिक: एडिट पैनल तब तक खुले रहेंगे जब तक आप उन्हें बंद नहीं करते।
+cameraRaw	Muted	मंद
+	None	कोई नहीं
+	Not available yet	अभी उपलब्ध नहीं
+cameraRaw	Objects	ऑब्जेक्ट्स
+cameraRaw	Offset X	ऑफ़सेट X
+cameraRaw	Offset Y	ऑफ़सेट Y
+	Opacity	अपारदर्शिता
+	Open preferences dialog (Ctrl+K)	प्राथमिकताएं डायलॉग खोलें (Ctrl+K)
+cameraRaw	Optics	ऑप्टिक्स
+cameraRaw	Oranges	नारंगी
+	Output:	आउटपुट:
+	Overlay	ओवरले
+	Panels	पैनल
+cameraRaw	Parametric Curve	पैरामीट्रिक कर्व
+cameraRaw	Paste Edit Settings	एडिट सेटिंग्स पेस्ट करें
+	Performance	प्रदर्शन
+cameraRaw	Pet Eye	पालतू जानवर की आँख
+	PhotoCraft develops Camera Raw previews on the CPU; the result uses the full-resolution pipeline.	PhotoCraft, Camera Raw पूर्वावलोकन CPU पर तैयार करता है; परिणाम पूर्ण-रिज़ॉल्यूशन पाइपलाइन से बनता है।
+	PhotoCraft keeps no Camera Raw cache.	PhotoCraft कोई Camera Raw कैश नहीं रखता।
+	PhotoCraft's own presets. Saving and importing presets is not available yet.	PhotoCraft के अपने प्रीसेट। प्रीसेट सहेजना और इम्पोर्ट करना अभी उपलब्ध नहीं है।
+cameraRaw	Point Color	पॉइंट कलर
+cameraRaw	Point Curve	पॉइंट कर्व
+	Presets	प्रीसेट
+cameraRaw	Presets (Shift+P)	प्रीसेट (Shift+P)
+cameraRaw	Process	प्रोसेस
+cameraRaw	Profile	प्रोफ़ाइल
+	Pupil Size	पुतली का आकार
+cameraRaw	Purple Amount	बैंगनी की मात्रा
+cameraRaw	Purple Hue	बैंगनी ह्यू
+cameraRaw	Purples	बैंगनी
+cameraRaw	Radial Gradient	रेडियल ग्रेडिएंट
+	Range	रेंज
+cameraRaw	Red Channel	लाल चैनल
+	Red Eye	रेड आई
+cameraRaw	Red Eye (Shift+E)	रेड आई (Shift+E)
+cameraRaw	Red Primary	लाल प्राइमरी
+cameraRaw	Reds	लाल
+cameraRaw	Refine Saturation	सैचुरेशन परिष्कृत करें
+cameraRaw	Refresh	रीफ़्रेश करें
+	Remove	हटाएँ
+cameraRaw	Remove (B)	हटाएँ (B)
+	Reset to Default	डिफ़ॉल्ट पर रीसेट करें
+cameraRaw	Reset to Open	खोलने की स्थिति पर रीसेट करें
+cameraRaw	Sample fringe	फ़्रिंज का नमूना लें
+cameraRaw	Save Settings...	सेटिंग्स सहेजें...
+	Select zoom level	ज़ूम स्तर चुनें
+	Show Overlay	ओवरले दिखाएँ
+cameraRaw	Show rich tooltips	विस्तृत टूलटिप दिखाएँ
+cameraRaw	Single	एकल
+	Single: opening an edit panel closes the others.	एकल: एक एडिट पैनल खोलने पर बाकी बंद हो जाते हैं।
+	Sky	आकाश
+cameraRaw	Smoothness	स्मूदनेस
+cameraRaw	Split Tone	स्प्लिट टोन
+cameraRaw	Strong Contrast	तेज़ कंट्रास्ट
+	Style	स्टाइल
+	Subject	विषय
+	Swap Before and After settings (Ctrl+Alt+Shift+P)	“पहले” और “बाद” की सेटिंग्स आपस में बदलें (Ctrl+Alt+Shift+P)
+	Targeted Adjustment Tool: drag in the image to adjust the colour under the pointer	टार्गेटेड एडजस्टमेंट टूल: पॉइंटर के नीचे का रंग बदलने के लिए इमेज में ड्रैग करें
+	This tool is not available in PhotoCraft yet.	यह टूल अभी PhotoCraft में उपलब्ध नहीं है।
+	Toggle Full Screen mode (F)	फ़ुल स्क्रीन मोड चालू/बंद करें (F)
+	Toggle between current settings and defaults (P)	मौजूदा सेटिंग्स और डिफ़ॉल्ट के बीच बदलें (P)
+	Toggle grid overlay (Ctrl+Shift+G)	ग्रिड ओवरले चालू/बंद करें (Ctrl+Shift+G)
+	Toggle sampler overlay (S)	सैंपलर ओवरले चालू/बंद करें (S)
+	Toggle visibility of {panel} settings	{panel} सेटिंग्स की दृश्यता चालू/बंद करें
+cameraRaw	Upright	अपराइट
+cameraRaw	Use Lightroom style zoom and pan	Lightroom जैसा ज़ूम और पैन इस्तेमाल करें
+cameraRaw	Use compact layout	कॉम्पैक्ट लेआउट इस्तेमाल करें
+cameraRaw	Use legacy Target Adjustment Tool	पुराना टार्गेट एडजस्टमेंट टूल इस्तेमाल करें
+cameraRaw	Use legacy undo shortcuts	पुराने पूर्ववत शॉर्टकट इस्तेमाल करें
+	Use the eyedropper to sample purple and green areas of fringing that need correction.	सुधार की ज़रूरत वाले बैंगनी और हरे फ़्रिंज वाले हिस्सों का नमूना लेने के लिए आईड्रॉपर का उपयोग करें।
+cameraRaw	Version 1	संस्करण 1
+cameraRaw	Version 2	संस्करण 2
+cameraRaw	Version 3	संस्करण 3
+cameraRaw	Version 4	संस्करण 4
+cameraRaw	Version 5	संस्करण 5
+cameraRaw	Version 6 (Current)	संस्करण 6 (वर्तमान)
+	Vertical	ऊर्ध्वाधर
+cameraRaw	Vertical: apply level and vertical perspective correction	ऊर्ध्वाधर: लेवल और ऊर्ध्वाधर पर्सपेक्टिव सुधार लागू करें
+cameraRaw	Vignette	विगनेट
+cameraRaw	Vintage	विंटेज
+cameraRaw	Visualize Spots	धब्बे दिखाएँ
+cameraRaw	Vivid	जीवंत
+cameraRaw	Warm	गर्म
+cameraRaw	White balance	व्हाइट बैलेंस
+cameraRaw	Yellows	पीले
+	Zoom Tool (Z)	ज़ूम टूल (Z)
+cameraRaw	Zoom and Pan	ज़ूम और पैन
