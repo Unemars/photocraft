@@ -171,6 +171,9 @@ mod tests {
         let h = RgbHistogram::from_rgba(&pixels);
         assert!(h.channels[0][10..230].iter().filter(|&&v| v == 0).count() > 10);
         assert_eq!(h.samples, 256);
-        assert!(h.overflow[0] > 0);
+        // Camera Raw's Exposure keeps a highlight shoulder (measured), so the brightest inputs
+        // pile up toward white rather than running past it.
+        let top: u64 = h.channels[0][240..].iter().sum::<u64>() + h.overflow[0];
+        assert!(top > 16, "{top}");
     }
 }

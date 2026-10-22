@@ -335,3 +335,20 @@ fn a_double_click_on_the_highlights_knob_resets_it_every_time() {
         assert_eq!(inspect(&h)["params"]["highlights"], 0.0);
     }
 }
+
+/// #7422 laid Optics out disabled; with their processing measured, the lens Vignette and
+/// Defringe's amounts take typed values, and Calibration's primaries are settings like any other.
+#[test]
+fn the_measured_optics_and_calibration_controls_take_values() {
+    let mut h = fixture();
+    ui(&mut h, json!({"layout":{"open":["optics"],"groups":["defringe","lensVignette"]}})).unwrap();
+    type_value(&mut h, "Purple Amount", "5", true);
+    type_value(&mut h, "Vignette", "-30", true);
+    let p = inspect(&h)["params"].clone();
+    assert_eq!((p["defringePurpleAmount"].clone(), p["lensVignetteAmount"].clone()), (json!(5.0), json!(-30.0)));
+    ui(&mut h, json!({"set":{"calibrationBlueSaturation":30.0}})).unwrap();
+    assert_eq!(inspect(&h)["params"]["calibrationBlueSaturation"], 30.0);
+    // Hiding Optics takes its edits out of the preview, as any panel's eye does.
+    ui(&mut h, json!({"hidden":["optics"]})).unwrap();
+    assert_eq!(inspect(&h)["params"]["defringePurpleAmount"], 5.0, "the settings stay; only the preview leaves them out");
+}

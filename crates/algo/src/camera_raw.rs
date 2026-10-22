@@ -1035,6 +1035,7 @@ fn vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, space: point
     let feather = p.vignette_feather.clamp(0.0, 100.0);
     let hl = p.vignette_highlights.clamp(0.0, 100.0) / 100.0;
     let style = p.vignette_style.as_str();
+    let tr = space.transfer();
     // The midpoint and feather reshape the profile as the measured midpoint 0 / 100 and feather
     // 0 / 100 profiles at −100 do, relative to the default one.
     let reshape = |r: f32, g: f32| -> f32 {
@@ -1082,24 +1083,24 @@ fn vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, space: point
                 let removed = (hl.powf(0.7) * 1.4 * b * b).min(0.94);
                 g *= 1.0 - removed;
             }
+            // Each style is a gain, an offset along grey or a blend toward black or white: the same
+            // in the document's linear primaries as in ProPhoto's, so greys stay exactly grey.
+            let lin = [q[0], q[1], q[2]].map(|v| tr.decode(v));
             let o = match style {
                 "paintOverlay" => {
                     let target = if amt < 0.0 { 0.0 } else { 1.0 };
                     // Measured: the blend toward black is 0.78 where the gain is −3.06 stops.
                     let wgt = (1.0 - (0.72 * g).exp2()).clamp(0.0, 1.0).abs();
                     let wgt = if amt < 0.0 { wgt } else { (1.0 - (-0.72 * g).exp2()).clamp(0.0, 1.0) };
-                    c.map(|v| v + (target - v) * wgt)
+                    lin.map(|v| v + (target - v) * wgt)
                 }
                 "colorPriority" => {
                     let k = g.exp2();
-                    c.map(|v| v + yv * (k - 1.0))
+                    lin.map(|v| v + yv * (k - 1.0))
                 }
-                _ => c.map(|v| v * g.exp2()),
+                _ => lin.map(|v| v * g.exp2()),
             };
-            let o = space.to_document(o);
-            q[0] = o[0];
-            q[1] = o[1];
-            q[2] = o[2];
+            q[..3].copy_from_slice(&o.map(|v| tr.encode(v)));
         }
     });
 }
@@ -1127,6 +1128,8 @@ fn lens_vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, space: 
     };
     let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
     let half_diag = cx.hypot(cy).max(1.0);
+    // A gain in linear light: the same in the document's primaries as in ProPhoto's.
+    let tr = space.transfer();
     par_rows(px, w, 1, |y, row| {
         for (x, q) in row.iter_mut().enumerate() {
             // Round: the pixel radius over the half diagonal, on the table's 0…1.45 scale.
@@ -1135,10 +1138,10 @@ fn lens_vignette(px: &mut [[f32; 4]], w: usize, h: usize, p: &CameraRaw, space: 
             if g.abs() < 1e-4 {
                 continue;
             }
-            let o = space.to_document(space.to_pro([q[0], q[1], q[2]]).map(|v| v * g.exp2()));
-            q[0] = o[0];
-            q[1] = o[1];
-            q[2] = o[2];
+            let k = g.exp2();
+            for v in &mut q[..3] {
+                *v = tr.encode(tr.decode(*v) * k);
+            }
         }
     });
 }
@@ -1193,6 +1196,32 @@ fn grain(px: &mut [[f32; 4]], w: usize, p: &CameraRaw, space: pointwise::Space, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every vignette style and the lens vignette are a gain, an offset along grey or a blend
+    /// toward black or white: a grey image stays exactly grey.
+    #[test]
+    fn vignettes_keep_greys_grey() {
+        let (w, h) = (48usize, 32usize);
+        for p in [
+            CameraRaw { vignette_amount: -60.0, vignette_highlights: 40.0, ..Default::default() },
+            CameraRaw { vignette_amount: 40.0, vignette_style: "colorPriority".into(), ..Default::default() },
+            CameraRaw { vignette_amount: -80.0, vignette_style: "paintOverlay".into(), ..Default::default() },
+            CameraRaw { lens_vignette_amount: -50.0, ..Default::default() },
+        ] {
+            let mut px: Vec<[f32; 4]> = (0..w * h)
+                .map(|i| {
+                    let v = 0.1 + 0.8 * (i % w) as f32 / w as f32;
+                    [v, v, v, 1.0]
+                })
+                .collect();
+            let before = px.clone();
+            develop(&mut px, w, h, &p, true);
+            assert_ne!(px, before, "{p:?} darkens or lightens the corners");
+            for q in &px {
+                assert!((q[0] - q[1]).abs() < 1e-5 && (q[1] - q[2]).abs() < 1e-5, "{p:?}: {q:?}");
+            }
+        }
+    }
 
     #[test]
     fn new_curves_are_validated_but_saved_curves_still_load_and_render() {
