@@ -49,7 +49,7 @@ use hayro::vello_cpu::{self, Pixmap, RenderContext};
 use hayro::{RenderCache, RenderSettings, render_into};
 use photocraft_cms::{Builtin, Intent, Transform};
 use photocraft_color::{ColorMode, SampleType};
-use photocraft_doc::{Document, Layer, LayerContent};
+use photocraft_doc::{Document, Layer, LayerContent, PdfBox, PdfImportMode, PdfImportOptions};
 use photocraft_geom::Size;
 use photocraft_raster::{Interrupt, Surface};
 
@@ -74,6 +74,18 @@ const MAX_XOBJECTS: usize = 10_000;
 const MAX_JPX_TILES: u64 = 65_536;
 /// Deepest nesting of Form XObjects the walk follows.
 const MAX_FORM_DEPTH: usize = 32;
+/// Most Form XObject draws a page's content may make, repeats included. The interpreter limits
+/// how deep forms nest (50) but not how often one is drawn, so a form drawing its child twice,
+/// 40 levels down, is 2^40 draws: the page would never finish interpreting or rendering.
+const MAX_FORM_DRAWS: u64 = 100_000;
+/// Most Form XObject draws one tiling pattern's cell may make. The renderer interprets the cell
+/// again for every fill painted with the pattern, so this keeps a pattern used many times from
+/// multiplying a large form tree by the number of fills.
+const MAX_PATTERN_FORM_DRAWS: u64 = 1_000;
+/// Most bytes one content stream (the page's contents, a form, a tiling pattern, a Type 3 glyph,
+/// a soft-mask group, an appearance) may inflate to. Deflate reaches about 1000:1, so a few MB in
+/// the file could otherwise ask for gigabytes when the stream is decoded.
+const MAX_CONTENT_BYTES: u64 = 256 << 20;
 /// Most dictionaries, arrays and streams [`codec_check`] walks through for one page.
 const MAX_OBJECTS: usize = 200_000;
 /// Deepest nesting of dictionaries and arrays [`codec_check`] follows.
@@ -155,6 +167,8 @@ impl CropTo {
 /// What the Import PDF dialog asked for.
 #[derive(Clone, PartialEq)]
 pub struct PdfOpenOptions {
+    /// Whether Photoshop's preserved tagged layers are opened when available.
+    pub layer_mode: PdfImportMode,
     /// The page to open, counted from 1.
     pub page: usize,
     pub crop: CropTo,
@@ -181,10 +195,12 @@ pub struct PdfOpenOptions {
 
 /// Prints every option but the password (logs and error messages carry `{opts:?}`).
 impl std::fmt::Debug for PdfOpenOptions {
+    /// Formats the import options while replacing any supplied password with a redaction marker.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PdfOpenOptions")
             .field("page", &self.page)
             .field("crop", &self.crop)
+            .field("layer_mode", &self.layer_mode)
             .field("resolution", &self.resolution)
             .field("mode", &self.mode)
             .field("depth", &self.depth)
@@ -199,8 +215,10 @@ impl std::fmt::Debug for PdfOpenOptions {
 }
 
 impl Default for PdfOpenOptions {
+    /// Opens page 1 with automatic layer preservation, bounding-box crop, default resolution, and antialiased 8-bit RGB rendering.
     fn default() -> Self {
         PdfOpenOptions {
+            layer_mode: PdfImportMode::Auto,
             page: 1,
             crop: CropTo::BoundingBox,
             resolution: DEFAULT_RESOLUTION,
@@ -211,6 +229,56 @@ impl Default for PdfOpenOptions {
             pixel_size: None,
             password: None,
             image: None,
+            suppress_warnings: false,
+        }
+    }
+}
+
+impl PdfOpenOptions {
+    /// The persistent PDF smart-object settings represented by this dialog.
+    /// Password, display name and warning suppression are intentionally transient.
+    pub fn projection(&self) -> PdfImportOptions {
+        PdfImportOptions {
+            mode: self.layer_mode,
+            page: self.page,
+            dpi: self.resolution,
+            crop_box: match self.crop {
+                CropTo::BoundingBox => PdfBox::BoundingBox,
+                CropTo::MediaBox => PdfBox::Media,
+                CropTo::CropBox => PdfBox::Crop,
+                CropTo::BleedBox => PdfBox::Bleed,
+                CropTo::TrimBox => PdfBox::Trim,
+                CropTo::ArtBox => PdfBox::Art,
+            },
+            color_mode: self.mode,
+            depth: self.depth,
+            anti_alias: self.anti_alias,
+            pixel_size: self.pixel_size,
+            image: self.image,
+        }
+    }
+
+    /// Reconstructs the persistent portion of an Import PDF dialog.
+    pub fn from_projection(projection: PdfImportOptions) -> Self {
+        PdfOpenOptions {
+            layer_mode: projection.mode,
+            page: projection.page,
+            crop: match projection.crop_box {
+                PdfBox::BoundingBox => CropTo::BoundingBox,
+                PdfBox::Media => CropTo::MediaBox,
+                PdfBox::Crop => CropTo::CropBox,
+                PdfBox::Bleed => CropTo::BleedBox,
+                PdfBox::Trim => CropTo::TrimBox,
+                PdfBox::Art => CropTo::ArtBox,
+            },
+            resolution: projection.dpi,
+            mode: projection.color_mode,
+            depth: projection.depth,
+            anti_alias: projection.anti_alias,
+            name: None,
+            pixel_size: projection.pixel_size,
+            password: None,
+            image: projection.image,
             suppress_warnings: false,
         }
     }
@@ -327,21 +395,43 @@ pub fn thumbnail(bytes: &[u8], page: usize, max_side: u32, password: Option<&str
 
 /// Opens one page of a PDF as a document (see the module docs). `name` is the file name.
 pub fn import_pdf(name: &str, bytes: &[u8], opts: &PdfOpenOptions, ctl: &Interrupt) -> Result<ImportResult, IoError> {
-    let mut r = import_pdf_inner(name, bytes, opts, ctl)?;
+    import_pdf_with_options(name, bytes, opts, &crate::ImportOptions::default(), ctl)
+}
+
+/// Imports the selected PDF content with caller resource settings, clearing notes when warning suppression is enabled.
+pub(crate) fn import_pdf_with_options(
+    name: &str,
+    bytes: &[u8],
+    opts: &PdfOpenOptions,
+    import_options: &crate::ImportOptions,
+    ctl: &Interrupt,
+) -> Result<ImportResult, IoError> {
+    let mut r = import_pdf_inner(name, bytes, opts, import_options, ctl)?;
     if opts.suppress_warnings {
         r.warnings.clear();
     }
     Ok(r)
 }
 
-fn import_pdf_inner(name: &str, bytes: &[u8], opts: &PdfOpenOptions, ctl: &Interrupt) -> Result<ImportResult, IoError> {
+/// Opens a selected image or page, preferring preserved layers unless rendering is requested or Auto finds none.
+/// Rendered pages are preflighted and fitted to the page pixel budget before conversion to the requested mode and depth.
+fn import_pdf_inner(name: &str, bytes: &[u8], opts: &PdfOpenOptions, import_options: &crate::ImportOptions, ctl: &Interrupt) -> Result<ImportResult, IoError> {
     if let Some(index) = opts.image {
         return import_image(name, bytes, index, opts.name.as_deref(), opts.password.as_deref(), ctl);
     }
     ctl.check().map_err(|_| IoError::Cancelled)?;
+    crate::pdf_layers::validate_pdf_size_len(bytes.len(), opts.layer_mode).map_err(crate::pdf_layers::LayeredPdfError::into_io)?;
     let pdf = load(bytes, opts.password.as_deref())?;
     let count = pdf.pages().len();
     let page = page_of(&pdf, opts.page)?;
+    if opts.layer_mode != photocraft_doc::PdfImportMode::Render {
+        // Named like a rendered page: the chosen name or the file's stem, `-N.pdf` on a multi-page file.
+        match crate::pdf_layers::import_page(&page_name(name, opts.name.as_deref(), opts.page, count), page, import_options, ctl) {
+            Ok(result) => return Ok(result),
+            Err(crate::pdf_layers::LayeredPdfError::Absent) if opts.layer_mode == photocraft_doc::PdfImportMode::Auto => {}
+            Err(error) => return Err(error.into_io()),
+        }
+    }
     let mut warnings = Vec::new();
     ctl.progress(0.05);
     // Every image the page can decode is sized from the file before any of it is decoded.
@@ -350,7 +440,7 @@ fn import_pdf_inner(name: &str, bytes: &[u8], opts: &PdfOpenOptions, ctl: &Inter
     if count == 1
         && let Some(document) = image_only(name, page)?
     {
-        return Ok(ImportResult { document, warnings, source_read_only: false, preview_only: false });
+        return Ok(ImportResult { document, warnings, source_read_only: true, preview_only: false });
     }
     let info = page_info(page);
     let bx = match opts.crop {
@@ -382,9 +472,8 @@ fn import_pdf_inner(name: &str, bytes: &[u8], opts: &PdfOpenOptions, ctl: &Inter
     let mut doc = Document::new(page_name(name, opts.name.as_deref(), opts.page, count), Size::new(w, h), mode, depth);
     doc.resolution_dpi = ppi;
     let fmt = doc.pixel_format();
-    let px = pixels(&rgba, fmt.mode)?;
     let mut surface = Surface::new(fmt);
-    surface.write_region(doc.bounds(), &px);
+    write_bands(&mut surface, &rgba, (w, h), fmt.mode, ctl)?;
     surface.prune();
     doc.layers.push(Layer::new("Layer 1", LayerContent::Raster(surface)));
     Ok(ImportResult { document: doc, warnings, source_read_only: true, preview_only: false })
@@ -411,6 +500,7 @@ pub fn image_name(file: &str, chosen: Option<&str>, index: usize) -> String {
     format!("{stem}-{index}")
 }
 
+/// Removes directory components using either path separator, then strips the final filename extension.
 fn stem_of(file: &str) -> String {
     let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
     name.rsplit_once('.').map_or(name.to_string(), |(s, _)| s.to_string())
@@ -495,7 +585,8 @@ pub fn image_thumbnail(bytes: &[u8], index: usize, max_side: u32, password: Opti
 
 // ------------------------------------------------------------------------------------- reading
 
-fn load(bytes: &[u8], password: Option<&str>) -> Result<Pdf, IoError> {
+/// Loads PDF bytes with an optional password, distinguishing missing or wrong passwords from unsupported encryption and invalid files.
+pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> Result<Pdf, IoError> {
     let data = Arc::new(bytes.to_vec());
     let r = match password {
         Some(p) => Pdf::new_with_password(data, p),
@@ -516,6 +607,7 @@ fn load(bytes: &[u8], password: Option<&str>) -> Result<Pdf, IoError> {
     })
 }
 
+/// Looks up a one-based page number, reporting an empty PDF or an out-of-range selection.
 fn page_of<'a>(pdf: &'a Pdf, page: usize) -> Result<&'a Page<'a>, IoError> {
     let n = pdf.pages().len();
     if n == 0 {
@@ -529,19 +621,23 @@ fn norm(r: hayro::hayro_syntax::object::Rect) -> [f32; 4] {
     [r.x0.min(r.x1) as f32, r.y0.min(r.y1) as f32, r.x0.max(r.x1) as f32, r.y0.max(r.y1) as f32]
 }
 
+/// Intersects two ordered boxes, clamping disjoint axes to zero extent.
 fn inter(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
     [x0, y0, a[2].min(b[2]).max(x0), a[3].min(b[3]).max(y0)]
 }
 
+/// Returns whether an ordered box has strictly positive width and height.
 fn has_area(b: [f32; 4]) -> bool {
     b[2] > b[0] && b[3] > b[1]
 }
 
+/// Converts a PDF box's single-precision coordinates to a double-precision rectangle.
 fn to_pt(b: [f32; 4]) -> PtRect {
     PtRect::new(f64::from(b[0]), f64::from(b[1]), f64::from(b[2]), f64::from(b[3]))
 }
 
+/// Collects normalized page boxes and rotation, using A4 for an invalid media box and the crop box for absent or empty optional boxes.
 fn page_info(p: &Page) -> PdfPage {
     // A page without a usable media box is treated as A4, as hayro renders it.
     let mut media = norm(p.media_box());
@@ -562,6 +658,7 @@ fn page_info(p: &Page) -> PdfPage {
     PdfPage { media, crop, bleed: get(b"BleedBox"), trim: get(b"TrimBox"), art: get(b"ArtBox"), rotation }
 }
 
+/// Uses the interpreter's default settings for rendering and mark collection.
 fn settings() -> InterpreterSettings {
     InterpreterSettings::default()
 }
@@ -616,20 +713,45 @@ fn render_page(page: &Page, bx: [f32; 4], rotation: u16, (w, h): (u32, u32), ant
 /// Straight-alpha sRGB bytes → the document's interleaved normalised channels: sRGB as is, and
 /// the other modes through the working profiles Photoshop assigns (Dot Gain 20 %, the coated
 /// CMYK profile, Lab D50), relative colorimetric with black point compensation.
-fn pixels(rgba: &[u8], mode: ColorMode) -> Result<Vec<f32>, IoError> {
-    let src: Vec<f32> = rgba.iter().map(|&v| f32::from(v) / 255.0).collect();
+/// Rows converted at a time. Converting the whole page at once held an f32 copy of it, plus a
+/// second one for Gray, CMYK and Lab: about 1 GB and 1.3 GB at the 64 MP cap, on top of the
+/// rendered RGBA. A band keeps that to a few MB.
+const BAND_ROWS: u32 = 256;
+
+/// Writes the rendered `w × h` RGBA page into `surface` in `mode`, a band of rows at a time.
+fn write_bands(surface: &mut Surface, rgba: &[u8], (w, h): (u32, u32), mode: ColorMode, ctl: &Interrupt) -> Result<(), IoError> {
     let dst = match mode {
-        ColorMode::Grayscale => Builtin::DotGain20Compat,
-        ColorMode::Cmyk => Builtin::CoatedCmyk,
-        ColorMode::Lab => Builtin::LabD50,
-        _ => return Ok(src),
+        ColorMode::Grayscale => Some(Builtin::DotGain20Compat),
+        ColorMode::Cmyk => Some(Builtin::CoatedCmyk),
+        ColorMode::Lab => Some(Builtin::LabD50),
+        _ => None,
     };
-    let n = mode.color_channels();
-    let t = Transform::new(Builtin::Srgb.profile(), dst.profile(), Intent::RelativeColorimetric, true)
+    let t = dst
+        .map(|d| Transform::new(Builtin::Srgb.profile(), d.profile(), Intent::RelativeColorimetric, true))
+        .transpose()
         .map_err(|e| IoError::Pdf(format!("colour conversion: {e}")))?;
-    let mut out = vec![0.0f32; src.len() / 4 * (n + 1)];
-    t.convert_f32(&src, 4, &mut out, n + 1, true);
-    Ok(out)
+    let n = if t.is_some() { mode.color_channels() } else { 3 };
+    let row = (w as usize).checked_mul(4).ok_or_else(|| IoError::Pdf("PDF: the page is too wide".into()))?;
+    let mut y = 0u32;
+    while y < h {
+        ctl.check().map_err(|_| IoError::Cancelled)?;
+        let rows = BAND_ROWS.min(h - y);
+        let start = (y as usize).saturating_mul(row);
+        let band = rgba.get(start..start.saturating_add(rows as usize * row)).ok_or_else(|| IoError::Pdf("PDF: the rendered page is short".into()))?;
+        let src: Vec<f32> = band.iter().map(|&v| f32::from(v) / 255.0).collect();
+        let px = match &t {
+            Some(t) => {
+                let mut out = vec![0.0f32; src.len() / 4 * (n + 1)];
+                t.convert_f32(&src, 4, &mut out, n + 1, true);
+                out
+            }
+            None => src,
+        };
+        let y0 = i32::try_from(y).map_err(|_| IoError::Pdf("PDF: the page is too tall".into()))?;
+        surface.write_region(photocraft_geom::Rect::from_xywh(0, y0, w, rows), &px);
+        y += rows;
+    }
+    Ok(())
 }
 
 // --------------------------------------------------------------------------------- budgets
@@ -639,18 +761,22 @@ fn image_fits(w: u32, h: u32) -> bool {
     w > 0 && h > 0 && w <= MAX_SIDE && h <= MAX_SIDE && u64::from(w) * u64::from(h) <= MAX_IMAGE_PIXELS
 }
 
+/// Reports that one image exceeds the supported side-length or pixel-count limit.
 fn image_error(what: &str, w: u32, h: u32) -> IoError {
     IoError::Pdf(format!("PDF: {what} of {w} × {h} px is past the {MAX_SIDE} px / {} MP limit, so the page can't be opened", MAX_IMAGE_PIXELS / 1_000_000))
 }
 
+/// Reports that the page's combined image decoding exceeds its pixel budget.
 fn total_error() -> IoError {
     IoError::Pdf(format!("PDF: the page's images decode to more than {} MP together, so it can't be opened", MAX_PAGE_IMAGE_PIXELS / 1_000_000))
 }
 
+/// Rejects image decoding when missing dimensions prevent a bounded allocation.
 fn no_size(what: &str) -> IoError {
     IoError::Pdf(format!("PDF: {what} doesn't declare its size, so its decoding can't be bounded; the page can't be opened"))
 }
 
+/// Reports why a codec's decoded dimensions cannot be checked before decoding.
 fn unchecked(what: &str, codec: &str, why: &str) -> IoError {
     IoError::Pdf(format!("PDF: {what} is a {codec} image whose size can't be checked before decoding ({why}), so the page can't be opened"))
 }
@@ -684,6 +810,7 @@ enum Encoded {
 }
 
 impl Encoded {
+    /// Returns the dimensions the codec will build, independent of the PDF image dictionary.
     fn size(self) -> (u32, u32) {
         match self {
             Encoded::Jpx(j) => j.size,
@@ -702,6 +829,7 @@ impl Encoded {
         u64::from(w) * u64::from(h) * planes
     }
 
+    /// Describes the codec-specific dimensions and, for JPX, component count used by preflight.
     fn describe(self) -> String {
         let (w, h) = self.size();
         match self {
@@ -801,6 +929,114 @@ fn filter_chain<'a>(dict: &Dict<'a>) -> Vec<(Filter, Dict<'a>)> {
     out
 }
 
+/// Refuses a content stream whose Deflate data would inflate past [`MAX_CONTENT_BYTES`], measured
+/// by inflating into nothing (no buffer is kept) before anything decodes it for real. `hayro` has
+/// no decode limit of its own. Streams whose first filter isn't FlateDecode are left to it: the
+/// ASCII filters shrink their input, and LZW and run-length content is rare.
+fn content_bounded(stream: &Stream<'_>, what: &str) -> Result<(), IoError> {
+    let chain: Vec<Filter> = filter_chain(stream.dict()).into_iter().map(|(f, _)| f).collect();
+    let Some(flate) = chain.iter().position(|f| *f == Filter::FlateDecode) else { return Ok(()) };
+    // A second decompressing stage after the measured one would expand its output unmeasured.
+    if chain.iter().skip(flate + 1).any(|f| matches!(f, Filter::FlateDecode | Filter::LzwDecode | Filter::RunLengthDecode)) {
+        return Err(IoError::Pdf(format!("PDF: {what} is decompressed twice in a row, so its size can't be checked; the page can't be opened")));
+    }
+    let raw = stream.raw_data();
+    let mut data = std::borrow::Cow::Borrowed(raw.as_ref());
+    // The ASCII filters only shrink their input, so they're undone here to reach the Deflate data.
+    // Anything else ahead of FlateDecode (LZW, run-length) could expand it unmeasured.
+    for f in chain.iter().take(flate) {
+        let decoded = match f {
+            Filter::AsciiHexDecode => ascii_hex(&data),
+            Filter::Ascii85Decode => ascii85(&data),
+            _ => {
+                return Err(IoError::Pdf(format!("PDF: {what} is decompressed twice in a row, so its size can't be checked; the page can't be opened")));
+            }
+        };
+        // Data these decoders refuse might still get through a more lenient one, unmeasured.
+        let Some(d) = decoded else {
+            return Err(IoError::Pdf(format!("PDF: {what} has ASCII-encoded data that can't be read, so its size can't be checked; the page can't be opened")));
+        };
+        data = std::borrow::Cow::Owned(d);
+    }
+    // `hayro` reads zlib data, or raw deflate when there's no zlib header.
+    let n = inflated_len(flate2::read::ZlibDecoder::new(data.as_ref())).max(inflated_len(flate2::read::DeflateDecoder::new(data.as_ref())));
+    if n > MAX_CONTENT_BYTES {
+        return Err(IoError::Pdf(format!("PDF: {what} inflates past {} MB, so the page can't be opened", MAX_CONTENT_BYTES >> 20)));
+    }
+    Ok(())
+}
+
+/// ASCIIHexDecode: pairs of hex digits, whitespace ignored, up to `>`; an odd last digit is
+/// followed by 0. `None` on any other byte.
+fn ascii_hex(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len() / 2);
+    let mut high: Option<u8> = None;
+    for &c in data {
+        let v = match c {
+            b'>' => break,
+            b'0'..=b'9' => c - b'0',
+            b'a'..=b'f' => c - b'a' + 10,
+            b'A'..=b'F' => c - b'A' + 10,
+            c if c.is_ascii_whitespace() || c == 0 => continue,
+            _ => return None,
+        };
+        match high.take() {
+            Some(h) => out.push(h << 4 | v),
+            None => high = Some(v),
+        }
+    }
+    if let Some(h) = high {
+        out.push(h << 4);
+    }
+    Some(out)
+}
+
+/// ASCII85Decode: groups of five characters `!` to `u` give four bytes, `z` four zeros,
+/// whitespace is ignored, `~>` ends it. `None` on any other byte or an overflowing group.
+fn ascii85(data: &[u8]) -> Option<Vec<u8>> {
+    let word = |g: &[u8; 5]| g.iter().try_fold(0u32, |a, &d| a.checked_mul(85)?.checked_add(u32::from(d)));
+    let mut out = Vec::with_capacity(data.len() / 5 * 4 + 4);
+    let mut group = [0u8; 5];
+    let mut n = 0;
+    for &c in data {
+        match c {
+            b'~' => break,
+            b'z' if n == 0 => out.extend_from_slice(&[0; 4]),
+            b'!'..=b'u' => {
+                group[n] = c - b'!';
+                n += 1;
+                if n == 5 {
+                    out.extend_from_slice(&word(&group)?.to_be_bytes());
+                    n = 0;
+                }
+            }
+            c if c.is_ascii_whitespace() || c == 0 => {}
+            _ => return None,
+        }
+    }
+    if n > 1 {
+        // A partial last group: padded with `u`, n - 1 bytes kept.
+        group.iter_mut().skip(n).for_each(|g| *g = 84);
+        out.extend_from_slice(&word(&group)?.to_be_bytes()[..n - 1]);
+    }
+    Some(out)
+}
+
+/// How many bytes `r` yields, counting stops just past [`MAX_CONTENT_BYTES`]; data after a
+/// decoding error isn't counted (the decoder stops there too).
+fn inflated_len(mut r: impl std::io::Read) -> u64 {
+    // On the heap: this runs at the bottom of `codec_check`'s recursive walk.
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut n = 0u64;
+    while n <= MAX_CONTENT_BYTES {
+        match r.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => n = n.saturating_add(k as u64),
+        }
+    }
+    n
+}
+
 /// Refuses `stream` when an image codec decodes it: for anything but an image (a content stream,
 /// a font, a profile, `/JBIG2Globals`) that codec's output couldn't be bounded.
 fn not_image_coded(stream: &Stream<'_>, what: &str) -> Result<(), IoError> {
@@ -855,8 +1091,12 @@ fn image_parts(stream: &Stream<'_>, what: &'static str) -> Result<Vec<Part>, IoE
 /// The buffer a CCITT fax filter allocates before it reads any data, `/Columns` (1728 when absent)
 /// by the larger of `/Rows` and the image's `/Height`, read exactly as `hayro-syntax` reads them.
 fn ccitt_size(params: &Dict<'_>, height: u32) -> (u32, u32) {
-    let columns = params.get::<usize>(b"Columns").unwrap_or(1728) as u32;
-    (columns, params.get::<u32>(b"Rows").unwrap_or(0).max(height))
+    // Past `u32` keeps `u32::MAX`, which the per-image limits refuse; `as u32` wrapped it small.
+    let columns = params.get::<usize>(b"Columns").map_or(1728, |c| u32::try_from(c).unwrap_or(u32::MAX));
+    // `/Rows` read as the decoder reads it (`usize`), so a value past `u32` isn't dropped in
+    // favour of the smaller `/Height`.
+    let rows = params.get::<usize>(b"Rows").map_or(0, |r| u32::try_from(r).unwrap_or(u32::MAX));
+    (columns, rows.max(height))
 }
 
 /// The `/JBIG2Globals` a JBIG2 filter's parameters name, decoded as the decoder decodes them (one
@@ -978,14 +1218,17 @@ fn jbig2_segment(d: &[u8], at: usize) -> Result<Jbig2Segment<'_>, &'static str> 
     Ok(Jbig2Segment { number, kind: flags & 0x3F, data, next: end })
 }
 
+/// Reads a big-endian 16-bit integer at the byte offset, returning `None` for a short slice.
 fn be16(d: &[u8], at: usize) -> Option<u16> {
     d.get(at..at + 2)?.try_into().ok().map(u16::from_be_bytes)
 }
 
+/// Reads a big-endian 32-bit integer at the byte offset, returning `None` for a short slice.
 fn be32(d: &[u8], at: usize) -> Option<u32> {
     d.get(at..at + 4)?.try_into().ok().map(u32::from_be_bytes)
 }
 
+/// Reads a big-endian 64-bit integer at the byte offset, returning `None` for a short slice.
 fn be64(d: &[u8], at: usize) -> Option<u64> {
     d.get(at..at + 8)?.try_into().ok().map(u64::from_be_bytes)
 }
@@ -1146,6 +1389,212 @@ fn preflight(page: &Page) -> Result<(), IoError> {
     Ok(())
 }
 
+/// Refuses a page whose content draws Form XObjects more than [`MAX_FORM_DRAWS`] times in all
+/// (counting a form drawn twice by a form drawn twice as four), or a form that draws itself,
+/// before anything interprets the page. Each form's content is read once; the count then
+/// multiplies through the cached lists, so it costs no more than the cap.
+fn form_draws(page: &Page) -> Result<(), IoError> {
+    let mut forms = Forms::default();
+    let page_scope = Scope { x: page.resources().x_objects.clone(), id: ScopeId::Page };
+    let mut drawn = 0u64;
+    let top = forms.children(page.typed_operations(), &page_scope.x);
+    for child in top {
+        forms.draw(&child, &page_scope, 1, &mut drawn)?;
+    }
+    // The other content the renderer interprets on its own, on the same count: annotation
+    // appearances, and the page's tiling patterns, Type 3 glyphs and soft-mask groups.
+    for name in page.resources().patterns.keys() {
+        if let Some(p) = page.resources().patterns.get::<Stream<'_>>(&name) {
+            forms.pattern(&p, &page_scope, 1, &mut drawn)?;
+        }
+    }
+    for (stream, inherited) in other_contents(page, &page_scope) {
+        let scope = Scope::of(&stream, &inherited);
+        let Ok(data) = stream.decoded() else { continue };
+        let kids = forms.children(TypedIter::new(&data), &scope.x);
+        for child in kids {
+            forms.draw(&child, &scope, 1, &mut drawn)?;
+        }
+    }
+    Ok(())
+}
+
+/// The `/XObject` dictionary `Do` names resolve in, and the object whose `/Resources` supplied
+/// it: a form without `/Resources` resolves names in its parent's, so the same form can draw
+/// different children under different parents.
+#[derive(Clone)]
+struct Scope<'a> {
+    x: Dict<'a>,
+    id: ScopeId,
+}
+
+/// Which `/Resources` a [`Scope`] came from, unique within one page: a font dictionary is often
+/// direct (no object number), so fonts are told apart by their name in the page's `/Font`.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ScopeId {
+    /// The page's own resources.
+    Page,
+    /// No resources (an annotation appearance without its own).
+    Empty,
+    /// The `/Resources` of the page's Type 3 font with this name.
+    Font(Vec<u8>),
+    /// The `/Resources` of this stream.
+    Stream(ObjectIdentifier),
+}
+
+impl<'a> Scope<'a> {
+    /// `stream`'s own resources, or `inherited` when it has none.
+    fn of(stream: &Stream<'a>, inherited: &Scope<'a>) -> Scope<'a> {
+        match stream.dict().get::<Dict<'a>>(b"Resources") {
+            Some(r) => Scope { x: Resources::new(r).x_objects, id: ScopeId::Stream(stream.obj_id()) },
+            None => inherited.clone(),
+        }
+    }
+}
+
+/// The content streams of a page the renderer interprets besides its own content, each with the
+/// `/XObject` dictionary it falls back on when it has no `/Resources`: annotation normal
+/// appearances (none), and the page's tiling patterns (the page's), Type 3 glyph procedures (the
+/// font's resources, else the page's) and `/ExtGState` soft-mask groups (the page's).
+fn other_contents<'a>(page: &Page<'a>, page_scope: &Scope<'a>) -> Vec<(Stream<'a>, Scope<'a>)> {
+    let res = page.resources();
+    let none = Scope { x: Dict::default(), id: ScopeId::Empty };
+    let mut out: Vec<(Stream<'a>, Scope<'a>)> = appearance_streams(page).into_iter().map(|s| (s, none.clone())).collect();
+    for name in res.fonts.keys() {
+        let Some(font) = res.fonts.get::<Dict<'a>>(&name) else { continue };
+        let Some(procs) = font.get::<Dict<'a>>(b"CharProcs") else { continue };
+        let scope = match font.get::<Dict<'a>>(b"Resources") {
+            Some(r) => Scope { x: Resources::new(r).x_objects, id: ScopeId::Font(name.as_ref().to_vec()) },
+            None => page_scope.clone(),
+        };
+        for glyph in procs.keys() {
+            if let Some(s) = procs.get::<Stream<'a>>(&glyph) {
+                out.push((s, scope.clone()));
+            }
+        }
+    }
+    for name in res.ext_g_states.keys() {
+        let group = res.ext_g_states.get::<Dict<'a>>(&name).and_then(|gs| gs.get::<Dict<'a>>(b"SMask")).and_then(|sm| sm.get::<Stream<'a>>(b"G"));
+        if let Some(s) = group {
+            out.push((s, page_scope.clone()));
+        }
+    }
+    out
+}
+
+/// The appearance streams the interpreter draws for the page's annotations: the normal
+/// appearance, in the state `/AS` selects; hidden annotations are skipped.
+fn appearance_streams<'a>(page: &Page<'a>) -> Vec<Stream<'a>> {
+    let Some(annots) = page.raw().get::<Array<'a>>(b"Annots") else { return Vec::new() };
+    let mut out = Vec::new();
+    for annot in annots.iter::<Dict<'a>>() {
+        if annot.get::<u32>(b"F").unwrap_or(0) & 2 != 0 {
+            continue;
+        }
+        let Some(ap) = annot.get::<Dict<'a>>(b"AP") else { continue };
+        let stream = match ap.get::<Object<'a>>(b"N") {
+            Some(Object::Stream(s)) => Some(s),
+            Some(Object::Dict(states)) => {
+                annot.get::<Name<'_>>(b"AS").and_then(|state| states.get::<Stream<'a>>(state)).or_else(|| states.get::<Stream<'a>>(b"Off"))
+            }
+            _ => None,
+        };
+        out.extend(stream);
+    }
+    out
+}
+
+/// The Form XObjects each form draws, read once per form for [`form_draws`].
+#[derive(Default)]
+struct Forms<'a> {
+    /// A content stream's children, by the stream's object and the [`Scope`] its names
+    /// resolved in.
+    children: HashMap<(ObjectIdentifier, ScopeId), Vec<Stream<'a>>>,
+    /// The forms being drawn right now (a form among them that draws itself loops).
+    open: HashSet<ObjectIdentifier>,
+}
+
+impl<'a> Forms<'a> {
+    /// The Form XObjects `ops` draws, in order, repeats kept; `Do` names resolve in `xobjects`.
+    fn children(&self, mut ops: TypedIter<'_>, xobjects: &Dict<'a>) -> Vec<Stream<'a>> {
+        let mut out = Vec::new();
+        while let Some(op) = ops.next() {
+            if let TypedInstruction::XObject(x) = op
+                && let Some(s) = xobjects.get::<Stream<'a>>(x.0)
+                && matches!(s.dict().get::<Name<'_>>(b"Subtype").as_ref().map(AsRef::<[u8]>::as_ref), Some(b"Form"))
+            {
+                out.push(s);
+            }
+        }
+        out
+    }
+
+    /// One draw of `form` (its `/Resources`, or `inherited` without them), and everything it
+    /// draws in turn, counted into `drawn`.
+    fn draw(&mut self, form: &Stream<'a>, inherited: &Scope<'a>, depth: usize, drawn: &mut u64) -> Result<(), IoError> {
+        *drawn = drawn.saturating_add(1);
+        if *drawn > MAX_FORM_DRAWS {
+            return Err(IoError::Pdf(format!("PDF: the page draws Form XObjects more than {MAX_FORM_DRAWS} times, so it can't be opened")));
+        }
+        if depth > MAX_FORM_DEPTH {
+            return Err(IoError::Pdf(format!("PDF: Form XObjects nest deeper than {MAX_FORM_DEPTH}, so the page can't be opened")));
+        }
+        let id = form.obj_id();
+        if !self.open.insert(id) {
+            return Err(IoError::Pdf("PDF: a Form XObject draws itself, so the page can't be opened".into()));
+        }
+        let own = form.dict().get::<Dict<'a>>(b"Resources").map(Resources::new);
+        let scope = Scope::of(form, inherited);
+        let kids = self.kids(form, &scope);
+        for kid in &kids {
+            self.draw(kid, &scope, depth + 1, drawn)?;
+        }
+        // The tiling patterns in the form's own resources, counted on every draw of the form (a
+        // form without resources uses its parent's, whose patterns are counted there).
+        if let Some(r) = own {
+            for name in r.patterns.keys() {
+                if let Some(p) = r.patterns.get::<Stream<'a>>(&name) {
+                    self.pattern(&p, &scope, depth + 1, drawn)?;
+                }
+            }
+        }
+        self.open.remove(&id);
+        Ok(())
+    }
+
+    /// The Form XObjects `stream`'s content draws with its names resolved in `scope`, read once
+    /// per stream and scope.
+    fn kids(&mut self, stream: &Stream<'a>, scope: &Scope<'a>) -> Vec<Stream<'a>> {
+        let key = (stream.obj_id(), scope.id.clone());
+        if let Some(k) = self.children.get(&key) {
+            return k.clone();
+        }
+        // An undecodable stream draws nothing (the interpreter skips it too).
+        let k = stream.decoded().map(|data| self.children(TypedIter::new(&data), &scope.x)).unwrap_or_default();
+        self.children.insert(key, k.clone());
+        k
+    }
+
+    /// One interpretation of a tiling pattern's cell (its `/Resources`, or `inherited`), counted
+    /// into `drawn`; a cell drawing more than [`MAX_PATTERN_FORM_DRAWS`] forms is refused.
+    fn pattern(&mut self, pattern: &Stream<'a>, inherited: &Scope<'a>, depth: usize, drawn: &mut u64) -> Result<(), IoError> {
+        if depth > MAX_FORM_DEPTH {
+            return Err(IoError::Pdf(format!("PDF: Form XObjects nest deeper than {MAX_FORM_DEPTH}, so the page can't be opened")));
+        }
+        let scope = Scope::of(pattern, inherited);
+        let before = *drawn;
+        for kid in self.kids(pattern, &scope) {
+            self.draw(&kid, &scope, depth + 1, drawn)?;
+            if drawn.saturating_sub(before) > MAX_PATTERN_FORM_DRAWS {
+                return Err(IoError::Pdf(format!(
+                    "PDF: a tiling pattern draws Form XObjects more than {MAX_PATTERN_FORM_DRAWS} times per fill, so the page can't be opened"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The walk of a page's resources for [`preflight`].
 #[derive(Default)]
 struct Walk {
@@ -1161,6 +1610,7 @@ struct Walk {
 }
 
 impl Walk {
+    /// Counts a newly visited XObject and rejects walks exceeding the object-count limit.
     fn count(&mut self) -> Result<(), IoError> {
         self.seen += 1;
         if self.seen > MAX_XOBJECTS {
@@ -1219,6 +1669,7 @@ impl Walk {
         self.nested(stream.dict().get::<Dict<'_>>(b"Resources"), depth)
     }
 
+    /// Walks an optional nested resource dictionary at the next depth, doing nothing when it is absent.
     fn nested(&mut self, resources: Option<Dict<'_>>, depth: usize) -> Result<(), IoError> {
         match resources {
             Some(r) => self.resources(Resources::new(r), depth + 1),
@@ -1287,22 +1738,8 @@ impl Walk {
     /// The appearance streams the interpreter draws for the page's annotations: the normal
     /// appearance, in the state `/AS` selects; hidden annotations are skipped.
     fn annotations(&mut self, page: &Page) -> Result<(), IoError> {
-        let Some(annots) = page.raw().get::<Array<'_>>(b"Annots") else { return Ok(()) };
-        for annot in annots.iter::<Dict<'_>>() {
-            if annot.get::<u32>(b"F").unwrap_or(0) & 2 != 0 {
-                continue;
-            }
-            let Some(ap) = annot.get::<Dict<'_>>(b"AP") else { continue };
-            let stream = match ap.get::<Object<'_>>(b"N") {
-                Some(Object::Stream(s)) => Some(s),
-                Some(Object::Dict(states)) => {
-                    annot.get::<Name<'_>>(b"AS").and_then(|state| states.get::<Stream<'_>>(state)).or_else(|| states.get::<Stream<'_>>(b"Off"))
-                }
-                _ => None,
-            };
-            if let Some(s) = stream {
-                self.content(&s, 0)?;
-            }
+        for s in appearance_streams(page) {
+            self.content(&s, 0)?;
         }
         Ok(())
     }
@@ -1319,7 +1756,8 @@ impl Walk {
 /// group and annotation appearances reach is walked; a stream counts as an image only where the
 /// interpreter decodes one, an `/XObject` entry with `/Subtype /Image` and the `/SMask` and
 /// `/Mask` streams of an image, and such an image's own codec is [`preflight`]'s to size. A walk
-/// past [`MAX_OBJECTS`] or [`MAX_OBJECT_DEPTH`] refuses the page.
+/// past [`MAX_OBJECTS`] or [`MAX_OBJECT_DEPTH`] refuses the page. So does a non-image stream that
+/// inflates past [`MAX_CONTENT_BYTES`], and Form XObject draws past [`MAX_FORM_DRAWS`].
 fn codec_check(page: &Page) -> Result<(), IoError> {
     let mut walk = Codecs::default();
     match page.raw().get::<Object<'_>>(b"Contents") {
@@ -1346,7 +1784,9 @@ fn codec_check(page: &Page) -> Result<(), IoError> {
             }
         }
     }
-    Ok(())
+    // Every entry point that interprets a page runs this first, so the Form XObject draw count
+    // is checked here too (after the streams it decodes were measured above).
+    form_draws(page)
 }
 
 /// The indirect object `d`'s entry `key` refers to, if it is a reference. (A dictionary's own
@@ -1462,7 +1902,9 @@ impl Codecs {
         if !self.enter(Some(s.obj_id()), false, depth)? {
             return Ok(());
         }
-        not_image_coded(s, &format!("the /{} stream", String::from_utf8_lossy(key)))?;
+        let what = format!("the /{} stream", String::from_utf8_lossy(key));
+        not_image_coded(s, &what)?;
+        content_bounded(s, &what)?;
         self.entries(s.dict(), false, depth)
     }
 
@@ -1529,6 +1971,7 @@ struct Placed {
 }
 
 impl Marks {
+    /// Adds a finite, positive-area rectangle to the mark bounds after intersecting it with the current clip.
     fn mark(&mut self, r: PtRect) {
         let r = match self.clips.last() {
             Some(c) => r.intersect(*c),
@@ -1564,6 +2007,7 @@ fn marks(page: &Page, decode: Option<usize>) -> Marks {
 }
 
 impl<'a> Device<'a> for Marks {
+    /// Counts a path and records its transformed bounds, conservatively expanding stroked paths.
     fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, draw_mode: &DrawMode) {
         let mut r = path.bounding_box();
         if let DrawMode::Stroke(s) | DrawMode::FillAndStroke(_, s) = draw_mode {
@@ -1574,6 +2018,7 @@ impl<'a> Device<'a> for Marks {
         self.paths = self.paths.saturating_add(1);
     }
 
+    /// Pushes the clip path's bounding box intersected with the preceding clip.
     fn push_clip_path(&mut self, clip_path: &ClipPath) {
         let r = clip_path.path.bounding_box();
         let r = match self.clips.last() {
@@ -1583,8 +2028,10 @@ impl<'a> Device<'a> for Marks {
         self.clips.push(r);
     }
 
+    /// Ignores transparency-group compositing because this device collects bounds and placements rather than pixels.
     fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'a>>, _: BlendMode) {}
 
+    /// Counts glyphs and records a conservative glyph box transformed into page coordinates for each one.
     fn draw_glyph_run(&mut self, glyph_run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, _: &DrawMode) {
         let b = PtRect::new(GLYPH_BOX[0], GLYPH_BOX[1], GLYPH_BOX[2], GLYPH_BOX[3]);
         for g in glyph_run.glyphs() {
@@ -1593,6 +2040,8 @@ impl<'a> Device<'a> for Marks {
         }
     }
 
+    /// Records image bounds and placement, counting stencils separately and sizing raster data without decoding.
+    /// Decodes only the selected raster image when its parts pass the per-image limits; callers preflight the page budget.
     fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
         // The transform places the image's own pixel grid (top row first).
         let (w, h) = (f64::from(image.width()), f64::from(image.height()));
@@ -1618,10 +2067,12 @@ impl<'a> Device<'a> for Marks {
         }
     }
 
+    /// Removes the innermost clip, restoring the preceding clip for subsequent marks.
     fn pop_clip(&mut self) {
         self.clips.pop();
     }
 
+    /// Leaves mark collection unchanged when an ignored transparency group ends.
     fn pop_transparency_group(&mut self) {}
 }
 
@@ -1638,7 +2089,8 @@ fn image_only(name: &str, page: &Page) -> Result<Option<Document>, IoError> {
 /// A placed, decoded image as Photoshop opens it: its own pixels on a locked `Background`
 /// layer, Grayscale or RGB as the image is, 8 bits, at the resolution its placed width implies
 /// (rotation and uneven scaling in the matrix are ignored, as Photoshop ignores them). `None`
-/// when it wasn't decoded or is absurd.
+/// when it wasn't decoded or is absurd. Conversion reuses at most [`BAND_ROWS`] rows of
+/// normalized color and alpha samples, never a whole-image float copy.
 fn image_document(name: &str, placed: &Placed) -> Option<Document> {
     let (data, alpha) = placed.decoded.as_ref()?;
     let (w, h) = (data.width(), data.height());
@@ -1653,24 +2105,34 @@ fn image_document(name: &str, placed: &Placed) -> Option<Document> {
         ImageData::Luma(l) => (ColorMode::Grayscale, 1, &l.data),
         ImageData::Rgb(r) => (ColorMode::Rgb, 3, &r.data),
     };
-    let count = (w as usize).saturating_mul(h as usize);
-    if color.len() < count.saturating_mul(n) {
+    let count = (w as usize).checked_mul(h as usize)?;
+    if color.len() < count.checked_mul(n)? {
         return None;
     }
     let alpha = alpha.as_ref().filter(|a| a.width == w && a.height == h && a.data.len() >= count);
     let mut doc = Document::new(name, Size::new(w, h), mode, SampleType::U8);
     doc.resolution_dpi = ppi.clamp(MIN_RESOLUTION, MAX_RESOLUTION);
     let fmt = doc.pixel_format();
-    let mut px = Vec::with_capacity(count.saturating_mul(n + 1));
-    for (i, p) in color.chunks_exact(n).take(count).enumerate() {
-        px.extend(p.iter().map(|&v| f32::from(v) / 255.0));
-        px.push(alpha.and_then(|a| a.data.get(i)).map_or(1.0, |&a| f32::from(a) / 255.0));
-    }
     let mut layer = Layer::raster("Background", fmt);
     layer.locks.transparency = true;
     layer.locks.position = true;
     if let Some(s) = layer.surface_mut() {
-        s.write_region(doc.bounds(), &px);
+        let capacity = (w as usize).checked_mul(BAND_ROWS.min(h) as usize)?.checked_mul(n + 1)?;
+        let mut px = Vec::with_capacity(capacity);
+        let mut y = 0;
+        while y < h {
+            let rows = BAND_ROWS.min(h - y);
+            let start = (y as usize).checked_mul(w as usize)?;
+            let end = start.checked_add((rows as usize).checked_mul(w as usize)?)?;
+            let band = color.get(start.checked_mul(n)?..end.checked_mul(n)?)?;
+            px.clear();
+            for (i, p) in (start..end).zip(band.chunks_exact(n)) {
+                px.extend(p.iter().map(|&v| f32::from(v) / 255.0));
+                px.push(alpha.and_then(|a| a.data.get(i)).map_or(1.0, |&a| f32::from(a) / 255.0));
+            }
+            s.write_region(photocraft_geom::Rect::from_xywh(0, i32::try_from(y).ok()?, w, rows), &px);
+            y += rows;
+        }
     }
     doc.layers.push(layer);
     Some(doc)

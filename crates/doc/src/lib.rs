@@ -14,6 +14,7 @@ pub mod analysis;
 pub mod blend_if;
 pub mod comps;
 pub mod effects;
+pub mod frame;
 pub mod mode;
 pub mod pattern;
 pub mod slices;
@@ -35,6 +36,7 @@ pub use effects::{
     Bevel, BevelContour, BevelStyle, BevelTechnique, BevelTexture, Contour, Effect, FxCommon, FxPaint, GlobalLight, Glow, GlowSource, GlowTechnique, Gradient,
     GradientStyle, Satin, Shadow, StrokeFx, StrokePosition,
 };
+pub use frame::Frame;
 pub use mode::{ColorTable, Duotone, DuotoneInk, StackMode};
 pub use pattern::Pattern;
 pub use photocraft_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
@@ -318,6 +320,10 @@ pub struct Group {
     pub expanded: bool,
     /// Set when this (top-level) group is an artboard: children are clipped to its rect.
     pub artboard: Option<Artboard>,
+    /// A Photoshop Frame's stroke (Properties › Stroke; PSD `vstk` on the frame group): drawn
+    /// along the group's enabled vector mask (the frame outline), above the framed content and
+    /// not clipped by the frame. Ignored without a vector mask.
+    pub frame_stroke: Option<ShapeStroke>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -499,13 +505,112 @@ fn normalize_runs<S: Clone>(text: &str, runs: Vec<(usize, S)>, base: S) -> Vec<(
     out
 }
 
+/// A bounded display preview for an embedded native vector, bound to its exact source bytes.
+/// The SVG is display data only; saving the object retains the native source format.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VectorPreview {
+    pub source_hash: [u8; 32],
+    pub svg: Arc<Vec<u8>>,
+}
+
+/// How a PDF smart object's selected page is decoded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PdfImportMode {
+    /// Preserve Photoshop PDF editing data when it is available.
+    #[default]
+    Auto,
+    /// Require preserved Photoshop layers.
+    Layers,
+    /// Render the selected PDF page.
+    Render,
+}
+
+/// The PDF page box used for an import.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PdfBox {
+    #[default]
+    BoundingBox,
+    Media,
+    Crop,
+    Bleed,
+    Trim,
+    Art,
+}
+
+/// The persistent portion of a PDF import. Passwords intentionally stay transient.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PdfImportOptions {
+    pub mode: PdfImportMode,
+    pub page: usize,
+    pub dpi: f32,
+    #[serde(rename = "box")]
+    pub crop_box: PdfBox,
+    pub color_mode: ColorMode,
+    pub depth: SampleType,
+    pub anti_alias: bool,
+    pub pixel_size: Option<(u32, u32)>,
+    pub image: Option<usize>,
+}
+
+impl Default for PdfImportOptions {
+    /// Selects page one with automatic layer recovery and 300-ppi, antialiased RGB/8 rendering defaults.
+    fn default() -> Self {
+        Self {
+            mode: PdfImportMode::Auto,
+            page: 1,
+            dpi: 300.0,
+            crop_box: PdfBox::BoundingBox,
+            color_mode: ColorMode::Rgb,
+            depth: SampleType::U8,
+            anti_alias: true,
+            pixel_size: None,
+            image: None,
+        }
+    }
+}
+
+impl PdfImportOptions {
+    /// Stable bytes for the render, stage and PSD-export cache keys. The destructuring names every
+    /// field, so a new field fails to compile here instead of sharing a stale cache entry.
+    pub fn key_bytes(&self) -> Vec<u8> {
+        let Self { mode, page, dpi, crop_box, color_mode, depth, anti_alias, pixel_size, image } = *self;
+        let mut out = vec![mode as u8, crop_box as u8, color_mode as u8, depth as u8, u8::from(anti_alias)];
+        out.extend(page.to_le_bytes());
+        out.extend(dpi.to_bits().to_le_bytes());
+        match pixel_size {
+            Some((width, height)) => {
+                out.push(1);
+                out.extend(width.to_le_bytes());
+                out.extend(height.to_le_bytes());
+            }
+            None => out.push(0),
+        }
+        match image {
+            Some(image) => {
+                out.push(1);
+                out.extend(image.to_le_bytes());
+            }
+            None => out.push(0),
+        }
+        out
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SmartObject {
     /// Ordinary layer duplicates share this identity; independent contents receive a fresh one.
     pub contents_id: SmartContentsId,
     /// Embedded source file bytes (PSD, PNG, …) or linked path.
     pub source: SmartSource,
+    /// Optional source-pixel display preview for AI/PDF/EPS; ignored after source bytes change.
+    pub vector_preview: Option<VectorPreview>,
     pub transform: Affine,
+    /// PDF source selection used by decoding, refresh and Edit Contents.
+    /// Retained for both embedded and linked sources when saving native documents.
+    pub pdf_import: Option<PdfImportOptions>,
     pub smart_filters: Vec<SmartFilter>,
     /// Rendered appearance.
     pub cache: Option<Surface>,
@@ -536,6 +641,7 @@ impl SmartObject {
         Self {
             contents_id: SmartContentsId::fresh(),
             source,
+            vector_preview: None,
             transform,
             smart_filters: Vec::new(),
             cache,
@@ -545,6 +651,7 @@ impl SmartObject {
             warp: None,
             stack_mode: None,
             perspective: None,
+            pdf_import: None,
         }
     }
 }
@@ -631,6 +738,9 @@ pub struct Layer {
     pub effects: Effects,
     pub label: LabelColor,
     pub content: LayerContent,
+    /// Frame Tool container; its clipping outline and image have independent placements. Boxed:
+    /// inline it grows every layer by 224 bytes, and deep documents recurse on small stacks.
+    pub frame: Option<Box<Frame>>,
     /// Preserved PSD additional-layer-info blocks (key, data) for lossless
     /// round-trip of anything not modelled above: vector masks, blending
     /// options, layer version, and the original adjustment/fill blocks (the
@@ -659,6 +769,10 @@ pub struct Layer {
     pub advanced: AdvancedBlending,
     /// Layer › Video Layers frame stack (None for a normal layer).
     pub video: Option<VideoData>,
+    /// The layer's own XMP packet (Photoshop's `layer.xmpMetadata.rawData`), where scripts and
+    /// embedding apps keep data about the layer under their own namespaces. Copied by
+    /// [`Layer::duplicate`], as in Photoshop. PSD `shmd` › `cust` › `layerXMP`.
+    pub xmp: Option<Arc<str>>,
 }
 
 impl Layer {
@@ -684,6 +798,7 @@ impl Layer {
             effects: Effects { enabled: true, ..Default::default() },
             label: LabelColor::None,
             content,
+            frame: None,
             psd_blocks: Vec::new(),
             psd_id: None,
             fill_cache: None,
@@ -692,13 +807,14 @@ impl Layer {
             blend_if: BlendIf::default(),
             advanced: AdvancedBlending::default(),
             video: None,
+            xmp: None,
         }
     }
     pub fn raster(name: impl Into<String>, format: PixelFormat) -> Self {
         Self::new(name, LayerContent::Raster(Surface::new(format)))
     }
     pub fn group(name: impl Into<String>, children: Vec<Layer>) -> Self {
-        let mut l = Self::new(name, LayerContent::Group(Group { children, expanded: true, artboard: None }));
+        let mut l = Self::new(name, LayerContent::Group(Group { children, expanded: true, artboard: None, frame_stroke: None }));
         l.blend = BlendMode::PassThrough;
         l
     }
@@ -841,7 +957,10 @@ pub type PsdGlobalBlock = ([u8; 4], [u8; 4], Arc<Vec<u8>>);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Metadata {
-    pub xmp: Option<String>,
+    /// The XMP packet as stored, kept as text so properties PhotoCraft doesn't model survive.
+    /// Shared like the other payloads here: cloning a document or a history state never copies
+    /// it (#4535).
+    pub xmp: Option<Arc<str>>,
     pub exif: Option<Arc<Vec<u8>>>,
     /// Free-form image text (PNG tEXt/zTXt/iTXt, TIFF ASCII tags), including duplicate keys.
     pub text: Vec<(String, String)>,
@@ -933,7 +1052,8 @@ pub struct FileEncoding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webp_quality: Option<u8>,
     /// PNG stereo pairing (the `sTER` chunk's mode byte, PNG Extensions 1.4.0 §3.6): `Some(0)`
-    /// side by side, `Some(1)` stacked, so saving a stereo PNG keeps the mark (#6063).
+    /// cross-fuse (right eye first), `Some(1)` diverging-fuse (left eye first). Both are
+    /// side by side; saving a stereo PNG keeps this eye-order mark (#6063).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub png_stereo: Option<u8>,
 }
@@ -1002,12 +1122,17 @@ impl Document {
 
     /// Pixel format for new raster layers in this document.
     pub fn pixel_format(&self) -> PixelFormat {
-        let mode = match self.mode {
+        Self::pixel_format_for(self.mode, self.depth)
+    }
+
+    /// [`Self::pixel_format`] of a document in `mode` at `depth`.
+    pub fn pixel_format_for(mode: ColorMode, depth: SampleType) -> PixelFormat {
+        let mode = match mode {
             ColorMode::Indexed | ColorMode::Multichannel => ColorMode::Rgb,
             ColorMode::Bitmap | ColorMode::Duotone => ColorMode::Grayscale,
             m => m,
         };
-        PixelFormat::new(mode, self.depth, true)
+        PixelFormat::new(mode, depth, true)
     }
 
     pub fn bounds(&self) -> Rect {
@@ -1033,6 +1158,58 @@ impl Document {
             }
         }
         max
+    }
+
+    /// Every pixel surface the document holds: layer pixels and caches, masks, smart filter
+    /// masks, video frames (including the originals), channels, the quick mask, patterns and
+    /// the selection. History snapshots and saves cover exactly these tiles.
+    pub fn for_each_surface(&self, mut visit: impl FnMut(&Surface)) {
+        for (_, _, layer) in self.walk() {
+            if let Some(surface) = layer.surface() {
+                visit(surface);
+            }
+            if let Some(mask) = &layer.mask {
+                visit(&mask.surface);
+            }
+            if let Some(cache) = &layer.fill_cache {
+                visit(&cache.surface);
+            }
+            if let LayerContent::Smart(smart) = &layer.content
+                && let Some(mask) = &smart.filter_mask
+            {
+                visit(&mask.surface);
+            }
+            if let Some(video) = &layer.video {
+                for frame in video.frames.iter().chain(video.original_frames.iter().flatten()) {
+                    visit(frame);
+                }
+            }
+        }
+        for channel in self.channels.iter().chain(&self.quick_mask) {
+            visit(&channel.surface);
+        }
+        for pattern in &self.patterns {
+            visit(&pattern.surface);
+        }
+        if let Some(selection) = &self.selection {
+            visit(selection);
+        }
+    }
+
+    /// `Err` if any of this document's tiles is unreadable on the scratch disk. Edits, saves
+    /// and exports of this document check it; other documents are unaffected. Free when no
+    /// tile in the process has failed.
+    pub fn scratch_health(&self) -> Result<(), String> {
+        if !photocraft_raster::spill::any_failed() {
+            return Ok(());
+        }
+        let mut health = Ok(());
+        self.for_each_surface(|surface| {
+            if health.is_ok() {
+                health = surface.scratch_health();
+            }
+        });
+        health
     }
 
     /// Depth-first walk yielding `(path, depth, layer)` bottom-to-top.
@@ -1168,20 +1345,29 @@ impl Document {
         Some((p.children_mut()?, last))
     }
 
-    /// Insert `layer` directly above the layer `above` (or at the top of the root if None).
+    /// Frames expose their image as an editable target, rather than as a layer-stack container.
+    /// New layers beside that image belong beside the frame, keeping the image slot intact.
+    pub fn insertion_path(&self, relative: LayerId) -> Option<LayerPath> {
+        let mut path = self.path_of(relative)?;
+        let end = (1..path.len()).find(|n| path.get(..*n).and_then(|p| self.layer_at(p)).is_some_and(|l| l.frame.is_some())).unwrap_or(path.len());
+        path.truncate(end);
+        Some(path)
+    }
+
+    /// Insert `layer` above `above` (beside its frame for frame content), or at the root's top.
     pub fn insert_above(&mut self, above: Option<LayerId>, layer: Layer) -> LayerId {
         let id = layer.id;
-        match above.and_then(|a| self.path_of(a)).and_then(|path| self.siblings_mut(&path)) {
+        match above.and_then(|a| self.insertion_path(a)).and_then(|path| self.siblings_mut(&path)) {
             Some((sib, idx)) => sib.insert(idx + 1, layer),
             None => self.layers.push(layer),
         }
         id
     }
 
-    /// Insert `layer` directly below the layer `below` (or at the bottom of the root if None).
+    /// Insert `layer` below `below` (beside its frame for frame content), or at the root's bottom.
     pub fn insert_below(&mut self, below: Option<LayerId>, layer: Layer) -> LayerId {
         let id = layer.id;
-        match below.and_then(|b| self.path_of(b)).and_then(|path| self.siblings_mut(&path)) {
+        match below.and_then(|b| self.insertion_path(b)).and_then(|path| self.siblings_mut(&path)) {
             Some((sib, idx)) => sib.insert(idx, layer),
             None => self.layers.insert(0, layer),
         }
@@ -1240,6 +1426,27 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Checks that every persisted PDF projection choice produces a distinct cache identity.
+    #[test]
+    fn every_pdf_import_field_changes_its_key() {
+        let base = PdfImportOptions::default();
+        let variants = [
+            base,
+            PdfImportOptions { mode: PdfImportMode::Render, ..base },
+            PdfImportOptions { page: 2, ..base },
+            PdfImportOptions { dpi: 72.0, ..base },
+            PdfImportOptions { crop_box: PdfBox::Media, ..base },
+            PdfImportOptions { color_mode: ColorMode::Cmyk, ..base },
+            PdfImportOptions { depth: SampleType::U16, ..base },
+            PdfImportOptions { anti_alias: false, ..base },
+            PdfImportOptions { pixel_size: Some((1, 2)), ..base },
+            PdfImportOptions { pixel_size: Some((2, 1)), ..base },
+            PdfImportOptions { image: Some(1), ..base },
+        ];
+        let keys: std::collections::HashSet<_> = variants.iter().map(PdfImportOptions::key_bytes).collect();
+        assert_eq!(keys.len(), variants.len());
+    }
 
     fn doc() -> Document {
         Document::with_background("t", Size::new(100, 50), ColorMode::Rgb, SampleType::U8, Color::WHITE)
@@ -1500,7 +1707,7 @@ mod tests {
         assert_eq!(LayerContent::Adjustment(Adjustment::Invert).article(), "an");
         assert_eq!(LayerContent::Adjustment(Adjustment::Invert).kind_name(), "Adjustment");
         assert_eq!(LayerContent::Raster(Surface::new(PixelFormat::RGBA8)).article(), "a");
-        assert_eq!(LayerContent::Group(Group { children: Vec::new(), expanded: true, artboard: None }).article(), "a");
+        assert_eq!(LayerContent::Group(Group { children: Vec::new(), expanded: true, artboard: None, frame_stroke: None }).article(), "a");
     }
 }
 

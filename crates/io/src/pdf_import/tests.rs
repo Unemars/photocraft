@@ -1,5 +1,6 @@
 use std::io::Write as _;
 
+use hayro::hayro_interpret::RgbData;
 use photocraft_color::{ColorMode, SampleType};
 use photocraft_raster::Interrupt;
 
@@ -17,6 +18,7 @@ struct TestPage<'a> {
     resources: &'a str,
 }
 
+/// Creates an unrotated page fixture with no extra dictionary entries or resources.
 fn page<'a>(w: f32, h: f32, content: &'a str) -> TestPage<'a> {
     TestPage { w, h, content, extra: "", resources: "" }
 }
@@ -47,6 +49,7 @@ fn pdf(pages: &[TestPage]) -> Vec<u8> {
     write(objs)
 }
 
+/// Wraps raw bytes in a PDF stream with an exact length and caller-supplied dictionary entries.
 fn stream(extra: &str, data: &[u8]) -> Vec<u8> {
     let mut o = format!("<< /Length {} {extra} >>\nstream\n", data.len()).into_bytes();
     o.extend_from_slice(data);
@@ -54,6 +57,7 @@ fn stream(extra: &str, data: &[u8]) -> Vec<u8> {
     o
 }
 
+/// Serializes numbered objects into a PDF with a cross-reference table and object 1 as catalog.
 fn write(objs: Vec<Vec<u8>>) -> Vec<u8> {
     let mut out = b"%PDF-1.7\n".to_vec();
     let mut offsets = Vec::new();
@@ -100,22 +104,27 @@ fn image_pdf(w: f32, h: f32, images: &[(u32, u32, bool, &str)], extra: &str) -> 
     write(objs)
 }
 
+/// Emits PDF operators that fill a rectangle with the supplied device RGB color.
 fn rect(x: f32, y: f32, w: f32, h: f32, rgb: (f32, f32, f32)) -> String {
     format!("{} {} {} rg {x} {y} {w} {h} re f\n", rgb.0, rgb.1, rgb.2)
 }
 
+/// Imports a PDF fixture with the requested options, failing the test if import is refused.
 fn open(bytes: &[u8], opts: PdfOpenOptions) -> ImportResult {
     import_pdf("test.pdf", bytes, &opts, &Interrupt::NONE).expect("import")
 }
 
+/// Uses the requested crop at one pixel per PDF point, leaving other import defaults intact.
 fn at72(crop: CropTo) -> PdfOpenOptions {
     PdfOpenOptions { crop, resolution: 72.0, ..Default::default() }
 }
 
+/// Reads normalized channels from the first imported raster layer at document coordinates.
 fn pixel(r: &ImportResult, x: i32, y: i32) -> Vec<f32> {
     r.document.layers[0].surface().expect("raster layer").pixel(x, y)
 }
 
+/// Recognizes PDF headers even after leading bytes, without accepting unrelated or empty data.
 #[test]
 fn detects_pdf_by_its_header() {
     assert!(is_pdf(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj"));
@@ -125,6 +134,7 @@ fn detects_pdf_by_its_header() {
     assert!(!is_pdf(b"<svg/>"));
 }
 
+/// Converts point dimensions with half-up rounding and clamps nonpositive pixel sizes to one.
 #[test]
 fn pixel_size_rounds_half_up_as_photoshop() {
     assert_eq!(pixel_size((595.276, 841.89), 300.0), (2480, 3508));
@@ -136,6 +146,7 @@ fn pixel_size_rounds_half_up_as_photoshop() {
     assert_eq!(pixel_size((0.0, -5.0), 300.0), (1, 1));
 }
 
+/// Uses file stems for single pages and numbered PDF names for multi-page or explicitly named imports.
 #[test]
 fn document_names_follow_photoshop() {
     assert_eq!(page_name("single.pdf", None, 1, 1), "single");
@@ -146,6 +157,7 @@ fn document_names_follow_photoshop() {
     assert_eq!(page_name("a.b.pdf", Some("  "), 1, 1), "a.b");
 }
 
+/// Accepts every crop choice's ID and label case-insensitively while rejecting unknown choices.
 #[test]
 fn crop_choices_round_trip_their_ids() {
     for c in CropTo::ALL {
@@ -156,6 +168,7 @@ fn crop_choices_round_trip_their_ids() {
     assert_eq!(CropTo::from_id("fold"), None);
 }
 
+/// Preserves explicit page boxes, defaults missing boxes, and clips crop bounds to the media box.
 #[test]
 fn page_boxes_fall_back_to_the_crop_and_media_boxes() {
     let boxed = pdf(&[TestPage {
@@ -187,6 +200,7 @@ fn page_boxes_fall_back_to_the_crop_and_media_boxes() {
     assert_eq!(p.crop, [100.0, 100.0, 500.0, 400.0]);
 }
 
+/// Bounds transformed marks, clips, strokes, text, and images, with crop bounds for empty pages.
 #[test]
 fn bounding_box_is_the_geometry_of_the_marks() {
     let letter = |content: &str, resources: &str| pdf(&[TestPage { w: 612.0, h: 792.0, content, extra: "", resources }]);
@@ -221,6 +235,7 @@ fn bounding_box_is_the_geometry_of_the_marks() {
     assert_eq!(bb(&img), [10.0, 10.0, 300.0, 200.0]);
 }
 
+/// Renders a page into an unlocked transparent layer with the requested crop and resolution.
 #[test]
 fn a_page_opens_as_a_transparent_layer_1() {
     let bytes = pdf(&[page(400.0, 400.0, &rect(100.0, 100.0, 200.0, 200.0, (1.0, 0.0, 0.0)))]);
@@ -246,6 +261,7 @@ fn a_page_opens_as_a_transparent_layer_1() {
     assert_eq!((r.document.size.width, r.document.size.height, r.document.resolution_dpi), (1667, 1667, 300.0));
 }
 
+/// Selects and names individual pages, reports the page count, and rejects out-of-range page numbers.
 #[test]
 fn pages_of_a_multi_page_file_are_named_and_counted() {
     let bytes = pdf(&[page(612.0, 792.0, ""), page(595.0, 420.0, ""), page(300.0, 300.0, "")]);
@@ -261,6 +277,7 @@ fn pages_of_a_multi_page_file_are_named_and_counted() {
     assert_eq!(info(&bytes, None).unwrap().pages.len(), 3);
 }
 
+/// Keeps page dimensions, rendered marks, and crop transforms consistent for every quarter-turn rotation.
 #[test]
 fn rotation_turns_the_page_like_hayro_and_photoshop() {
     use hayro::hayro_interpret::TransformExt;
@@ -289,6 +306,7 @@ fn rotation_turns_the_page_like_hayro_and_photoshop() {
     }
 }
 
+/// Applies each selected page box to output dimensions and offsets while clipping mark bounds to the crop.
 #[test]
 fn crop_choices_use_the_page_boxes() {
     let bytes = pdf(&[TestPage {
@@ -314,6 +332,7 @@ fn crop_choices_use_the_page_boxes() {
     assert_eq!(pixel(&r, 0, 0)[3], 1.0);
 }
 
+/// Converts device colors into supported modes and depths, falling back to RGB U8 for unsupported choices.
 #[test]
 fn modes_depths_and_device_colours() {
     let cmyk_red = pdf(&[page(100.0, 100.0, "0 1 1 0 k 0 0 100 100 re f\n")]);
@@ -344,6 +363,7 @@ fn modes_depths_and_device_colours() {
     assert_eq!((r.document.mode, r.document.depth), (ColorMode::Rgb, SampleType::U8));
 }
 
+/// Disabling anti-aliasing removes partial edge coverage without removing the filled geometry.
 #[test]
 fn anti_aliasing_can_be_turned_off() {
     let triangle = pdf(&[page(100.0, 100.0, "0 0 0 rg 10 10 m 90 15 l 40 90 l h f\n")]);
@@ -355,6 +375,7 @@ fn anti_aliasing_can_be_turned_off() {
     assert!(alphas(&hard).iter().filter(|a| **a == 1.0).count() > 1000, "the triangle is still there");
 }
 
+/// Extracts a lone image at its native size and mode, but rasterizes pages containing additional marks.
 #[test]
 fn a_page_that_is_one_image_opens_as_that_image() {
     let bytes = image_pdf(612.0, 792.0, &[(100, 50, false, "200 0 0 100 100 100")], "");
@@ -366,7 +387,7 @@ fn a_page_that_is_one_image_opens_as_that_image() {
     assert_eq!(d.mode, ColorMode::Rgb);
     assert_eq!(d.layers[0].name, "Background");
     assert!(d.layers[0].locks.transparency && d.layers[0].locks.position);
-    assert!(!r.source_read_only, "it is the file's image: Save As defaults to it like any image");
+    assert!(r.source_read_only, "extracting an image must not make the enclosing PDF a Save target");
     assert_eq!(pixel(&r, 0, 0)[3], 1.0);
     // A gray image gives a Grayscale document; the matrix's rotation is ignored.
     let gray = image_pdf(300.0, 300.0, &[(64, 64, true, "0 64 -64 0 100 50")], "");
@@ -382,6 +403,84 @@ fn a_page_that_is_one_image_opens_as_that_image() {
     assert!(opens_as_image(&bytes, None) && !opens_as_image(&two, None) && !opens_as_image(&with_rect, None));
 }
 
+/// Builds a decoded placement without involving PDF decoding, preserving caller-supplied malformed buffers.
+fn decoded_image((width, height): (u32, u32), gray: bool, color: Vec<u8>, alpha: Option<LumaData>) -> Placed {
+    let data = if gray {
+        ImageData::Luma(LumaData { width, height, data: color, interpolate: false, scale_factors: (1.0, 1.0) })
+    } else {
+        ImageData::Rgb(RgbData { width, height, data: color, interpolate: false, scale_factors: (1.0, 1.0) })
+    };
+    Placed { transform: Affine::scale(2.0), size: (width, height), decoded: Some((data, alpha)) }
+}
+
+/// Preserves native luma/RGB and straight alpha across two full conversion bands and a partial tail.
+#[test]
+fn native_image_bands_preserve_channels_and_alpha() {
+    let (w, h) = (3, BAND_ROWS * 2 + 3);
+    let count = (w * h) as usize;
+    for gray in [true, false] {
+        let n = if gray { 1 } else { 3 };
+        let color: Vec<u8> = (0..count * n).map(|i| ((i * 37 + i / (w as usize * n) * 13) % 256) as u8).collect();
+        for masked in [false, true] {
+            let alpha = masked.then(|| LumaData {
+                width: w,
+                height: h,
+                data: (0..count).map(|i| ((i * 19 + 11) % 256) as u8).collect(),
+                interpolate: false,
+                scale_factors: (1.0, 1.0),
+            });
+            let placed = decoded_image((w, h), gray, color.clone(), alpha);
+            let doc = image_document("bands", &placed).expect("native image");
+            assert_eq!((doc.size.width, doc.size.height, doc.depth, doc.resolution_dpi), (w, h, SampleType::U8, 36.0));
+            assert_eq!(doc.mode, if gray { ColorMode::Grayscale } else { ColorMode::Rgb });
+            assert_eq!(doc.layers.len(), 1);
+            let layer = &doc.layers[0];
+            assert_eq!(layer.name, "Background");
+            assert!(layer.locks.transparency && layer.locks.position);
+            let surface = layer.surface().unwrap();
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) as usize;
+                    let got = surface.pixel(x as i32, y as i32);
+                    let expected_alpha = if masked { ((i * 19 + 11) % 256) as u8 } else { 255 };
+                    let want = color[i * n..(i + 1) * n].iter().copied().chain(std::iter::once(expected_alpha));
+                    assert_eq!(got.len(), n + 1);
+                    for (actual, expected) in got.iter().zip(want) {
+                        assert!((actual - f32::from(expected) / 255.0).abs() < 0.5 / 255.0, "gray={gray}, masked={masked}, ({x}, {y}): {got:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Rejects invalid native dimensions and short color data, while ignoring mismatched or short alpha masks.
+#[test]
+fn native_image_bands_validate_buffers_and_dimensions() {
+    let size = (2, BAND_ROWS + 1);
+    let count = (size.0 * size.1) as usize;
+    for gray in [true, false] {
+        let n = if gray { 1 } else { 3 };
+        assert!(image_document("short", &decoded_image(size, gray, vec![128; count * n - 1], None)).is_none());
+        for size in [(0, 1), (1, 0), (MAX_SIDE + 1, 1), (1, MAX_SIDE + 1), (MAX_SIDE, MAX_SIDE)] {
+            assert!(image_document("size", &decoded_image(size, gray, Vec::new(), None)).is_none());
+        }
+        let mut expected = vec![128.0 / 255.0; n];
+        expected.push(1.0);
+        for (width, height, len) in [(size.0, size.1, count - 1), (1, size.1, count), (size.0, size.1 - 1, count)] {
+            let alpha = LumaData { width, height, data: vec![0; len], interpolate: false, scale_factors: (1.0, 1.0) };
+            let doc = image_document("mask", &decoded_image(size, gray, vec![128; count * n], Some(alpha))).unwrap();
+            let surface = doc.layers[0].surface().unwrap();
+            for y in [0, BAND_ROWS - 1, BAND_ROWS] {
+                for x in 0..2 {
+                    assert_eq!(surface.pixel(x, y as i32), expected);
+                }
+            }
+        }
+    }
+}
+
+/// Enumerates and extracts embedded images with stable indices, native dimensions, and fitted thumbnails.
 #[test]
 fn images_mode_lists_and_opens_the_embedded_images() {
     let two =
@@ -404,6 +503,7 @@ fn images_mode_lists_and_opens_the_embedded_images() {
     assert!(r.warnings.is_empty());
 }
 
+/// Clamps oversized rendered pages with a warning while honoring explicit pixel sizes within the limits.
 #[test]
 fn oversized_pages_are_scaled_down_with_a_warning() {
     let bytes = pdf(&[page(14400.0, 100.0, &rect(0.0, 0.0, 14400.0, 100.0, (0.0, 0.0, 1.0)))]);
@@ -417,6 +517,7 @@ fn oversized_pages_are_scaled_down_with_a_warning() {
     assert!(r.warnings.is_empty());
 }
 
+/// Returns PDF errors for damaged input and normalizes invalid resolutions instead of panicking.
 #[test]
 fn damaged_files_are_errors_not_panics() {
     let good = pdf(&[page(100.0, 100.0, "")]);
@@ -434,6 +535,7 @@ fn damaged_files_are_errors_not_panics() {
     assert_eq!((r.document.size.width, r.document.resolution_dpi), (1, MIN_RESOLUTION));
 }
 
+/// Fits rotated page thumbnails to the requested longest side and rejects nonexistent pages.
 #[test]
 fn thumbnails_fit_the_asked_side() {
     let bytes = pdf(&[TestPage { w: 612.0, h: 792.0, content: "", extra: "/Rotate 90", resources: "" }]);
@@ -443,6 +545,7 @@ fn thumbnails_fit_the_asked_side() {
     assert!(thumbnail(&bytes, 2, 128, None).is_err());
 }
 
+/// Uses first-page Photoshop defaults through generic import and honors explicit PDF options.
 #[test]
 fn plain_import_opens_pdfs_with_photoshop_defaults() {
     let bytes = pdf(&[page(72.0, 72.0, &rect(0.0, 0.0, 72.0, 72.0, (0.0, 0.0, 0.0))), page(36.0, 36.0, "")]);
@@ -485,12 +588,14 @@ fn declared_pdf(xobjects: &[&str], named: usize, content: &str) -> Vec<u8> {
 
 const HUGE: &str = "/Type /XObject /Subtype /Image /Width 40000 /Height 40000 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode";
 
+/// Requires import to refuse an unbounded or oversized fixture and returns its diagnostic for assertions.
 fn refused(bytes: &[u8], what: &str) -> String {
     let e = import_pdf("big.pdf", bytes, &PdfOpenOptions::default(), &Interrupt::NONE).err().unwrap_or_else(|| panic!("{what}: opened")).to_string();
     assert!(e.contains("can't be opened") || e.contains("can't be bounded"), "{what}: {e}");
     e
 }
 
+/// Rejects oversized image declarations before decoding across page, image, and thumbnail import paths.
 #[test]
 fn an_oversized_image_refuses_the_page_before_decoding() {
     // 40000 × 40000 px declared, 16 bytes of data: the decoders would build 1.6 GP.
@@ -507,6 +612,7 @@ fn an_oversized_image_refuses_the_page_before_decoding() {
     assert!(preflight(page_of(&load(&declared_pdf(&[edge], 1, "q 200 0 0 200 0 0 cm /X0 Do Q"), None).unwrap(), 1).unwrap()).is_ok());
 }
 
+/// Includes masks, nested resources, inline images, and aggregate pixels in preflight image bounds.
 #[test]
 fn an_oversized_mask_or_a_nested_or_unsized_image_refuses_too() {
     let small =
@@ -597,6 +703,7 @@ fn jpx_header_only(w: u32, h: u32, components: u16) -> Vec<u8> {
 /// `codestream` in a JP2 file: the signature and file type boxes, a `jp2h` with an `ihdr` of
 /// `ihdr_size` and a greyscale `colr`, then the `jp2c` box.
 fn jp2_file(ihdr_size: (u32, u32), codestream: &[u8]) -> Vec<u8> {
+    /// Encodes a JP2 box with its total length, four-byte type, and unchanged payload.
     fn bx(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
         let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
         b.extend_from_slice(kind);
@@ -626,10 +733,12 @@ fn inline(dict: &str, data: &[u8]) -> Vec<u8> {
 const JPX_10: &str = "/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /JPXDecode";
 const DRAW_X0: &[u8] = b"q 200 0 0 200 0 0 cm /X0 Do Q";
 
+/// Reports whether the first page passes resource preflight without attempting image decoding.
 fn passes(bytes: &[u8]) -> bool {
     preflight(page_of(&load(bytes, None).unwrap(), 1).unwrap()).is_ok()
 }
 
+/// Bounds JPX headers, components, and tiles independently of dictionary claims, including masks and inline images.
 #[test]
 fn a_jpx_codestream_larger_than_its_dictionary_refuses_the_page() {
     // 10 × 10 px declared, 20000 × 20000 encoded: the decoder would build the codestream's size.
@@ -675,6 +784,7 @@ fn a_jpx_codestream_larger_than_its_dictionary_refuses_the_page() {
     assert!(e.contains("20000 × 20000"), "{e}");
 }
 
+/// Allows bounded raw, boxed, and inline JPX images and preserves native grayscale pixels when decoding succeeds.
 #[test]
 fn a_jpx_image_within_its_dictionary_opens() {
     // A real 2 × 2 JPEG 2000 image, raw and in a JP2 file: the budget passes it, hayro decodes it.
@@ -702,6 +812,7 @@ fn a_jpx_image_within_its_dictionary_opens() {
     assert_eq!((r.document.size.width, r.document.size.height), (2, 2));
 }
 
+/// Charges inline images and repeated image or form draws against the shared per-page pixel budget.
 #[test]
 fn inline_images_count_toward_the_page_total() {
     let one = |w: u32| format!("q 10 0 0 10 0 0 cm BI /W {w} /H 8000 /CS /G /BPC 8 /F /Fl ID x EI Q\n");
@@ -731,6 +842,238 @@ fn inline_images_count_toward_the_page_total() {
     assert!(e.contains("together"), "{e}");
 }
 
+/// A chain of `levels` Form XObjects (objects 5..), each drawing the next `fan` times; the page
+/// draws the first once.
+/// Two direct Type 3 fonts (no object numbers) share glyph 5, which draws `/X`: form 6 in both,
+/// with no `/Resources`, so its `/Y` resolves in the font's. `/Y` is leaf 7 in font A and in font
+/// B `b_y`: 7 again, or 8, the head of a chain that draws 2^18 forms.
+fn shared_glyph_fonts(a_y: usize, b_y: usize) -> Vec<u8> {
+    let font = |y: usize| {
+        format!(
+            "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [0.1 0 0 0.1 0 0] /CharProcs << /a 5 0 R >> /Encoding << /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [10] /Resources << /XObject << /X 6 0 R /Y {y} 0 R >> >> >>"
+        )
+    };
+    let form = |res: String, content: &str| stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes());
+    let mut objs = vec![stream("", b"10 0 d0 /X Do"), form(String::new(), "/Y Do"), form(String::new(), "0 0 10 10 re f")];
+    let levels = 18;
+    for i in 0..levels {
+        if i + 1 < levels {
+            objs.push(form(format!("/Resources << /XObject << /C {} 0 R >> >>", 9 + i), "/C Do\n/C Do\n"));
+        } else {
+            objs.push(form(String::new(), ""));
+        }
+    }
+    objects_pdf(&format!("/Font << /A {} /B {} >>", font(a_y), font(b_y)), "", "", b"", objs)
+}
+
+/// Builds a page drawing a chain of forms, each drawing its child `fan` times before a painted leaf.
+fn form_chain(levels: usize, fan: usize) -> Vec<u8> {
+    let forms = (0..levels)
+        .map(|i| {
+            let (res, content) = if i + 1 < levels {
+                (
+                    format!("/Resources << /XObject << /C {} 0 R >> >>", 6 + i),
+                    "/C Do
+"
+                    .repeat(fan),
+                )
+            } else {
+                (String::new(), "0 0 1 rg 0 0 10 10 re f".into())
+            };
+            stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes())
+        })
+        .collect();
+    objects_pdf("/XObject << /F 5 0 R >>", "", "", b"/F Do", forms)
+}
+
+/// A form without `/Resources` drawn under two direct Type 3 fonts resolves its names in each
+/// font's resources, so its children are cached per font: whichever font comes first, the font
+/// whose `/Y` is the 2^18 chain is counted with the chain, not with the other font's leaf.
+#[test]
+fn direct_type3_fonts_keep_their_own_form_children() {
+    for (a, b) in [(7, 8), (8, 7)] {
+        let e = refused(&shared_glyph_fonts(a, b), "chain behind one of two direct fonts");
+        assert!(e.contains("Form XObjects more than"), "{e}");
+    }
+    assert!(import_pdf("fonts.pdf", &shared_glyph_fonts(7, 7), &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+}
+
+/// The interpreter bounds how deep forms nest, not how often they're drawn: a form drawing its
+/// child twice, 40 levels down, is 2^40 draws, which never finished interpreting. It's refused
+/// before anything interprets the page. Ordinary reuse opens.
+#[test]
+fn form_xobject_fan_out_is_bounded_before_the_page_is_interpreted() {
+    let e = refused(&form_chain(30, 2), "2^30 form draws");
+    assert!(e.contains("Form XObjects more than"), "{e}");
+    // Two forms drawing each other twice: hayro doesn't resolve the reference back into a form
+    // being drawn, so the cycle ends at once and the page opens (the walk refuses a loop it can
+    // follow).
+    let cycle = objects_pdf(
+        "/XObject << /F 5 0 R >>",
+        "",
+        "",
+        b"/F Do",
+        vec![
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /B 6 0 R >> >>", b"/B Do /B Do"),
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /A 5 0 R >> >>", b"/A Do /A Do"),
+        ],
+    );
+    assert!(import_pdf("cycle.pdf", &cycle, &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+    // 2^10 draws in all, well within the cap, open.
+    let r = import_pdf("forms.pdf", &form_chain(10, 2), &PdfOpenOptions::default(), &Interrupt::NONE).expect("opens");
+    assert_eq!(r.document.layers.len(), 1);
+    // Every entry point that interprets the page checks it first, not only the page import.
+    let deep = form_chain(30, 2);
+    assert!(!opens_as_image(&deep, None));
+    assert!(bounding_box(&deep, 1, None).is_err());
+    assert!(images(&deep, None).is_err());
+    assert!(import_image("deep.pdf", &deep, 1, None, None, &Interrupt::NONE).is_err());
+    assert!(thumbnail(&deep, 1, 32, None).is_err());
+    // Draws that start outside the page's content count too: here an annotation's appearance
+    // draws the chain (objects 5..34), and the page content draws nothing.
+    let mut forms: Vec<Vec<u8>> = (0..30)
+        .map(|i| {
+            let (res, content) = if i + 1 < 30 {
+                (format!("/Resources << /XObject << /C {} 0 R >> >>", 6 + i), "/C Do\n/C Do\n".to_string())
+            } else {
+                (String::new(), String::new())
+            };
+            stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes())
+        })
+        .collect();
+    forms.push(stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /F 5 0 R >> >>", b"/F Do"));
+    forms.push(b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP << /N 35 0 R >> >>".to_vec());
+    let annotated = objects_pdf("", "/Annots [36 0 R]", "", b"", forms);
+    let e = refused(&annotated, "fan-out in an appearance");
+    assert!(e.contains("Form XObjects more than"), "{e}");
+    // A tiling pattern in a form's resources, its cell drawing a 2^11 chain: the renderer would
+    // interpret it once per fill. Refused per cell, and through the form that holds it.
+    let chain = |first: usize, levels: usize| -> Vec<Vec<u8>> {
+        (0..levels)
+            .map(|i| {
+                let (res, content) = if i + 1 < levels {
+                    (format!("/Resources << /XObject << /C {} 0 R >> >>", first + 1 + i), "/C Do\n/C Do\n".to_string())
+                } else {
+                    (String::new(), String::new())
+                };
+                stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes())
+            })
+            .collect()
+    };
+    // 5: the form the page draws, holding pattern 6; 6: the pattern, drawing chain 7..17.
+    let mut objs = vec![
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /Pattern << /P 6 0 R >> >>", b"/Pattern cs /P scn 0 0 10 10 re f"),
+        stream(
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /C 7 0 R >> >>",
+            b"/C Do",
+        ),
+    ];
+    objs.extend(chain(7, 11));
+    let e = refused(&objects_pdf("/XObject << /F 5 0 R >>", "", "", b"/F Do", objs), "pattern in a form");
+    assert!(e.contains("tiling pattern"), "{e}");
+    // A form without /Resources draws `/C` from its parent's: the same leaf form under two parents
+    // that map /C differently. Parent A (drawn first) maps it to an empty form, parent B to a 2^30
+    // chain. Caching the leaf's children by object alone would reuse A's and miss B's chain.
+    // Objects: 5 A, 6 B, 7 the shared leaf (no /Resources, draws /C), 8 empty, 9.. the chain.
+    let mut objs = vec![
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /L 7 0 R /C 8 0 R >> >>", b"/L Do"),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /L 7 0 R /C 9 0 R >> >>", b"/L Do"),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"/C Do"),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b""),
+    ];
+    objs.extend(chain(9, 30));
+    let e = refused(&objects_pdf("/XObject << /A 5 0 R /B 6 0 R >>", "", "", b"/A Do /B Do", objs), "scoped leaf");
+    assert!(e.contains("Form XObjects more than"), "{e}");
+    // A pattern cell drawing a few forms opens.
+    let mut objs = vec![
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /Pattern << /P 6 0 R >> >>", b"/Pattern cs /P scn 0 0 10 10 re f"),
+        stream(
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /C 7 0 R >> >>",
+            b"/C Do",
+        ),
+    ];
+    objs.extend(chain(7, 4));
+    assert!(import_pdf("pattern.pdf", &objects_pdf("/XObject << /F 5 0 R >>", "", "", b"/F Do", objs), &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+}
+
+/// `data` in ASCII85 (no `z` shorthand), ended by `~>`.
+fn ascii85_encode(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() / 4 * 5 + 8);
+    for chunk in data.chunks(4) {
+        let mut word = [0u8; 4];
+        word[..chunk.len()].copy_from_slice(chunk);
+        let mut v = u32::from_be_bytes(word);
+        let mut digits = [0u8; 5];
+        for d in digits.iter_mut().rev() {
+            *d = (v % 85) as u8 + b'!';
+            v /= 85;
+        }
+        out.extend_from_slice(&digits[..chunk.len() + 1]);
+    }
+    out.extend_from_slice(b"~>");
+    out
+}
+
+/// Decodes ASCII filter terminators, partial groups, and zero shorthand while rejecting invalid or overflowing input.
+#[test]
+fn the_ascii_decoders_read_what_the_spec_writes() {
+    assert_eq!(super::ascii_hex(b"48 65 6c 6C 6f>ignored").as_deref(), Some(b"Hello".as_slice()));
+    assert_eq!(super::ascii_hex(b"7").as_deref(), Some([0x70].as_slice()), "an odd last digit is followed by 0");
+    assert_eq!(super::ascii_hex(b"zz"), None);
+    for data in [b"".as_slice(), b"a", b"ab", b"abc", b"abcd", b"Hello, ASCII85!", &[0, 0, 0, 0, 255, 255, 255]] {
+        assert_eq!(super::ascii85(&ascii85_encode(data)).as_deref(), Some(data), "{data:?}");
+    }
+    assert_eq!(super::ascii85(b"z~>").as_deref(), Some([0u8; 4].as_slice()));
+    assert_eq!(super::ascii85(b"uuuuu~>"), None, "a group past 2^32 - 1");
+}
+
+/// `n` bytes of spaces, deflated (zlib): a few hundred KB that inflate to `n`.
+fn deflated_spaces(n: usize) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    let chunk = vec![b' '; 1 << 20];
+    for _ in 0..n / chunk.len() {
+        z.write_all(&chunk).unwrap();
+    }
+    z.finish().unwrap()
+}
+
+/// A content stream that inflates past 256 MB is refused before it is decoded (hayro has no
+/// decode limit): as the page's content and as a form the page never draws. Ordinary deflated
+/// content opens.
+#[test]
+fn a_content_stream_that_inflates_too_far_is_refused_before_decoding() {
+    let bomb = deflated_spaces(300 << 20);
+    assert!(bomb.len() < 2 << 20, "the test file stays small: {}", bomb.len());
+    let e = refused(&objects_pdf("", "", "/Filter /FlateDecode", &bomb, Vec::new()), "deflate bomb content");
+    assert!(e.contains("inflates past 256 MB"), "{e}");
+    let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode", &bomb);
+    let e = refused(&objects_pdf("/XObject << /F 5 0 R >>", "", "", b"", vec![form]), "deflate bomb form");
+    assert!(e.contains("inflates past"), "{e}");
+    // FlateDecode behind ASCII85Decode is measured too; behind LZW it can't be, so it's refused.
+    let wrapped = ascii85_encode(&bomb);
+    let e = refused(&objects_pdf("", "", "/Filter [/ASCII85Decode /FlateDecode]", &wrapped, Vec::new()), "ASCII85 bomb");
+    assert!(e.contains("inflates past"), "{e}");
+    let hexed: String = bomb.iter().map(|b| format!("{b:02x}")).collect::<String>() + ">";
+    let e = refused(&objects_pdf("", "", "/Filter [/ASCIIHexDecode /FlateDecode]", hexed.as_bytes(), Vec::new()), "ASCIIHex bomb");
+    assert!(e.contains("inflates past"), "{e}");
+    let e = refused(&objects_pdf("", "", "/Filter [/LZWDecode /FlateDecode]", b"x", Vec::new()), "LZW then Flate");
+    assert!(e.contains("decompressed twice"), "{e}");
+    // ASCII data the measurement can't read is refused rather than left to a lenient decoder.
+    let e = refused(&objects_pdf("", "", "/Filter [/ASCII85Decode /FlateDecode]", b"\x80\x81 not ascii85", Vec::new()), "bad ASCII85");
+    assert!(e.contains("can't be read"), "{e}");
+    // Deflate twice: the first stage stays under the limit, the second would expand it unmeasured.
+    let e = refused(&objects_pdf("", "", "/Filter [/FlateDecode /FlateDecode]", &deflated_spaces(1 << 20), Vec::new()), "Flate then Flate");
+    assert!(e.contains("decompressed twice"), "{e}");
+    let fine = {
+        use std::io::Write;
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(b"0 0 1 rg 10 10 50 50 re f").unwrap();
+        z.finish().unwrap()
+    };
+    assert!(import_pdf("ok.pdf", &objects_pdf("", "", "/Filter /FlateDecode", &fine, Vec::new()), &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+}
+
 // ---- CCITT and JBIG2: sized from their parameters and segment headers, not the dictionary. ----
 
 /// A one-page PDF: objects 5.. are `more`, the page has `resources` and `page_extra` (which may
@@ -749,6 +1092,7 @@ fn objects_pdf(resources: &str, page_extra: &str, content_dict: &str, content: &
 
 const CCITT_10: &str = "/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /CCITTFaxDecode";
 
+/// Bounds CCITT allocations using fax parameters and dictionary height, including chained, inline, and masked images.
 #[test]
 fn a_ccitt_image_is_sized_by_its_decode_parameters() {
     // 10 × 10 px declared, /Columns × /Rows 20000 × 20000: the decoder allocates that up front.
@@ -763,6 +1107,13 @@ fn a_ccitt_image_is_sized_by_its_decode_parameters() {
     assert!(e.contains("8000 × 9000"), "{e}");
     assert!(passes(&xobject_pdf(&[(CCITT_10, &[0u8; 8])], 1, DRAW_X0)), "1728 × 10 by default");
     assert!(passes(&xobject_pdf(&[(&parms(10, 10), &[0u8; 8])], 1, DRAW_X0)));
+    // /Columns or /Rows past u32 keep u32::MAX and are refused; `as u32` wrapped 2^32 + 5 to 5.
+    let wide = format!("{CCITT_10} /DecodeParms << /K -1 /Columns {} /Rows 10 >>", (1u64 << 32) + 5);
+    let e = refused(&xobject_pdf(&[(&wide, &[0u8; 8])], 1, DRAW_X0), "columns past u32");
+    assert!(e.contains(&format!("{} ×", u32::MAX)), "{e}");
+    let tall_rows = format!("{CCITT_10} /DecodeParms << /K -1 /Columns 10 /Rows {} >>", (1u64 << 32) + 5);
+    let e = refused(&xobject_pdf(&[(&tall_rows, &[0u8; 8])], 1, DRAW_X0), "rows past u32");
+    assert!(e.contains(&format!("× {}", u32::MAX)), "{e}");
     // Behind another filter, its own parameters in the array.
     let chained = "/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter [/FlateDecode /CCITTFaxDecode] /DecodeParms [null << /K -1 /Columns 20000 /Rows 20000 >>]";
     let e = refused(&xobject_pdf(&[(chained, &[0u8; 8])], 1, DRAW_X0), "chained");
@@ -812,6 +1163,7 @@ fn region(w: u32, h: u32, coded: &[u8]) -> Vec<u8> {
 
 const JBIG2_10: &str = "/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /JBIG2Decode";
 
+/// Bounds JBIG2 pages, regions, stripes, and globals while refusing unreadable or unbounded segment forms.
 #[test]
 fn a_jbig2_image_is_sized_by_its_segments() {
     let jbig2 = |segments: &[Vec<u8>]| xobject_pdf(&[(JBIG2_10, &segments.concat())], 1, DRAW_X0);
@@ -874,6 +1226,7 @@ fn a_jbig2_image_is_sized_by_its_segments() {
 
 // ---- Streams that aren't images may not go through an image codec. ----
 
+/// Rejects image codecs in content and auxiliary streams even when an image dictionary disguises their role.
 #[test]
 fn a_stream_that_isnt_an_image_may_not_use_an_image_codec() {
     let jpx = jpx_header_only(9000, 9000, 1);
@@ -979,6 +1332,7 @@ fn a_stream_that_isnt_an_image_may_not_use_an_image_codec() {
     assert!(opens_as_image(&ok, None));
 }
 
+/// Stops cyclic resource traversal and refuses exponentially repeated object paths at the walk limit.
 #[test]
 fn a_walk_past_its_limits_refuses_the_page() {
     // An array that holds itself ends the walk (the reader cuts the cycle).
@@ -992,21 +1346,23 @@ fn a_walk_past_its_limits_refuses_the_page() {
 
 // ---- What opening a PDF ties to the file, and which files open as PDFs. ----
 
+/// Keeps the enclosing PDF read-only for rendered pages, automatic image extraction, and explicit image selection.
 #[test]
-fn only_a_one_image_pdf_opened_directly_keeps_the_file() {
+fn pdf_sources_remain_read_only_for_pages_and_image_shortcuts() {
     let one = image_pdf(200.0, 100.0, &[(100, 50, false, "200 0 0 100 0 0")], "");
     let two = image_pdf(400.0, 300.0, &[(100, 50, false, "200 0 0 100 20 150"), (64, 64, true, "64 0 0 64 300 50")], "");
     let plain = |b: &[u8]| crate::import("f.pdf", b).unwrap().source_read_only;
     let chosen = |b: &[u8], o: PdfOpenOptions| {
         crate::import_with_options("f.pdf", b, &crate::ImportOptions { pdf: Some(o), ..Default::default() }).unwrap().source_read_only
     };
-    assert!(!plain(&one), "a one-image PDF opens like a picture");
+    assert!(plain(&one), "the enclosing PDF remains read-only");
     assert!(plain(&two), "a page is rasterised");
     assert!(chosen(&two, PdfOpenOptions { image: Some(1), ..Default::default() }), "Images mode");
     assert!(chosen(&two, PdfOpenOptions::default()), "a page chosen in Import PDF");
     assert!(chosen(&one, PdfOpenOptions::default()), "anything Import PDF opens");
 }
 
+/// Gives recognizable non-PDF formats precedence over incidental PDF text while accepting prefixed PDF headers.
 #[test]
 fn a_file_opens_as_a_pdf_when_it_starts_like_one_or_nothing_else_takes_it() {
     let svg = b"<?xml version=\"1.0\"?>\n<!-- exported from %PDF-1.4 source -->\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"4\"><rect width=\"8\" height=\"4\" fill=\"red\"/></svg>";
