@@ -263,7 +263,6 @@ fn pages_of_a_multi_page_file_are_named_and_counted() {
 
 #[test]
 fn rotation_turns_the_page_like_hayro_and_photoshop() {
-    use hayro::hayro_interpret::TransformExt;
     for (rot, (w, h)) in [(0, (612, 792)), (90, (792, 612)), (180, (612, 792)), (270, (792, 612))] {
         // A mark in the top-left corner of the unrotated page.
         let bytes =
@@ -278,14 +277,6 @@ fn rotation_turns_the_page_like_hayro_and_photoshop() {
         };
         assert_eq!(pixel(&r, x, y)[3], 1.0, "rotate {rot}: the mark moved with the page");
         assert_eq!(pixel(&r, w as i32 / 2, h as i32 / 2)[3], 0.0);
-        // Our transform for the crop box is hayro's own.
-        let p = load(&bytes, None).unwrap();
-        let pg = &p.pages()[0];
-        let ours = oriented(page_info(pg).crop, rot).as_coeffs();
-        let theirs = pg.initial_transform(true).to_kurbo().as_coeffs();
-        for (a, b) in ours.iter().zip(theirs.iter()) {
-            assert!((a - b).abs() < 1e-6, "rotate {rot}: {ours:?} vs {theirs:?}");
-        }
     }
 }
 
@@ -443,12 +434,23 @@ fn thumbnails_fit_the_asked_side() {
     assert!(thumbnail(&bytes, 2, 128, None).is_err());
 }
 
+/// Without Import PDF answers every page opens as an artboard (#11647); with them, the page the
+/// dialog chose opens on its own.
 #[test]
-fn plain_import_opens_pdfs_with_photoshop_defaults() {
+fn plain_import_opens_pages_as_artboards_and_answers_open_one_page() {
     let bytes = pdf(&[page(72.0, 72.0, &rect(0.0, 0.0, 72.0, 72.0, (0.0, 0.0, 0.0))), page(36.0, 36.0, "")]);
     let r = crate::import("two.pdf", &bytes).unwrap();
-    assert_eq!(r.document.name, "two-1.pdf");
-    assert_eq!((r.document.size.width, r.document.size.height, r.document.resolution_dpi), (300, 300, 300.0));
+    let boards: Vec<_> = r
+        .document
+        .layers
+        .iter()
+        .filter_map(|l| match &l.content {
+            LayerContent::Group(g) => g.artboard.as_ref().map(|a| (a.rect.width(), a.rect.height())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boards, vec![(300, 300), (150, 150)], "one artboard a page, at 300 ppi");
+    assert_eq!(r.document.resolution_dpi, 300.0);
     let opts =
         crate::ImportOptions { pdf: Some(PdfOpenOptions { page: 2, crop: CropTo::MediaBox, resolution: 72.0, ..Default::default() }), ..Default::default() };
     let r = crate::import_with_options("two.pdf", &bytes, &opts).unwrap();
@@ -731,6 +733,236 @@ fn inline_images_count_toward_the_page_total() {
     assert!(e.contains("together"), "{e}");
 }
 
+/// A chain of `levels` Form XObjects (objects 5..), each drawing the next `fan` times; the page
+/// draws the first once.
+/// Two direct Type 3 fonts (no object numbers) share glyph 5, which draws `/X`: form 6 in both,
+/// with no `/Resources`, so its `/Y` resolves in the font's. `/Y` is leaf 7 in font A and in font
+/// B `b_y`: 7 again, or 8, the head of a chain that draws 2^18 forms.
+fn shared_glyph_fonts(a_y: usize, b_y: usize) -> Vec<u8> {
+    let font = |y: usize| {
+        format!(
+            "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [0.1 0 0 0.1 0 0] /CharProcs << /a 5 0 R >> /Encoding << /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [10] /Resources << /XObject << /X 6 0 R /Y {y} 0 R >> >> >>"
+        )
+    };
+    let form = |res: String, content: &str| stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes());
+    let mut objs = vec![stream("", b"10 0 d0 /X Do"), form(String::new(), "/Y Do"), form(String::new(), "0 0 10 10 re f")];
+    let levels = 18;
+    for i in 0..levels {
+        if i + 1 < levels {
+            objs.push(form(format!("/Resources << /XObject << /C {} 0 R >> >>", 9 + i), "/C Do\n/C Do\n"));
+        } else {
+            objs.push(form(String::new(), ""));
+        }
+    }
+    objects_pdf(&format!("/Font << /A {} /B {} >>", font(a_y), font(b_y)), "", "", b"", objs)
+}
+
+fn form_chain(levels: usize, fan: usize) -> Vec<u8> {
+    let forms = (0..levels)
+        .map(|i| {
+            let (res, content) = if i + 1 < levels {
+                (
+                    format!("/Resources << /XObject << /C {} 0 R >> >>", 6 + i),
+                    "/C Do
+"
+                    .repeat(fan),
+                )
+            } else {
+                (String::new(), "0 0 1 rg 0 0 10 10 re f".into())
+            };
+            stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes())
+        })
+        .collect();
+    objects_pdf("/XObject << /F 5 0 R >>", "", "", b"/F Do", forms)
+}
+
+/// A form without `/Resources` drawn under two direct Type 3 fonts resolves its names in each
+/// font's resources, so its children are cached per font: whichever font comes first, the font
+/// whose `/Y` is the 2^18 chain is counted with the chain, not with the other font's leaf.
+#[test]
+fn direct_type3_fonts_keep_their_own_form_children() {
+    for (a, b) in [(7, 8), (8, 7)] {
+        let e = refused(&shared_glyph_fonts(a, b), "chain behind one of two direct fonts");
+        assert!(e.contains("Form XObjects more than"), "{e}");
+    }
+    assert!(import_pdf("fonts.pdf", &shared_glyph_fonts(7, 7), &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+}
+
+/// The interpreter bounds how deep forms nest, not how often they're drawn: a form drawing its
+/// child twice, 40 levels down, is 2^40 draws, which never finished interpreting. It's refused
+/// before anything interprets the page. Ordinary reuse opens.
+#[test]
+fn form_xobject_fan_out_is_bounded_before_the_page_is_interpreted() {
+    let e = refused(&form_chain(30, 2), "2^30 form draws");
+    assert!(e.contains("Form XObjects more than"), "{e}");
+    // Two forms drawing each other twice: hayro doesn't resolve the reference back into a form
+    // being drawn, so the cycle ends at once and the page opens (the walk refuses a loop it can
+    // follow).
+    let cycle = objects_pdf(
+        "/XObject << /F 5 0 R >>",
+        "",
+        "",
+        b"/F Do",
+        vec![
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /B 6 0 R >> >>", b"/B Do /B Do"),
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /A 5 0 R >> >>", b"/A Do /A Do"),
+        ],
+    );
+    assert!(import_pdf("cycle.pdf", &cycle, &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+    // 2^10 draws in all, well within the cap, open.
+    let r = import_pdf("forms.pdf", &form_chain(10, 2), &PdfOpenOptions::default(), &Interrupt::NONE).expect("opens");
+    assert_eq!(r.document.layers.len(), 1);
+    // Every entry point that interprets the page checks it first, not only the page import.
+    let deep = form_chain(30, 2);
+    assert!(!opens_as_image(&deep, None));
+    assert!(bounding_box(&deep, 1, None).is_err());
+    assert!(images(&deep, None).is_err());
+    assert!(import_image("deep.pdf", &deep, 1, None, None, &Interrupt::NONE).is_err());
+    assert!(thumbnail(&deep, 1, 32, None).is_err());
+    // Draws that start outside the page's content count too: here an annotation's appearance
+    // draws the chain (objects 5..34), and the page content draws nothing.
+    let mut forms: Vec<Vec<u8>> = (0..30)
+        .map(|i| {
+            let (res, content) = if i + 1 < 30 {
+                (format!("/Resources << /XObject << /C {} 0 R >> >>", 6 + i), "/C Do\n/C Do\n".to_string())
+            } else {
+                (String::new(), String::new())
+            };
+            stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes())
+        })
+        .collect();
+    forms.push(stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /F 5 0 R >> >>", b"/F Do"));
+    forms.push(b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP << /N 35 0 R >> >>".to_vec());
+    let annotated = objects_pdf("", "/Annots [36 0 R]", "", b"", forms);
+    let e = refused(&annotated, "fan-out in an appearance");
+    assert!(e.contains("Form XObjects more than"), "{e}");
+    // A tiling pattern in a form's resources, its cell drawing a 2^11 chain: the renderer would
+    // interpret it once per fill. Refused per cell, and through the form that holds it.
+    let chain = |first: usize, levels: usize| -> Vec<Vec<u8>> {
+        (0..levels)
+            .map(|i| {
+                let (res, content) = if i + 1 < levels {
+                    (format!("/Resources << /XObject << /C {} 0 R >> >>", first + 1 + i), "/C Do\n/C Do\n".to_string())
+                } else {
+                    (String::new(), String::new())
+                };
+                stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 10 10] {res}"), content.as_bytes())
+            })
+            .collect()
+    };
+    // 5: the form the page draws, holding pattern 6; 6: the pattern, drawing chain 7..17.
+    let mut objs = vec![
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /Pattern << /P 6 0 R >> >>", b"/Pattern cs /P scn 0 0 10 10 re f"),
+        stream(
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /C 7 0 R >> >>",
+            b"/C Do",
+        ),
+    ];
+    objs.extend(chain(7, 11));
+    let e = refused(&objects_pdf("/XObject << /F 5 0 R >>", "", "", b"/F Do", objs), "pattern in a form");
+    assert!(e.contains("tiling pattern"), "{e}");
+    // A form without /Resources draws `/C` from its parent's: the same leaf form under two parents
+    // that map /C differently. Parent A (drawn first) maps it to an empty form, parent B to a 2^30
+    // chain. Caching the leaf's children by object alone would reuse A's and miss B's chain.
+    // Objects: 5 A, 6 B, 7 the shared leaf (no /Resources, draws /C), 8 empty, 9.. the chain.
+    let mut objs = vec![
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /L 7 0 R /C 8 0 R >> >>", b"/L Do"),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /L 7 0 R /C 9 0 R >> >>", b"/L Do"),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"/C Do"),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b""),
+    ];
+    objs.extend(chain(9, 30));
+    let e = refused(&objects_pdf("/XObject << /A 5 0 R /B 6 0 R >>", "", "", b"/A Do /B Do", objs), "scoped leaf");
+    assert!(e.contains("Form XObjects more than"), "{e}");
+    // A pattern cell drawing a few forms opens.
+    let mut objs = vec![
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /Pattern << /P 6 0 R >> >>", b"/Pattern cs /P scn 0 0 10 10 re f"),
+        stream(
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /C 7 0 R >> >>",
+            b"/C Do",
+        ),
+    ];
+    objs.extend(chain(7, 4));
+    assert!(import_pdf("pattern.pdf", &objects_pdf("/XObject << /F 5 0 R >>", "", "", b"/F Do", objs), &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+}
+
+/// `data` in ASCII85 (no `z` shorthand), ended by `~>`.
+fn ascii85_encode(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() / 4 * 5 + 8);
+    for chunk in data.chunks(4) {
+        let mut word = [0u8; 4];
+        word[..chunk.len()].copy_from_slice(chunk);
+        let mut v = u32::from_be_bytes(word);
+        let mut digits = [0u8; 5];
+        for d in digits.iter_mut().rev() {
+            *d = (v % 85) as u8 + b'!';
+            v /= 85;
+        }
+        out.extend_from_slice(&digits[..chunk.len() + 1]);
+    }
+    out.extend_from_slice(b"~>");
+    out
+}
+
+#[test]
+fn the_ascii_decoders_read_what_the_spec_writes() {
+    assert_eq!(super::ascii_hex(b"48 65 6c 6C 6f>ignored").as_deref(), Some(b"Hello".as_slice()));
+    assert_eq!(super::ascii_hex(b"7").as_deref(), Some([0x70].as_slice()), "an odd last digit is followed by 0");
+    assert_eq!(super::ascii_hex(b"zz"), None);
+    for data in [b"".as_slice(), b"a", b"ab", b"abc", b"abcd", b"Hello, ASCII85!", &[0, 0, 0, 0, 255, 255, 255]] {
+        assert_eq!(super::ascii85(&ascii85_encode(data)).as_deref(), Some(data), "{data:?}");
+    }
+    assert_eq!(super::ascii85(b"z~>").as_deref(), Some([0u8; 4].as_slice()));
+    assert_eq!(super::ascii85(b"uuuuu~>"), None, "a group past 2^32 - 1");
+}
+
+/// `n` bytes of spaces, deflated (zlib): a few hundred KB that inflate to `n`.
+fn deflated_spaces(n: usize) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    let chunk = vec![b' '; 1 << 20];
+    for _ in 0..n / chunk.len() {
+        z.write_all(&chunk).unwrap();
+    }
+    z.finish().unwrap()
+}
+
+/// A content stream that inflates past 256 MB is refused before it is decoded (hayro has no
+/// decode limit): as the page's content and as a form the page never draws. Ordinary deflated
+/// content opens.
+#[test]
+fn a_content_stream_that_inflates_too_far_is_refused_before_decoding() {
+    let bomb = deflated_spaces(300 << 20);
+    assert!(bomb.len() < 2 << 20, "the test file stays small: {}", bomb.len());
+    let e = refused(&objects_pdf("", "", "/Filter /FlateDecode", &bomb, Vec::new()), "deflate bomb content");
+    assert!(e.contains("inflates past 256 MB"), "{e}");
+    let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode", &bomb);
+    let e = refused(&objects_pdf("/XObject << /F 5 0 R >>", "", "", b"", vec![form]), "deflate bomb form");
+    assert!(e.contains("inflates past"), "{e}");
+    // FlateDecode behind ASCII85Decode is measured too; behind LZW it can't be, so it's refused.
+    let wrapped = ascii85_encode(&bomb);
+    let e = refused(&objects_pdf("", "", "/Filter [/ASCII85Decode /FlateDecode]", &wrapped, Vec::new()), "ASCII85 bomb");
+    assert!(e.contains("inflates past"), "{e}");
+    let hexed: String = bomb.iter().map(|b| format!("{b:02x}")).collect::<String>() + ">";
+    let e = refused(&objects_pdf("", "", "/Filter [/ASCIIHexDecode /FlateDecode]", hexed.as_bytes(), Vec::new()), "ASCIIHex bomb");
+    assert!(e.contains("inflates past"), "{e}");
+    let e = refused(&objects_pdf("", "", "/Filter [/LZWDecode /FlateDecode]", b"x", Vec::new()), "LZW then Flate");
+    assert!(e.contains("decompressed twice"), "{e}");
+    // ASCII data the measurement can't read is refused rather than left to a lenient decoder.
+    let e = refused(&objects_pdf("", "", "/Filter [/ASCII85Decode /FlateDecode]", b"\x80\x81 not ascii85", Vec::new()), "bad ASCII85");
+    assert!(e.contains("can't be read"), "{e}");
+    // Deflate twice: the first stage stays under the limit, the second would expand it unmeasured.
+    let e = refused(&objects_pdf("", "", "/Filter [/FlateDecode /FlateDecode]", &deflated_spaces(1 << 20), Vec::new()), "Flate then Flate");
+    assert!(e.contains("decompressed twice"), "{e}");
+    let fine = {
+        use std::io::Write;
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(b"0 0 1 rg 10 10 50 50 re f").unwrap();
+        z.finish().unwrap()
+    };
+    assert!(import_pdf("ok.pdf", &objects_pdf("", "", "/Filter /FlateDecode", &fine, Vec::new()), &PdfOpenOptions::default(), &Interrupt::NONE).is_ok());
+}
+
 // ---- CCITT and JBIG2: sized from their parameters and segment headers, not the dictionary. ----
 
 /// A one-page PDF: objects 5.. are `more`, the page has `resources` and `page_extra` (which may
@@ -763,6 +995,13 @@ fn a_ccitt_image_is_sized_by_its_decode_parameters() {
     assert!(e.contains("8000 × 9000"), "{e}");
     assert!(passes(&xobject_pdf(&[(CCITT_10, &[0u8; 8])], 1, DRAW_X0)), "1728 × 10 by default");
     assert!(passes(&xobject_pdf(&[(&parms(10, 10), &[0u8; 8])], 1, DRAW_X0)));
+    // /Columns or /Rows past u32 keep u32::MAX and are refused; `as u32` wrapped 2^32 + 5 to 5.
+    let wide = format!("{CCITT_10} /DecodeParms << /K -1 /Columns {} /Rows 10 >>", (1u64 << 32) + 5);
+    let e = refused(&xobject_pdf(&[(&wide, &[0u8; 8])], 1, DRAW_X0), "columns past u32");
+    assert!(e.contains(&format!("{} ×", u32::MAX)), "{e}");
+    let tall_rows = format!("{CCITT_10} /DecodeParms << /K -1 /Columns 10 /Rows {} >>", (1u64 << 32) + 5);
+    let e = refused(&xobject_pdf(&[(&tall_rows, &[0u8; 8])], 1, DRAW_X0), "rows past u32");
+    assert!(e.contains(&format!("× {}", u32::MAX)), "{e}");
     // Behind another filter, its own parameters in the array.
     let chained = "/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter [/FlateDecode /CCITTFaxDecode] /DecodeParms [null << /K -1 /Columns 20000 /Rows 20000 >>]";
     let e = refused(&xobject_pdf(&[(chained, &[0u8; 8])], 1, DRAW_X0), "chained");
@@ -1018,5 +1257,11 @@ fn a_file_opens_as_a_pdf_when_it_starts_like_one_or_nothing_else_takes_it() {
     bom.extend(pdf(&[page(72.0, 72.0, &rect(0.0, 0.0, 72.0, 72.0, (0.0, 0.0, 0.0)))]));
     assert!(crate::is_pdf_input("x.pdf", &bom));
     assert!(crate::import("x.pdf", &bom).is_ok());
+    let r = crate::import("scan.bin", &bom).expect("a leading-byte PDF needs no .pdf extension");
+    assert_eq!(r.document.artboards().len(), 1);
+    let mut illustrator = pdf(&[page(72.0, 72.0, &rect(0.0, 0.0, 72.0, 72.0, (0.0, 0.0, 0.0)))]);
+    illustrator.extend_from_slice(b"\n% /AIPrivateData\n");
+    let r = crate::import("illustration.ai", &illustrator).expect("PDF-based Illustrator data still uses PDF import");
+    assert_eq!(r.document.artboards().len(), 1);
     assert!(crate::is_pdf_input("x", b"%PDF-1.7\n"));
 }
